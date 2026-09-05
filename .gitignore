@@ -1,0 +1,17 @@
+# Секреты
+config/secrets.env
+config/config.yaml
+config.env
+
+# Runtime
+*.log
+*.pid
+backups/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~

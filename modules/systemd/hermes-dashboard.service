@@ -1,0 +1,28 @@
+[Unit]
+Description=Hermes Dashboard API Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.hermes/.env
+ExecStart=@HERMES_DIR@/hermes-agent/venv/bin/hermes serve --host @HERMES_HOST@ --port @HERMES_PORT@
+WorkingDirectory=@HERMES_DIR@
+
+# Всегда перезапускать, даже после чистого выхода
+Restart=always
+RestartSec=5
+
+# SIGTERM → ждём 30 сек → SIGKILL
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Лимиты памяти задаются через drop-in (см. modules/systemd/hermes-dashboard.service.d/)
+# MemoryHigh, MemoryMax, OOMScoreAdjust — там
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Hermes VPS Kit: watch config.yaml changes (integration discovery)
+
+[Path]
+# PathChanged ловит atomic-replace (редакторы, hermes config set)
+PathChanged=%h/.hermes/config.yaml
+# Явное имя сервиса (не совпадает с именем path-юнита)
+Unit=hermes-vps-kit-discover.service
+
+[Install]
+WantedBy=default.target

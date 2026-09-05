@@ -1,0 +1,10 @@
+[Unit]
+Description=Hermes VPS Kit: integration discovery (diff config/env snapshot)
+
+[Service]
+Type=oneshot
+Environment=DISCOVER_REPORT=%h/.hermes/logs/integration-discover-report.json
+ExecStart=@HOME_DIR@/scripts/integration-discover-wrapper.sh
+# Есть события (exit 2) — НЕ ошибка сервиса
+SuccessExitStatus=2
+StandardOutput=journal
