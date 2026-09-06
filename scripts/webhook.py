@@ -494,6 +494,9 @@ def menu_keyboard():
                 {"text": "\U0001f50c Интеграции", "callback_data": "integrations"},
             ],
             [
+                {"text": "\U0001f4cb Интеграции (all)", "callback_data": "integrations_all"},
+            ],
+            [
                 {"text": "\U0001f9ea Deep AI", "callback_data": "deep_ai"},
                 {"text": "\U0001f4cb Логи", "callback_data": "show_logs"},
             ],
@@ -557,6 +560,8 @@ def handle_callback_query(query: dict) -> None:
         send_message(handle_watchdog_status(), silent=True)
     elif action == "integrations":
         send_message(handle_integrations_check(), silent=True)
+    elif action == "integrations_all":
+        send_message(handle_integrations_all(), silent=True)
     elif action == "deep_ai":
         log_to_changelog("Deep AI check (кнопка)", "chat max_tokens=1, free-models gated")
         send_message("🧪 Deep check запущен (до ~2 мин)...", silent=True)
