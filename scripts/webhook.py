@@ -283,34 +283,43 @@ def _silence_remaining() -> int:
 
 
 def handle_watchdog_status() -> str:
-    """Статус всех уровней мониторинга (L0-L5)."""
+    """Статус всех уровней мониторинга (сервисы, cron, analyzer, heartbeat)."""
     try:
         h = os.path.expanduser("~/.hermes")
         lines = []
         for s in ["hermes-dashboard", "hermes-gateway", "telegram-smart-proxy",
-                   "monitoring-bot-poller", "netdata"]:
+                   "monitoring-bot-poller"]:
             ok = subprocess.run(
                 ["systemctl", "--user", "is-active", s],
                 capture_output=True, text=True, timeout=5
             ).stdout.strip() == "active"
-            lines.append(f"{_CHECK if ok else _CROSS} L0 {s}")
+            lines.append(f"{_CHECK if ok else _CROSS} Сервис {s}")
+        # Netdata — SYSTEM-юнит (не user) и биндится на HERMES_HOST, поэтому
+        # проверяем HTTP API, а не systemctl --user (фикс 2026-09-07: ложный
+        # негатив «сломана» при живой netdata на Tailscale IP).
+        code = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "6",
+             "http://@HERMES_HOST@:@NETDATA_PORT@/api/v1/info"],
+            capture_output=True, text=True, timeout=10
+        ).stdout.strip() or "000"
+        lines.append(f"{_CHECK if code == '200' else _CROSS} Netdata API (HTTP {code})")
         cron = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
         for name in ["hermes-watchdog", "gateway-liveness", "dashboard-liveness"]:
-            lines.append(f"{_CHECK if name in cron.stdout else _CROSS} L1 {name}")
+            lines.append(f"{_CHECK if name in cron.stdout else _CROSS} Cron {name}")
         try:
             with open(f"{h}/logs/health-state.json") as f:
                 hs = json.load(f)
             last = hs.get("last_check", "?")[:19]
             active = [k for k, v in hs.get("issues", {}).items() if v.get("status") == "active"]
-            lines.append(f"{_CHECK} L3 health-analyzer (last: {last})")
+            lines.append(f"{_CHECK} Analyzer (last: {last})")
             if active:
                 lines.append(f"{_WARN} Issues: {', '.join(active)}")
         except:
-            lines.append(f"{_CROSS} L3 health-state.json not found")
+            lines.append(f"{_CROSS} Analyzer: health-state.json не найден")
         hb = f"{h}/hermes-infra/heartbeat.txt"
         if os.path.exists(hb):
             age = int(_time.time()) - os.path.getmtime(hb)
-            lines.append(f"{_CHECK if age < 900 else _WARN} L4 heartbeat ({age}s ago)")
+            lines.append(f"{_CHECK if age < 900 else _WARN} Heartbeat ({age}s ago)")
         return "\n".join(lines)
     except Exception as e:
         return f"{_CROSS} Ошибка: {e}"
@@ -363,9 +372,19 @@ def handle_integrations_all() -> str:
     free_models = report.get("free_models", {})
 
     marks = {"ok": "✅", "fail": "❌", "unconfigured": "⚪"}
+    checks = report.get("checks", [])
+    # Merge provider env + root http-alive checks into one line when healthy
+    # (fix 2026-09-07: "provider X" + "provider X root" read as duplicates)
+    ids = {c.get("id") for c in checks}
+    root_ok = {c["id"][:-5]: c.get("detail", "") for c in checks
+               if c.get("id", "").endswith("#http") and c.get("status") == "ok"}
     buckets: dict[str, list[str]] = {}
-    for c in report.get("checks", []):
+    for c in checks:
         cid, st = c.get("id", ""), c.get("status", "?")
+        if cid.endswith("#http"):
+            base = cid[:-5]
+            if base in ids and c.get("status") == "ok":
+                continue  # healthy root merged into the provider line below
         label = c.get("label", cid)
         detail = c.get("detail", "")
         if st == "fail":
@@ -374,6 +393,8 @@ def handle_integrations_all() -> str:
             line = f"⚪ {label} — не настроено (опционально)"
         else:
             line = f"✅ {label}"
+            if cid in root_ok:
+                line += f" · root {root_ok[cid]}"
         # free-tier hint on provider key checks (not on root http checks)
         if cid.startswith("provider:") and not cid.endswith("#http") \
                 and c.get("primitive") == "env":

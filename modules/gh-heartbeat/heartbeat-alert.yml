@@ -1,0 +1,50 @@
+# GH Heartbeat watchdog workflow (modules/gh-heartbeat/heartbeat-alert.yml).
+# Installed into the PRIVATE heartbeat repo by deploy.sh (MODULE_GH_HEARTBEAT,
+# explicit user consent). Checks the heartbeat.txt freshness every 15 minutes;
+# if the server stopped pushing, alerts via the Telegram monitoring bot.
+#
+# Required repo secrets (set by deploy.sh via `gh secret set`):
+#   WATCHDOG_BOT_TOKEN — Argus watchdog bot token
+#   WATCHDOG_CHAT_ID   — alert chat id
+#
+# PAT required to create/push this repo (classic: repo + workflow scopes;
+# fine-grained: Contents read/write + Workflows read/write).
+
+name: heartbeat-alert
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staleness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check heartbeat freshness
+        id: fresh
+        run: |
+          LAST=$(cat heartbeat.txt 2>/dev/null || echo "1970-01-01T00:00:00Z")
+          NOW=$(date -u +%s)
+          AGE=$(( NOW - $(date -u -d "$LAST" +%s) ))
+          echo "age=${AGE}s" >> "$GITHUB_OUTPUT"
+          if [ "$AGE" -gt 900 ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Alert via Telegram
+        if: steps.fresh.outputs.stale == 'true'
+        env:
+          TOKEN: ${{ secrets.WATCHDOG_BOT_TOKEN }}
+          CHAT: ${{ secrets.WATCHDOG_CHAT_ID }}
+        run: |
+          curl -fsS -m 15 "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\": \"${CHAT}\", \"text\": \"💀 Argus heartbeat STALE on $(hostname): no push for ${{ steps.fresh.outputs.age }}\"}"

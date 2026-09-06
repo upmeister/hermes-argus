@@ -41,6 +41,8 @@ MODULE_INTEGRATIONS="${MODULE_INTEGRATIONS:-ON}"
 MODULE_TG_BOT="${MODULE_TG_BOT:-OFF}"
 MODULE_ANALYZER="${MODULE_ANALYZER:-OFF}"
 MODULE_HEARTBEAT="${MODULE_HEARTBEAT:-OFF}"
+MODULE_GH_HEARTBEAT="${MODULE_GH_HEARTBEAT:-OFF}"
+MODULE_DISCORD_BOT="${MODULE_DISCORD_BOT:-OFF}"
 
 module_enabled() { [ "${!1}" = "ON" ]; }
 
@@ -50,7 +52,7 @@ HERMES_DIR="${HERMES_DIR:-$HOME_DIR/.hermes}"
 echo "🔧 Развёртка hermes-argus"
 echo "   Хост: $HERMES_HOST:$HERMES_PORT"
 echo "   Hermes директория: $HERMES_DIR"
-echo "   Модули: CORE=$(module_enabled MODULE_CORE && echo ON || echo OFF) INTEGRATIONS=$(module_enabled MODULE_INTEGRATIONS && echo ON || echo OFF) TG_BOT=$(module_enabled MODULE_TG_BOT && echo ON || echo OFF) ANALYZER=$(module_enabled MODULE_ANALYZER && echo ON || echo OFF) HEARTBEAT=$(module_enabled MODULE_HEARTBEAT && echo ON || echo OFF)"
+echo "   Модули: CORE=$(module_enabled MODULE_CORE && echo ON || echo OFF) INTEGRATIONS=$(module_enabled MODULE_INTEGRATIONS && echo ON || echo OFF) TG_BOT=$(module_enabled MODULE_TG_BOT && echo ON || echo OFF) ANALYZER=$(module_enabled MODULE_ANALYZER && echo ON || echo OFF) HEARTBEAT=$(module_enabled MODULE_HEARTBEAT && echo ON || echo OFF) GH_HEARTBEAT=$(module_enabled MODULE_GH_HEARTBEAT && echo ON || echo OFF)"
 echo ""
 
 # ── Функция: развернуть bash-шаблон ──────────────────────────────────────
@@ -105,6 +107,10 @@ INTEGRATIONS_SYSTEMD=(hermes-vps-kit-config.path hermes-vps-kit-discover.service
 # TG_BOT: интерактивный мониторинг-бот (control plane) — OFF по умолчанию
 TG_BOT_HOME_SCRIPTS=(webhook.py ai-deep-check.py)
 TG_BOT_HERMES_SCRIPTS=(monitoring-bot-poller.py)
+
+# DISCORD_BOT: control plane для Discord (C5) — OFF по умолчанию
+DISCORD_HOME_SCRIPTS=(discord-bot.py)
+DISCORD_SYSTEMD=(discord-bot.service)
 
 # ANALYZER: L3 health-analyzer экосистема (LLM-анализ логов) — OFF по умолчанию
 ANALYZER_HERMES_SCRIPTS=(health-analyzer.py health_decay.py health_patterns.py health_netdata.py)
@@ -175,6 +181,23 @@ if module_enabled MODULE_TG_BOT; then
     echo "   ℹ️  Перезапуск poller — вручную и вне активного использования бота."
 fi
 
+if module_enabled MODULE_DISCORD_BOT; then
+    echo ""
+    echo "📁 [DISCORD_BOT] control plane для Discord (C5)..."
+    if [ -z "${DISCORD_BOT_TOKEN:-}" ]; then
+        echo "   ⚠️  DISCORD_BOT_TOKEN не задан в $HERMES_DIR/.env — бот не запустится."
+        echo "      Токен: Discord Developer Portal → Applications → Bot → Reset Token."
+    fi
+    deploy_scripts "$HOME_DIR/scripts" "${DISCORD_HOME_SCRIPTS[@]}"
+    deploy_systemd "${DISCORD_SYSTEMD[@]}"
+    if [ ! -x "$HERMES_DIR/discord-venv/bin/python" ]; then
+        echo "   🐍 Создаю venv и ставлю discord.py (одноразово)..."
+        python3 -m venv "$HERMES_DIR/discord-venv" &&
+            "$HERMES_DIR/discord-venv/bin/pip" install -q discord.py
+    fi
+    echo "   ℹ️  Старт: systemctl --user enable --now discord-bot.service (согласованно)"
+fi
+
 if module_enabled MODULE_ANALYZER; then
     echo ""
     echo "📁 [ANALYZER] health-analyzer экосистема (L3)..."
@@ -185,6 +208,69 @@ if module_enabled MODULE_HEARTBEAT; then
     echo ""
     echo "📁 [HEARTBEAT] внешний dead man's switch..."
     deploy_scripts "$HOME_DIR/scripts" "${HEARTBEAT_HOME_SCRIPTS[@]}"
+    echo "   ℹ️  Бекенды включаются ключами в $HERMES_DIR/.env (см. scripts/heartbeat.sh):"
+    echo "      CRONPING_TOKEN — Cronping (рекомендуется, 5-мин гранулярность)"
+    echo "      DMS_SNITCH     — Dead Man's Snitch (hourly)"
+    echo "      GH_TOKEN+GITHUB_REPO — GitHub Heartbeat (MODULE_GH_HEARTBEAT)"
+fi
+
+# ── GH Heartbeat module: приватный репо + Actions-алерт по протуханию ──────
+# OFF по умолчанию; gh repo create — только при явном согласии юзера (C4).
+if module_enabled MODULE_GH_HEARTBEAT; then
+    echo ""
+    echo "📁 [GH_HEARTBEAT] внешний сторож через GitHub Actions..."
+    if [ -z "${GH_TOKEN:-}" ]; then
+        echo "   ⚠️  GH_TOKEN не задан — GitHub Heartbeat пропущен."
+        echo "      Нужен PAT: classic — scopes repo + workflow; fine-grained —"
+        echo "      Contents RW + Workflows RW. Если токен Hermes не подходит —"
+        echo "      создайте отдельный: https://github.com/settings/tokens"
+        echo "      Альтернативы: Dead Man's Snitch https://deadmanssnitch.com"
+        echo "      или Cronping https://cronping.com (бекенды в scripts/heartbeat.sh)"
+    elif ! command -v gh >/dev/null 2>&1; then
+        echo "   ⚠️  gh CLI не найден (https://cli.github.com) — авто-создание репо недоступно."
+        echo "      Альтернативы: Dead Man's Snitch https://deadmanssnitch.com"
+        echo "      или Cronping https://cronping.com (бекенды в scripts/heartbeat.sh)"
+    else
+        GH_USER=$(gh api user -q .login 2>/dev/null || echo "")
+        GH_HB_REPO="${GH_HEARTBEAT_REPO:-argus-heartbeat-$(hostname)}"
+        if [ -z "$GH_USER" ]; then
+            echo "   ⚠️  gh не авторизован / токен невалиден — GitHub Heartbeat пропущен."
+        else
+            printf "   Создать приватный репо %s/%s? [y/N]: " "$GH_USER" "$GH_HB_REPO"
+            read -r ANSWER
+            if [ "${ANSWER:-}" = "y" ] || [ "${ANSWER:-}" = "Y" ]; then
+                if gh repo view "$GH_USER/$GH_HB_REPO" >/dev/null 2>&1; then
+                    echo "   ℹ️  репо уже существует — использую его"
+                else
+                    gh repo create "$GH_USER/$GH_HB_REPO" --private
+                fi
+                HB_DIR="$HERMES_DIR/gh-heartbeat"
+                mkdir -p "$HB_DIR/.github/workflows"
+                date -u +"%Y-%m-%dT%H:%M:%SZ" > "$HB_DIR/heartbeat.txt"
+                if [ -f "$MODULES_DIR/gh-heartbeat/heartbeat-alert.yml" ]; then
+                    deploy_template "$MODULES_DIR/gh-heartbeat/heartbeat-alert.yml" \
+                        "$HB_DIR/.github/workflows/heartbeat-alert.yml" "gh-heartbeat workflow"
+                fi
+                cd "$HB_DIR"
+                git init -q 2>/dev/null || true
+                git checkout -q -b main 2>/dev/null || true
+                git add -A && git diff --cached --quiet || git commit -q -m "argus heartbeat init"
+                if git push -q -f "https://${GH_TOKEN}@github.com/$GH_USER/$GH_HB_REPO" main 2>/dev/null; then
+                    echo "   ✅ репо запушен"
+                else
+                    echo "   ⚠️  push failed — проверьте права токена (repo/workflow)"
+                fi
+                gh secret set WATCHDOG_BOT_TOKEN --repo "$GH_USER/$GH_HB_REPO" --body "${WATCHDOG_BOT_TOKEN:-}" >/dev/null && \
+                gh secret set WATCHDOG_CHAT_ID --repo "$GH_USER/$GH_HB_REPO" --body "${WATCHDOG_CHAT_ID:-}" >/dev/null && \
+                echo "   ✅ secrets установлены"
+                echo "   ✅ GH Heartbeat готов. Добавьте в config.env и перезапустите deploy:"
+                echo "      GITHUB_REPO=$GH_USER/$GH_HB_REPO"
+            else
+                echo "   ℹ️  Пропущено по отказу юзера. Альтернативы: DMS / Cronping"
+                echo "      (https://deadmanssnitch.com, https://cronping.com)"
+            fi
+        fi
+    fi
 fi
 
 # ── Генерация cron-строк по включённым модулям ─────────────────────────────
