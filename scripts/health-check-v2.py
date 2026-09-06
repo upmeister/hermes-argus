@@ -49,6 +49,41 @@ FAILED_RE = re.compile(r"✗ Connection failed")
 TOOLS_RE = re.compile(r"✓ Tools discovered: (\d+)")
 
 
+def proxy_url(env: dict) -> str:
+    """Telegram egress proxy from .env; tolerate inline comments/quotes."""
+    raw = (env.get("TELEGRAM_PROXY") or "").strip().strip('"\'')
+    m = re.search(r"https?://\S+", raw)
+    return m.group(0).rstrip('"\'') if m else "http://127.0.0.1:8444"
+
+
+def check_tg_getme(token: str, proxy: str) -> tuple[bool, str]:
+    """getMe for a Telegram bot token (C3). Distinguishes an invalid/revoked
+    token (401/404 — fail fast, no retries) from network unavailability
+    (000/timeout — retried 3x10s per repo conventions). Never prints the token."""
+    try:
+        r = subprocess.run(
+            ["curl", "-s", "-w", "\n%{http_code}", "--connect-timeout", "8",
+             "--max-time", "25", "--proxy", proxy,
+             f"https://api.telegram.org/bot{token}/getMe"],
+            capture_output=True, text=True, timeout=35)
+        body, _, code = r.stdout.rpartition("\n")
+        code = code.strip() or "000"
+    except subprocess.TimeoutExpired:
+        return False, "unreachable (timeout via proxy)"
+    if code == "401" or code == "404":
+        return False, f"token invalid/revoked (HTTP {code})"
+    try:
+        d = json.loads(body)
+    except json.JSONDecodeError:
+        d = {}
+    if d.get("ok"):
+        name = (d.get("result", {}).get("username") or "").strip()
+        return True, f"bot @{name} ok" if name else "getMe ok"
+    if code.startswith("2"):
+        return False, f"unexpected API response (HTTP {code})"
+    return False, f"unreachable via proxy (HTTP {code})"
+
+
 def load_env(path: Path) -> dict:
     """Key -> raw value. Values stay in memory and are never printed/reported."""
     out = {}
@@ -143,15 +178,20 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
         key = kit.get("key", "")
         prim = kit.get("check", "env")
         cid = f"kit:{key}"
+        label = kit.get("label", key)
         if prim == "env":
             checks.append({"id": cid, "entity": "kit", "primitive": "env",
-                           "key_env": key, "label": key,
+                           "key_env": key, "label": label,
+                           "required": kit.get("required", False)})
+        elif prim == "tg-getme":
+            checks.append({"id": cid, "entity": "kit", "primitive": "tg-getme",
+                           "key_env": key, "label": label,
                            "required": kit.get("required", False)})
         elif prim == "tcp":
             host, port = parse_host_port(env.get("TELEGRAM_PROXY", ""),
                                          "127.0.0.1:8444")
             checks.append({"id": cid, "entity": "kit", "primitive": "tcp",
-                           "host": host, "port": port, "label": key,
+                           "host": host, "port": port, "label": label,
                            "required": kit.get("required", False)})
 
     # 2. live entities from the discover snapshot
@@ -198,6 +238,14 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
         if c.get("required"):
             return "fail", f"key_env {c.get('key_env')}: empty or unset"
         return "unconfigured", f"key_env {c.get('key_env')}: not configured (optional)"
+    if prim == "tg-getme":
+        token = (env.get(c.get("key_env", "")) or "").strip().strip('"\'')
+        if not token:
+            if c.get("required"):
+                return "fail", "token empty or unset"
+            return "unconfigured", "token not configured (optional)"
+        ok, detail = check_tg_getme(token, proxy_url(env))
+        return ("ok" if ok else "fail"), detail
     if prim == "tcp":
         ok, detail = check_tcp(c["host"], c["port"])
         return ("ok" if ok else "fail"), detail

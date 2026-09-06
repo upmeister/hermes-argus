@@ -52,10 +52,14 @@ EXPLICIT_FREE_MODELS: dict[str, list[str]] = {
 # deploy-time substitutions inside heartbeat.sh, NOT runtime env keys —
 # removed from checks; HERMES_BOT_* absent on the reference install).
 KIT_ENTRIES = [
-    {"key": "WATCHDOG_BOT_TOKEN", "group": "watchdog", "check": "env", "required": True,
+    {"key": "WATCHDOG_BOT_TOKEN", "group": "watchdog", "check": "tg-getme", "required": True,
+     "label": "Telegram bot (Argus watchdog)",
      "description": "Токен Telegram-бота мониторинга"},
     {"key": "WATCHDOG_CHAT_ID", "group": "watchdog", "check": "env", "required": True,
      "description": "Чат для алертов мониторинга"},
+    {"key": "TELEGRAM_BOT_TOKEN", "group": "messaging", "check": "tg-getme", "required": False,
+     "label": "Telegram bot (Hermes gateway)",
+     "description": "Canonical Hermes gateway Telegram bot token (C3 messenger check)"},
     {"key": "WEBHOOK_SECRET_TOKEN", "group": "watchdog", "check": "env", "required": False,
      "description": "Secret token for the monitoring bot webhook (review 06.09)"},
     {"key": "TELEGRAM_PROXY", "group": "proxy", "check": "tcp", "required": False,

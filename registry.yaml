@@ -3,7 +3,7 @@
 # Регенерация: python3 scripts/gen-registry.py (на сервере, где установлен Hermes).
 meta:
   schema: 1
-  generated_at: "2026-09-06T17:37:18Z"
+  generated_at: "2026-09-06T18:11:57Z"
   source: "config_defaults.py"
   source_sha256: "9fa166a80ae6df481b77bf885ff2506f8e0bc28f47faac20c2c763a520ea40f2"
   entry_count: 154
@@ -15,14 +15,21 @@ free_models:
 kit_entries:
   - key: "WATCHDOG_BOT_TOKEN"
     group: "watchdog"
-    check: "env"
+    check: "tg-getme"
     required: true
+    label: "Telegram bot (Argus watchdog)"
     description: "Токен Telegram-бота мониторинга"
   - key: "WATCHDOG_CHAT_ID"
     group: "watchdog"
     check: "env"
     required: true
     description: "Чат для алертов мониторинга"
+  - key: "TELEGRAM_BOT_TOKEN"
+    group: "messaging"
+    check: "tg-getme"
+    required: false
+    label: "Telegram bot (Hermes gateway)"
+    description: "Canonical Hermes gateway Telegram bot token (C3 messenger check)"
   - key: "WEBHOOK_SECRET_TOKEN"
     group: "watchdog"
     check: "env"
