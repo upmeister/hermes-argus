@@ -1,0 +1,13 @@
+[Unit]
+Description=Hermes Argus Discord control-plane bot (C5)
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.hermes/.env
+ExecStart=%h/.hermes/discord-venv/bin/python %h/scripts/discord-bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+
+[Install]
+WantedBy=default.target
