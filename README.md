@@ -37,8 +37,24 @@ cp config/config.env.template config.env   # fill in your values
 ./deploy.sh
 ```
 
-See `docs/` for module reference. Everything is modular — enable only what you
-need; anything requiring external services is off by default.
+See the Modules section below. Deploy installs only what you enable — anything
+requiring external services is off by default.
+
+## Modules
+
+`deploy.sh` deploys by explicit manifests, filtered by `MODULE_*` flags in
+`config.env` (see `config/config.env.template`):
+
+| Flag | Installs | Default |
+|------|----------|---------|
+| `MODULE_CORE` | watchdog, liveness checks, auto-remediate, network-guard, ssl-expiry, check-updates | ON |
+| `MODULE_INTEGRATIONS` | integration discovery (+ systemd.path watcher), fallback cascade tracker | ON |
+| `MODULE_TG_BOT` | interactive Telegram control-plane bot (poller + webhook) | OFF |
+| `MODULE_ANALYZER` | L3 health-analyzer ecosystem (LLM log analysis) | OFF |
+| `MODULE_HEARTBEAT` | external dead-man's switch (Dead Man's Snitch / GitHub) | OFF |
+
+Cron lines for enabled modules are generated to `/tmp/hermes-argus-crontab.txt`
+— merge them into your crontab, deploy never touches it directly.
 
 ## Status
 

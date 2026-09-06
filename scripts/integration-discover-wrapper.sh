@@ -6,6 +6,15 @@ export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 H="$HOME/.hermes"
 LOG="$H/logs/integration-discover.log"
 
+# Lock: path-триггер и cron-страховка могут сработать одновременно — второй
+# запуск молча пропускаем, иначе алерты о изменениях задваиваются.
+LOCK="/tmp/hermes-argus-discover.lock"
+exec 9>"$LOCK"
+if ! flock -n 9; then
+    echo "[$(date -Is)] discover: уже запущен, пропуск" >> "$LOG"
+    exit 0
+fi
+
 REPORT=$(python3 "$HOME/scripts/integration-discover.py" 2>>"$LOG")
 RC=$?
 echo "[$(date -Is)] discover exit=$RC" >> "$LOG"
