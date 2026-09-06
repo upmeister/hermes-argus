@@ -142,6 +142,8 @@ def route_command(text: str) -> None:
         send_message(webhook.handle_show_logs(lines))
     elif text.startswith("/watchdog"):
         send_message(webhook.handle_watchdog_status())
+    elif text.startswith("/integrations all"):
+        send_message(webhook.handle_integrations_all())
     elif text.startswith("/integrations"):
         send_message(webhook.handle_integrations_check())
     elif text.startswith("/uptime"):

@@ -334,6 +334,84 @@ def handle_integrations_check() -> str:
         return f"{_CROSS} Ошибка: {e}"
 
 
+def handle_integrations_all() -> str:
+    """Full grouped integration view from the health-check-v2 report + registry.
+
+    Reads the cached hourly report (cron :20) instead of re-running checks:
+    a live re-run is C2 (deep check) territory. Falls back to a hint when the
+    report has not been generated yet. Plain text only — the poller's
+    send_message sends without parse_mode.
+    """
+    try:
+        with open(os.path.expanduser("~/.hermes/state/health-check-v2-report.json"),
+                  encoding="utf-8") as f:
+            report = json.load(f)
+    except Exception:
+        return (f"{_WARN} Отчёт health-check-v2 недоступен.\n"
+                "Он создаётся cron-обёрткой (ежечасно :20) или вручную:\n"
+                "~/scripts/health-check-v2-wrapper.sh")
+
+    try:
+        import yaml
+        with open(os.path.expanduser("~/.hermes/state/registry.yaml"),
+                  encoding="utf-8") as f:
+            registry = yaml.safe_load(f) or {}
+    except Exception:
+        registry = {}
+    kit_group = {k.get("key"): k.get("group", "watchdog")
+                 for k in registry.get("kit_entries", []) if isinstance(k, dict)}
+    free_models = report.get("free_models", {})
+
+    marks = {"ok": "✅", "fail": "❌", "unconfigured": "⚪"}
+    buckets: dict[str, list[str]] = {}
+    for c in report.get("checks", []):
+        cid, st = c.get("id", ""), c.get("status", "?")
+        label = c.get("label", cid)
+        detail = c.get("detail", "")
+        if st == "fail":
+            line = f"❌ {label} — {detail}"
+        elif st == "unconfigured":
+            line = f"⚪ {label} — не настроено (опционально)"
+        else:
+            line = f"✅ {label}"
+        # free-tier hint on provider key checks (not on root http checks)
+        if cid.startswith("provider:") and not cid.endswith("#http") \
+                and c.get("primitive") == "env":
+            pname = label.replace("provider ", "", 1)
+            models = next((v for k, v in free_models.items()
+                           if pname == k or pname.startswith(k)), None)
+            if models:
+                line += f" · free: {', '.join(models)}"
+        if cid.startswith("kit:"):
+            g = "kit:" + kit_group.get(cid[4:], "watchdog")
+        else:
+            g = cid.split(":", 1)[0]
+        buckets.setdefault(g, []).append(line)
+
+    titles = {"kit:watchdog": "🛡 Watchdog kit", "kit:proxy": "🌐 Proxy",
+              "kit:infra": "🧰 Infra", "provider": "🤖 AI-провайдеры",
+              "mcp": "🔌 MCP", "local": "🖥 Self-hosted", "envref": "🔑 Env-ключи"}
+    age = ""
+    try:
+        age = datetime.fromisoformat(report.get("updated", "")).astimezone().strftime("%H:%M")
+    except Exception:
+        pass
+
+    lines = [f"🩺 Интеграции — отчёт {age}" if age else "🩺 Интеграции",
+             f"✅ {report.get('ok', 0)} · ❌ {report.get('fail', 0)} · "
+             f"⚪ {report.get('unconfigured', 0)} из {report.get('total', 0)}"]
+    for g, title in titles.items():
+        items = buckets.get(g)
+        if not items:
+            continue
+        lines.append("")
+        lines.append(title)
+        lines.extend(items[:20])
+        if len(items) > 20:
+            lines.append(f"…и ещё {len(items) - 20}")
+    return "\n".join(lines)[:4000]
+
+
 def handle_uptime() -> str:
     """Аптайм сервера."""
     try:
