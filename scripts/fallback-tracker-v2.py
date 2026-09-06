@@ -17,9 +17,14 @@ STATE_FILE = HOME / ".hermes" / "state" / "fallback-tracker-state.json"
 ENV_FILE = HOME / ".hermes" / ".env"
 
 # main-loop хопы: 'Fallback to X/Y: ...' от chat_completion_helpers (не auxiliary_client!)
+# Хоп = ТОЛЬКО 'attached fallback credential pool' (финальное закрепление перехода).
+# Строки 'clearing primary credential pool' — внутренняя кухня ТОГО ЖЕ перехода
+# (одна секунда, та же сессия) — без фильтра один хоп считался дважды
+# и порождал дубли-алерты (урок 2026-09-06).
 HOP_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ \S+ (?:\[\S+\] )?"
-    r"agent\.chat_completion_helpers: Fallback to ([^/\s]+)/(.+?): ")
+    r"agent\.chat_completion_helpers: Fallback to ([^/\s]+)/(.+?): "
+    r"attached fallback credential pool")
 RESTORE_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ \S+ (?:\[\S+\] )?"
     r"agent\.agent_runtime_helpers: Primary runtime restored for new turn: (\S+) \(([^)]+)\)")
