@@ -405,13 +405,18 @@ def handle_integrations_all() -> str:
                 line += f" · free: {', '.join(models)}"
         if cid.startswith("kit:"):
             g = "kit:" + kit_group.get(cid[4:], "watchdog")
+        elif cid.startswith("envkey:"):
+            g = "envkey:" + c.get("category", "setting")
         else:
             g = cid.split(":", 1)[0]
         buckets.setdefault(g, []).append(line)
 
     titles = {"kit:watchdog": "🛡 Watchdog kit", "kit:proxy": "🌐 Proxy",
-              "kit:infra": "🧰 Infra", "provider": "🤖 AI-провайдеры",
-              "mcp": "🔌 MCP", "local": "🖥 Self-hosted", "envref": "🔑 Env-ключи"}
+              "kit:infra": "🧰 Infra", "provider": "🤖 AI-провайдеры (custom)",
+              "envkey:provider": "🤖 AI-провайдеры (built-in)",
+              "envkey:tool": "🔧 Инструменты", "envkey:messaging": "💬 Messaging",
+              "envkey:skill": "🧩 Навыки", "envkey:setting": "⚙️ Прочие ключи",
+              "mcp": "🔌 MCP", "local": "🖥 Self-hosted", "envref": "🔑 Env-refs"}
     age = ""
     try:
         age = datetime.fromisoformat(report.get("updated", "")).astimezone().strftime("%H:%M")
@@ -421,6 +426,12 @@ def handle_integrations_all() -> str:
     lines = [f"🩺 Интеграции — отчёт {age}" if age else "🩺 Интеграции",
              f"✅ {report.get('ok', 0)} · ❌ {report.get('fail', 0)} · "
              f"⚪ {report.get('unconfigured', 0)} из {report.get('total', 0)}"]
+    ams = report.get("active_models") or []
+    if ams:
+        lines.append("")
+        lines.append("🎯 Активные модели")
+        for m in ams:
+            lines.append(f"• {m.get('role')}: {m.get('provider')}/{m.get('model')}")
     for g, title in titles.items():
         items = buckets.get(g)
         if not items:

@@ -214,6 +214,16 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
             key = ent.get("name", "")
             checks.append({"id": eid, "entity": eid, "primitive": "env",
                            "key_env": key, "label": f"envref {key}"})
+        elif etype == "envkey":
+            # discover v2 layer 2: registry key set in .env = configured integration
+            checks.append({"id": eid, "entity": eid, "primitive": "env",
+                           "key_env": ent.get("name", ""),
+                           "label": ent.get("name", ""),
+                           "category": ent.get("category", "setting"),
+                           "required": False})
+        elif etype == "activemodel":
+            # informational: rendered by /integrations from report["active_models"]
+            continue
         elif etype == "local":
             url = ent.get("url", "")
             if url:
@@ -289,15 +299,22 @@ def main() -> None:
         status, detail = run_check(c, args.hermes_bin, env)
         results.append({"id": c["id"], "label": c["label"], "primitive": c["primitive"],
                         "status": status, "detail": detail,
+                        "category": c.get("category", ""),
                         "registry": c.get("registry", {})})
 
     fails = [r for r in results if r["status"] == "fail"]
     unconf = [r for r in results if r["status"] == "unconfigured"]
+    active_models = [
+        {"role": e.get("role"), "provider": e.get("provider"), "model": e.get("model")}
+        for e in (snapshot.get("entities") or {}).values()
+        if e.get("type") == "activemodel"
+    ]
     report = {
         "updated": datetime.now(timezone.utc).isoformat(),
         "total": len(results), "ok": len(results) - len(fails) - len(unconf),
         "fail": len(fails), "unconfigured": len(unconf),
         "checks": results,
+        "active_models": active_models,
         "free_models": registry.get("free_models", {}),
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
