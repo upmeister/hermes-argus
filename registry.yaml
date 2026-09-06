@@ -3,7 +3,7 @@
 # Регенерация: python3 scripts/gen-registry.py (на сервере, где установлен Hermes).
 meta:
   schema: 1
-  generated_at: "2026-09-06T18:11:57Z"
+  generated_at: "2026-09-06T20:07:40Z"
   source: "config_defaults.py"
   source_sha256: "9fa166a80ae6df481b77bf885ff2506f8e0bc28f47faac20c2c763a520ea40f2"
   entry_count: 154
@@ -24,6 +24,11 @@ kit_entries:
     check: "env"
     required: true
     description: "Чат для алертов мониторинга"
+  - key: "WATCHDOG_ALLOWED_USER_ID"
+    group: "watchdog"
+    check: "env"
+    required: false
+    description: "Telegram UID владельца (доступ к командам бота)"
   - key: "TELEGRAM_BOT_TOKEN"
     group: "messaging"
     check: "tg-getme"
@@ -40,6 +45,16 @@ kit_entries:
     check: "tcp"
     required: false
     description: "Smart-proxy для Telegram (по умолчанию 127.0.0.1:8444)"
+  - key: "CRONPING_TOKEN"
+    group: "infra"
+    check: "env"
+    required: false
+    description: "Ping-токен Cronping heartbeat (cronping.com)"
+  - key: "DMS_SNITCH"
+    group: "infra"
+    check: "env"
+    required: false
+    description: "ID snitch Dead Man's Snitch (runtime key, C4)"
   - key: "GH_TOKEN"
     group: "infra"
     check: "env"
