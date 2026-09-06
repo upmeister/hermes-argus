@@ -38,24 +38,29 @@ FREE_RE = re.compile(r"(?:^|[:\-_/])free(?:$|[:\-_/])", re.IGNORECASE)
 # его целиком free = ложь. Модельный список (explicit_free_models) — вопрос B3.
 EXPLICIT_FREE_PROVIDERS: list[str] = []
 
-# kit-группы argus: ключи, которые деплоит сам kit (предложение ZCode,
-# сверить на ревью). check — примитив health-check-v2 по умолчанию.
+# Per-provider lists of known free-tier models (data, not code — review 06.09).
+# Keyed by the provider name as it appears in fallback log hops; seeded from
+# the observed cascade (openrouter/minimax-m3), correct in review when the
+# tracker sees new free models.
+EXPLICIT_FREE_MODELS: dict[str, list[str]] = {
+    "openrouter": ["minimax-m3"],
+}
+
+# kit-группы argus: ключи, которые деплоит сам kit. check — примитив
+# health-check-v2 по умолчанию. required=False = feature-scoped key: missing
+# in .env is "unconfigured", not a failure (review 06.09: DMS_* live as
+# deploy-time substitutions inside heartbeat.sh, NOT runtime env keys —
+# removed from checks; HERMES_BOT_* absent on the reference install).
 KIT_ENTRIES = [
-    {"key": "WATCHDOG_BOT_TOKEN", "group": "watchdog", "check": "env",
+    {"key": "WATCHDOG_BOT_TOKEN", "group": "watchdog", "check": "env", "required": True,
      "description": "Токен Telegram-бота мониторинга"},
-    {"key": "WATCHDOG_CHAT_ID", "group": "watchdog", "check": "env",
+    {"key": "WATCHDOG_CHAT_ID", "group": "watchdog", "check": "env", "required": True,
      "description": "Чат для алертов мониторинга"},
-    {"key": "HERMES_BOT_TOKEN", "group": "watchdog", "check": "env",
-     "description": "Токен основного бота Hermes (команды /logs)"},
-    {"key": "HERMES_BOT_UID", "group": "watchdog", "check": "env",
-     "description": "Telegram UID владельца (доступ к командам)"},
-    {"key": "TELEGRAM_PROXY", "group": "proxy", "check": "tcp",
+    {"key": "WEBHOOK_SECRET_TOKEN", "group": "watchdog", "check": "env", "required": False,
+     "description": "Secret token for the monitoring bot webhook (review 06.09)"},
+    {"key": "TELEGRAM_PROXY", "group": "proxy", "check": "tcp", "required": False,
      "description": "Smart-proxy для Telegram (по умолчанию 127.0.0.1:8444)"},
-    {"key": "DMS_SNITCH", "group": "infra", "check": "env",
-     "description": "ID snitch Dead Man's Snitch"},
-    {"key": "DMS_API_KEY", "group": "infra", "check": "env",
-     "description": "API-ключ Dead Man's Snitch"},
-    {"key": "GH_TOKEN", "group": "infra", "check": "env",
+    {"key": "GH_TOKEN", "group": "infra", "check": "env", "required": False,
      "description": "GitHub PAT для gh-heartbeat"},
 ]
 
@@ -215,6 +220,11 @@ def emit_registry(meta: dict, entries: dict) -> str:
     lines.extend(ydict({"meta": meta}))
     lines.append(f"free_regex: {yscalar(FREE_RE.pattern)}")
     lines.append(f"explicit_free_providers: {yinline(EXPLICIT_FREE_PROVIDERS)}")
+    if EXPLICIT_FREE_MODELS:
+        lines.append("free_models:")
+        lines.extend(ydict(EXPLICIT_FREE_MODELS, indent="  "))
+    else:
+        lines.append("free_models: {}")
     lines.append("kit_entries:")
     lines.extend(ylist_of_dicts(KIT_ENTRIES, indent="  "))
     lines.append("entries:")

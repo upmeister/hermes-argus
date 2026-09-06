@@ -3,45 +3,40 @@
 # Регенерация: python3 scripts/gen-registry.py (на сервере, где установлен Hermes).
 meta:
   schema: 1
-  generated_at: "2026-09-06T16:35:45Z"
+  generated_at: "2026-09-06T17:37:18Z"
   source: "config_defaults.py"
   source_sha256: "9fa166a80ae6df481b77bf885ff2506f8e0bc28f47faac20c2c763a520ea40f2"
   entry_count: 154
   hermes_version: "0.21.0"
 free_regex: "(?:^|[:\\-_/])free(?:$|[:\\-_/])"
 explicit_free_providers: []
+free_models:
+  openrouter: ["minimax-m3"]
 kit_entries:
   - key: "WATCHDOG_BOT_TOKEN"
     group: "watchdog"
     check: "env"
+    required: true
     description: "Токен Telegram-бота мониторинга"
   - key: "WATCHDOG_CHAT_ID"
     group: "watchdog"
     check: "env"
+    required: true
     description: "Чат для алертов мониторинга"
-  - key: "HERMES_BOT_TOKEN"
+  - key: "WEBHOOK_SECRET_TOKEN"
     group: "watchdog"
     check: "env"
-    description: "Токен основного бота Hermes (команды /logs)"
-  - key: "HERMES_BOT_UID"
-    group: "watchdog"
-    check: "env"
-    description: "Telegram UID владельца (доступ к командам)"
+    required: false
+    description: "Secret token for the monitoring bot webhook (review 06.09)"
   - key: "TELEGRAM_PROXY"
     group: "proxy"
     check: "tcp"
+    required: false
     description: "Smart-proxy для Telegram (по умолчанию 127.0.0.1:8444)"
-  - key: "DMS_SNITCH"
-    group: "infra"
-    check: "env"
-    description: "ID snitch Dead Man's Snitch"
-  - key: "DMS_API_KEY"
-    group: "infra"
-    check: "env"
-    description: "API-ключ Dead Man's Snitch"
   - key: "GH_TOKEN"
     group: "infra"
     check: "env"
+    required: false
     description: "GitHub PAT для gh-heartbeat"
 entries:
   - key: "NOUS_BASE_URL"
