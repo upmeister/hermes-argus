@@ -96,8 +96,9 @@ CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.s
 CORE_SYSTEMD=(hermes-dashboard.service hermes-dashboard.service.d/memory-limits.conf \
               hermes-gateway.service hermes-gateway.service.d/memory-limits.conf)
 
-# INTEGRATIONS: discover конфига + каскад-трекер фолбека (ядро Argus v2)
-INTEGRATIONS_HOME_SCRIPTS=(integration-discover.py integration-discover-wrapper.sh fallback-tracker-v2.py)
+# INTEGRATIONS: discover конфига + каскад-трекер фолбека + health-check v2 (ядро Argus v2)
+INTEGRATIONS_HOME_SCRIPTS=(integration-discover.py integration-discover-wrapper.sh fallback-tracker-v2.py \
+                           health-check-v2.py health-check-v2-wrapper.sh)
 INTEGRATIONS_HERMES_SCRIPTS=(health-check-integrations.sh)
 INTEGRATIONS_SYSTEMD=(hermes-vps-kit-config.path hermes-vps-kit-discover.service)
 
@@ -157,10 +158,13 @@ fi
 
 if module_enabled MODULE_INTEGRATIONS; then
     echo ""
-    echo "📁 [INTEGRATIONS] discover + каскад-трекер..."
+    echo "📁 [INTEGRATIONS] discover + каскад-трекер + health-check v2..."
     deploy_scripts "$HOME_DIR/scripts" "${INTEGRATIONS_HOME_SCRIPTS[@]}"
     deploy_scripts "$HERMES_DIR/scripts" "${INTEGRATIONS_HERMES_SCRIPTS[@]}"
     deploy_systemd "${INTEGRATIONS_SYSTEMD[@]}"
+    if [ -f "$REPO_DIR/registry.yaml" ]; then
+        deploy_template "$REPO_DIR/registry.yaml" "$HERMES_DIR/state/registry.yaml" "registry.yaml"
+    fi
 fi
 
 if module_enabled MODULE_TG_BOT; then
@@ -202,6 +206,7 @@ CRON_TMP=$(mktemp)
     if module_enabled MODULE_INTEGRATIONS; then
         echo "*/10 * * * * $HOME_DIR/scripts/integration-discover-wrapper.sh >> $HERMES_DIR/logs/integration-discover-cron.log 2>&1"
         echo "*/5 * * * * python3 $HOME_DIR/scripts/fallback-tracker-v2.py >> $HERMES_DIR/logs/fallback-tracker-v2.log 2>&1"
+        echo "20 * * * * $HOME_DIR/scripts/health-check-v2-wrapper.sh >> $HERMES_DIR/logs/health-check-v2.log 2>&1"
     fi
     if module_enabled MODULE_ANALYZER; then
         echo "5 * * * * cd $HERMES_DIR/scripts && python3 health-analyzer.py --update >> $HERMES_DIR/logs/health-analyzer.log 2>&1"
