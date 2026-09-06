@@ -103,7 +103,7 @@ INTEGRATIONS_HERMES_SCRIPTS=(health-check-integrations.sh)
 INTEGRATIONS_SYSTEMD=(hermes-vps-kit-config.path hermes-vps-kit-discover.service)
 
 # TG_BOT: интерактивный мониторинг-бот (control plane) — OFF по умолчанию
-TG_BOT_HOME_SCRIPTS=(webhook.py)
+TG_BOT_HOME_SCRIPTS=(webhook.py ai-deep-check.py)
 TG_BOT_HERMES_SCRIPTS=(monitoring-bot-poller.py)
 
 # ANALYZER: L3 health-analyzer экосистема (LLM-анализ логов) — OFF по умолчанию
