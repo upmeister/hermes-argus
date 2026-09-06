@@ -124,6 +124,9 @@ deploy_scripts() {
 
 deploy_systemd() {
     local relpath service_name conf_name target_dir
+    # Базовые юниты управляются Hermes (refresh_systemd_unit_if_needed их
+    # перезаписывает) — не перезаписываем существующие, лимиты только через drop-in.
+    local base_units=" hermes-gateway.service hermes-dashboard.service "
     for relpath in "$@"; do
         local unit="$MODULES_DIR/systemd/$relpath"
         if [[ "$relpath" == */* ]]; then
@@ -134,6 +137,10 @@ deploy_systemd() {
             mkdir -p "$target_dir"
             deploy_template "$unit" "$target_dir/$conf_name" "systemd: $relpath"
         else
+            if [[ "$base_units" == *" $relpath "* ]] && [ -f "$HOME_DIR/.config/systemd/user/$relpath" ]; then
+                echo "   ⏭️  systemd: $relpath уже существует (управляется Hermes) — пропускаю (лимиты через drop-in)"
+                continue
+            fi
             deploy_template "$unit" "$HOME_DIR/.config/systemd/user/$relpath" "systemd: $relpath"
         fi
     done
