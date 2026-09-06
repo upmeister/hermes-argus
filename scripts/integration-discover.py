@@ -72,6 +72,20 @@ def extract_entities():
                                        "key_present": env.get(v, False)}
     except FileNotFoundError:
         pass
+
+    # Literal URL-ключи (self-hosted: SearXNG, LM Studio, Ollama, Honcho self...).
+    # Hermes знает их как OPTIONAL_ENV_VARS; юзер пишет значение прямо в config.yaml
+    # (НЕ ${VAR}) — потому отдельный extract-канал (урок 2026-09-06: диспетчер
+    # молчал на SearXNG, пока не добавили этот канал).
+    KNOWN_URL_KEYS = (
+        "SEARXNG_URL", "SEARXNG_BASE_URL", "HONCHO_BASE_URL", "OLLAMA_BASE_URL",
+        "LM_BASE_URL", "LMSTUDIO_BASE_URL", "FIRECRAWL_API_URL", "CAMOFOX_URL",
+    )
+    for key in KNOWN_URL_KEYS:
+        val = cfg.get(key)
+        if isinstance(val, str) and val.startswith("http"):
+            entities[f"local:{key}"] = {"type": "local", "name": key, "url": val}
+
     return entities, env
 
 
