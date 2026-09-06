@@ -200,7 +200,7 @@ run_full() {
 
     # 1. OpenCode Go API (critical)
     check_url "OpenCode Go API" "https://opencode.ai/zen/go/v1/models" "200" \
-        "Authorization: Bearer ${OPEN...Y:-}" || true
+        "Authorization: Bearer ${OPENCODE_GO_API_KEY:-}" || true
     status_hint_daily "OpenCode Go API" "https://deepseek.statuspage.io/api/v2/status.json"
 
     # 2. SearXNG (critical, local)
@@ -208,7 +208,7 @@ run_full() {
 
     # 3. Firecrawl
     check_url "Firecrawl API" "https://api.firecrawl.dev/v1/team/credit-usage" "200" \
-        "Authorization: Bearer ${FIRE...Y:-}" || true
+        "Authorization: Bearer ${FIRECRAWL_API_KEY:-}" || true
 
     # 4. Telegram Bot API (critical, через TELEGRAM_PROXY — РКН)
     check_url "Telegram Bot API" \
@@ -217,7 +217,7 @@ run_full() {
 
     # 5. GitHub API
     check_url "GitHub API" "https://api.github.com/user" "200" \
-        "Authorization: Bearer ${GITH...:-}}" || true
+        "Authorization: Bearer ${GITHUB_TOKEN:-}" || true
     status_hint_daily "GitHub API" "https://www.githubstatus.com/api/v2/summary.json"
 
     # 6. DuckDuckGo (fallback search; тоже РКН-блокируется)
@@ -232,7 +232,7 @@ run_full() {
 
     # 9. Groq API (STT/vision)
     check_url "Groq API" "https://api.groq.com/openai/v1/models" "200" \
-        "Authorization: Bearer ***" || true
+        "Authorization: Bearer ${GROQ_API_KEY:-}" || true
     status_hint_daily "Groq API" "https://groqstatus.com/api/v2/status.json"
 
     # 10. OpenRouter API. Все используемые модели — free-тир (z-ai/glm-5.2:free default,
@@ -240,7 +240,7 @@ run_full() {
         #     рудимент vision-on-OR (14-19.08, сожгла $11.9, фикс 20.08 → custom:groq).
         #     Вернуть, если появятся платные OR-модели.
         check_url "OpenRouter API" "https://openrouter.ai/api/v1/models" "200" \
-            "Authorization: Bearer ${OPEN...Y:-}" || true
+            "Authorization: Bearer ${OPENROUTER_API_KEY:-}" || true
 
     # 11. Honcho API (memory provider; без auth — любой HTTP = жив)
     check_alive "Honcho API" "https://api.honcho.dev/" || true
