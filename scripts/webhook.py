@@ -412,6 +412,31 @@ def handle_integrations_all() -> str:
     return "\n".join(lines)[:4000]
 
 
+def handle_deep_check() -> str:
+    """C2: deep AI check (chat max_tokens=1) by button/command.
+
+    BUTTON-ONLY: never scheduled; chat calls are gated to known free models
+    inside ai-deep-check.py. Runs synchronously — the poller dispatches each
+    update in its own thread, so a long check does not block other commands.
+    """
+    try:
+        r = subprocess.run(
+            ["python3", os.path.expanduser("~/scripts/ai-deep-check.py")],
+            capture_output=True, text=True, timeout=240)
+        out = (r.stdout or "").strip()
+        if not out:
+            err = (r.stderr or "").strip()
+            msg = f"пустой вывод (exit {r.returncode})"
+            if err:
+                msg += ": " + err[-200:]
+            return f"{_CROSS} Deep check: {msg}"
+        return "🧪 **Deep AI check**\n" + (out[-3500:] if len(out) > 3500 else out)
+    except subprocess.TimeoutExpired:
+        return f"{_CROSS} Deep check превысил таймаут 240с"
+    except Exception as e:
+        return f"{_CROSS} Ошибка: {e}"
+
+
 def handle_uptime() -> str:
     """Аптайм сервера."""
     try:
@@ -469,7 +494,10 @@ def menu_keyboard():
                 {"text": "\U0001f50c Интеграции", "callback_data": "integrations"},
             ],
             [
+                {"text": "\U0001f9ea Deep AI", "callback_data": "deep_ai"},
                 {"text": "\U0001f4cb Логи", "callback_data": "show_logs"},
+            ],
+            [
                 {"text": "\U0001f507 Silence", "callback_data": "silence_1h"},
             ],
         ]
@@ -529,6 +557,10 @@ def handle_callback_query(query: dict) -> None:
         send_message(handle_watchdog_status(), silent=True)
     elif action == "integrations":
         send_message(handle_integrations_check(), silent=True)
+    elif action == "deep_ai":
+        log_to_changelog("Deep AI check (кнопка)", "chat max_tokens=1, free-models gated")
+        send_message("🧪 Deep check запущен (до ~2 мин)...", silent=True)
+        send_message(handle_deep_check(), silent=True)
     elif action == "uptime":
         send_message(handle_uptime(), silent=True)
     elif action == "reboot_confirm":
