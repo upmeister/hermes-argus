@@ -32,7 +32,10 @@ DEFAULT_OUT = REPO_ROOT / "registry.yaml"
 FREE_RE = re.compile(r"(?:^|[:\-_/])free(?:$|[:\-_/])", re.IGNORECASE)
 
 # Провайдеры без free-маркера в имени — явный free-флаг. Заполняется вручную
-# по данным fallback-tracker (план, раздел 10; пример — opencode-go minimax-m3).
+# по данным fallback-tracker (план, раздел 10). Ревью Питной 06.09: на сервере
+# список пуст — free-тиры это MODEL-уровень (minimax-m3 через opencode-go),
+# провайдер OPENCODE_GO_API_KEY обслуживает и платные primary-модели, помечать
+# его целиком free = ложь. Модельный список (explicit_free_models) — вопрос B3.
 EXPLICIT_FREE_PROVIDERS: list[str] = []
 
 # kit-группы argus: ключи, которые деплоит сам kit (предложение ZCode,
@@ -220,9 +223,10 @@ def emit_registry(meta: dict, entries: dict) -> str:
         for f in FIELD_ORDER:
             if f in d and d[f] is not None:
                 rec[f] = d[f]
-        # free = провайдер на free-тире: regex по имени ключа у provider-записей
-        # (для не-provider ключей regex даёт семантический шум: MATTERMOST_FREE_*)
-        rec["free"] = bool(FREE_RE.search(key)) if d.get("category") == "provider" else False
+        # free = провайдер на free-тире: regex по имени ключа ИЛИ явный список
+        # (фикс ревью 06.09: раньше explicit-список учитывался только в принте)
+        rec["free"] = (bool(FREE_RE.search(key)) or key in EXPLICIT_FREE_PROVIDERS) \
+            if d.get("category") == "provider" else False
         lines.extend(ylist_of_dicts([rec], indent="  "))
     return "\n".join(lines)
 
@@ -267,7 +271,8 @@ def main() -> None:
 
     cats = Counter(d.get("category") for d in entries.values())
     free_hits = [k for k, d in entries.items()
-                 if bool(FREE_RE.search(k)) or k in EXPLICIT_FREE_PROVIDERS]
+                 if d.get("category") == "provider"
+                 and (bool(FREE_RE.search(k)) or k in EXPLICIT_FREE_PROVIDERS)]
     print(f"OK: {len(entries)} записей + {len(KIT_ENTRIES)} kit -> {args.out}")
     print(f"категории: {dict(cats)}")
     print(f"free по regex: {len(free_hits)}: {free_hits}")
