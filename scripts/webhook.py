@@ -295,15 +295,19 @@ def handle_watchdog_status() -> str:
                 capture_output=True, text=True, timeout=5
             ).stdout.strip() == "active"
             lines.append(f"{_CHECK if ok else _CROSS} Сервис {s}")
-        # Netdata — SYSTEM-юнит (не user) и биндится на HERMES_HOST, поэтому
-        # проверяем HTTP API, а не systemctl --user (фикс 2026-09-07: ложный
-        # негатив «сломана» при живой netdata на Tailscale IP).
-        code = subprocess.run(
-            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "6",
-             "http://@HERMES_HOST@:@NETDATA_PORT@/api/v1/info"],
-            capture_output=True, text=True, timeout=10
-        ).stdout.strip() or "000"
-        lines.append(f"{_CHECK if code == '200' else _CROSS} Netdata API (HTTP {code})")
+        # Netdata — SYSTEM-юнит (не user); биндится на HERMES_HOST, на части
+        # установок — на loopback. Пробуем оба адреса, первый HTTP 200 wins
+        # (фикс 2026-09-07: ложный негатив «сломана» при живой netdata).
+        nd = "000"
+        for host in dict.fromkeys(["@HERMES_HOST@", "127.0.0.1"]):
+            nd = subprocess.run(
+                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "6",
+                 f"http://{host}:@NETDATA_PORT@/api/v1/info"],
+                capture_output=True, text=True, timeout=10
+            ).stdout.strip() or "000"
+            if nd == "200":
+                break
+        lines.append(f"{_CHECK if nd == '200' else _CROSS} Netdata API (HTTP {nd})")
         cron = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
         for name in ["hermes-watchdog", "gateway-liveness", "dashboard-liveness"]:
             lines.append(f"{_CHECK if name in cron.stdout else _CROSS} Cron {name}")
@@ -396,6 +400,8 @@ def handle_integrations_all() -> str:
             line = f"✅ {label}"
             if cid in root_ok:
                 line += f" · root {root_ok[cid]}"
+            if "endpoint" in detail:
+                line += f" — {detail}"
         # free-tier hint on provider key checks (not on root http checks)
         if cid.startswith("provider:") and not cid.endswith("#http") \
                 and c.get("primitive") == "env":
