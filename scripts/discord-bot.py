@@ -61,6 +61,7 @@ cmd("integrations_all", webhook.handle_integrations_all)
 cmd("watchdog", webhook.handle_watchdog_status)
 cmd("uptime", webhook.handle_uptime)
 cmd("deepcheck", webhook.handle_deep_check)
+cmd("settings", webhook.handle_settings)
 
 
 @bot.command(name="help")

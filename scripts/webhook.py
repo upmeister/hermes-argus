@@ -20,6 +20,7 @@
 
 import json
 import os
+import re
 import subprocess
 import threading
 from datetime import datetime, timezone
@@ -467,6 +468,83 @@ def handle_deep_check() -> str:
         return f"{_CROSS} Deep check превысил таймаут 240с"
     except Exception as e:
         return f"{_CROSS} Ошибка: {e}"
+
+
+def _mask(value: str) -> str:
+    """Mask a secret: show only that it is set + last 4 chars."""
+    v = (value or "").strip().strip('"\'')
+    if not v:
+        return "— не задано"
+    return "****" + v[-4:] if len(v) > 4 else "****"
+
+
+def handle_settings() -> str:
+    """S1 (plan §13): read-only settings view. Sources: ~/.hermes/.env (runtime
+    secrets) and config.env (deploy-time MODULE_* flags) when it can be located.
+    NEVER prints secret values — masked via _mask(). No mutations (S2/S3 later)."""
+    env = {}
+    try:
+        for line in open(os.path.expanduser("~/.hermes/.env"),
+                         encoding="utf-8", errors="replace"):
+            m = re.match(r"^([A-Z_0-9]+)=", line.strip())
+            if m:
+                env[m.group(1)] = line.split("=", 1)[1]
+    except OSError:
+        pass
+
+    cfg = {}
+    for cand in (os.path.expanduser("~/hermes-argus/config.env"),
+                 os.path.expanduser("~/hermes-vps-kit/config.env")):
+        if os.path.exists(cand):
+            try:
+                for line in open(cand, encoding="utf-8", errors="replace"):
+                    m = re.match(r'^\s*(MODULE_[A-Z_]+)\s*=\s*"?(\w+)"?', line)
+                    if m:
+                        cfg[m.group(1)] = m.group(2)
+            except OSError:
+                pass
+            break
+
+    def val(key: str) -> str:
+        return (env.get(key, "") or "").strip().strip('"\'')
+
+    lines = ["⚙️ Настройки Argus (read-only)", ""]
+
+    lines.append("🧩 Модули (config.env):")
+    if cfg:
+        for k in sorted(cfg):
+            lines.append(f"• {k} = {cfg[k]}")
+    else:
+        lines.append("• config.env не найден — модули задаются установщиком")
+    lines.append("")
+
+    lines.append("💬 Каналы:")
+    lines.append(f"• WATCHDOG_BOT_TOKEN: {_mask(val('WATCHDOG_BOT_TOKEN'))}")
+    lines.append(f"• WATCHDOG_CHAT_ID: {_mask(val('WATCHDOG_CHAT_ID'))}")
+    lines.append(f"• WATCHDOG_ALLOWED_USER_ID: {_mask(val('WATCHDOG_ALLOWED_USER_ID'))}")
+    lines.append(f"• WEBHOOK_SECRET_TOKEN: {_mask(val('WEBHOOK_SECRET_TOKEN'))}")
+    lines.append(f"• TELEGRAM_BOT_TOKEN: {_mask(val('TELEGRAM_BOT_TOKEN'))}")
+    lines.append(f"• DISCORD_BOT_TOKEN: {_mask(val('DISCORD_BOT_TOKEN'))}")
+    lines.append(f"• DISCORD_ALLOWED_USER_IDS: {_mask(val('DISCORD_ALLOWED_USER_IDS'))}")
+    lines.append("")
+
+    lines.append("💓 Heartbeat:")
+    lines.append(f"• CRONPING_TOKEN: {_mask(val('CRONPING_TOKEN'))}")
+    lines.append(f"• DMS_SNITCH: {_mask(val('DMS_SNITCH'))}")
+    lines.append(f"• GH_TOKEN: {_mask(val('GH_TOKEN'))}")
+    lines.append(f"• GITHUB_REPO: {val('GITHUB_REPO') or '— не задано'}")
+    lines.append("")
+
+    lines.append("🌐 Сеть:")
+    lines.append(f"• HERMES_HOST: {val('HERMES_HOST') or '127.0.0.1'} · NETDATA_PORT: {val('NETDATA_PORT') or '19999'}")
+    lines.append(f"• TELEGRAM_PROXY: {val('TELEGRAM_PROXY') or 'дефолт 127.0.0.1:8444'}")
+    lines.append("")
+
+    lines.append(f"🎚 Поведение: BREAKER_MAX = {val('BREAKER_MAX') or '3'}")
+    lines.append("")
+    lines.append("Изменения: модули/поведение — config.env → ./deploy.sh; секреты — "
+                 "~/.hermes/.env → рестарт сервиса. /settings только читает (S1).")
+    return "\n".join(lines)[:3500]
 
 
 def handle_uptime() -> str:

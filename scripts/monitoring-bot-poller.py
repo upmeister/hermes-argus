@@ -151,6 +151,8 @@ def route_command(text: str) -> None:
     elif text.startswith("/deepcheck"):
         send_message("🧪 Deep check AI-провайдеров запущен (до ~2 мин)...")
         send_message(webhook.handle_deep_check())
+    elif text.startswith("/settings"):
+        send_message(webhook.handle_settings())
     elif text.startswith("/uptime"):
         send_message(webhook.handle_uptime())
     elif text.startswith("/reboot_confirm"):
