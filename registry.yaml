@@ -3,7 +3,7 @@
 # Регенерация: python3 scripts/gen-registry.py (на сервере, где установлен Hermes).
 meta:
   schema: 1
-  generated_at: "2026-09-06T20:07:40Z"
+  generated_at: "2026-09-07T00:51:03Z"
   source: "config_defaults.py"
   source_sha256: "9fa166a80ae6df481b77bf885ff2506f8e0bc28f47faac20c2c763a520ea40f2"
   entry_count: 154
@@ -77,6 +77,9 @@ entries:
     password: true
     advanced: true
     free: false
+    check_url: "https://openrouter.ai/api/v1/models"
+    check_auth: "bearer"
+    check_mode: "200"
   - key: "GOOGLE_API_KEY"
     description: "Google AI Studio API key (also recognized as GEMINI_API_KEY)"
     prompt: "Google AI Studio API key"
@@ -488,6 +491,9 @@ entries:
     tools: ["web_search", "web_extract"]
     password: true
     free: false
+    check_url: "https://api.firecrawl.dev/v1/team/credit-usage"
+    check_auth: "bearer"
+    check_mode: "200"
   - key: "FIRECRAWL_API_URL"
     description: "Firecrawl API URL for self-hosted instances (optional)"
     prompt: "Firecrawl API URL (leave empty for cloud)"
@@ -673,6 +679,9 @@ entries:
     url: "https://github.com/settings/tokens"
     password: true
     free: false
+    check_url: "https://api.github.com/user"
+    check_auth: "bearer"
+    check_mode: "200"
   - key: "NOTION_API_KEY"
     description: "Notion integration token (used by the `notion` skill)"
     prompt: "Notion API key"
@@ -713,6 +722,9 @@ entries:
     tools: ["honcho_context"]
     password: true
     free: false
+    check_url: "https://api.honcho.dev/"
+    check_auth: "none"
+    check_mode: "alive"
   - key: "HONCHO_BASE_URL"
     description: "Base URL for self-hosted Honcho instances (no API key needed)"
     prompt: "Honcho base URL (e.g. http://localhost:8000)"

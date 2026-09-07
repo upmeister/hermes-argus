@@ -46,6 +46,18 @@ EXPLICIT_FREE_MODELS: dict[str, list[str]] = {
     "openrouter": ["minimax-m3"],
 }
 
+# Per-key endpoint checks (data, not code — ported from legacy full-mode checks):
+#   key -> (url, auth, mode)
+#   auth: "bearer" — Authorization: Bearer <key value>; "none" — anonymous
+#   mode: "200" — expect HTTP 200; "alive" — any non-000 response passes
+# Presence-only keys (no entry here) are still checked for "key is set".
+CHECK_URLS = {
+    "OPENROUTER_API_KEY": ("https://openrouter.ai/api/v1/models", "bearer", "200"),
+    "GITHUB_TOKEN": ("https://api.github.com/user", "bearer", "200"),
+    "FIRECRAWL_API_KEY": ("https://api.firecrawl.dev/v1/team/credit-usage", "bearer", "200"),
+    "HONCHO_API_KEY": ("https://api.honcho.dev/", "none", "alive"),
+}
+
 # kit-группы argus: ключи, которые деплоит сам kit. check — примитив
 # health-check-v2 по умолчанию. required=False = feature-scoped key: missing
 # in .env is "unconfigured", not a failure (review 06.09: DMS_* live as
@@ -248,6 +260,8 @@ def emit_registry(meta: dict, entries: dict) -> str:
         # (фикс ревью 06.09: раньше explicit-список учитывался только в принте)
         rec["free"] = (bool(FREE_RE.search(key)) or key in EXPLICIT_FREE_PROVIDERS) \
             if d.get("category") == "provider" else False
+        if key in CHECK_URLS:
+            rec["check_url"], rec["check_auth"], rec["check_mode"] = CHECK_URLS[key]
         lines.extend(ylist_of_dicts([rec], indent="  "))
     return "\n".join(lines)
 

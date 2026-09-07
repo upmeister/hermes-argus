@@ -107,22 +107,24 @@ def load_registry(path: Path) -> dict:
         sys.exit("FATAL: PyYAML not available (same dependency as integration-discover.py)")
 
 
-def curl_code(url: str, timeout: int) -> str:
+def curl_code(url: str, timeout: int, token: str = "") -> str:
     try:
-        r = subprocess.run(
-            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-             "--max-time", str(timeout), url],
-            capture_output=True, text=True, timeout=timeout + 5)
+        cmd = ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+               "--max-time", str(timeout)]
+        if token:
+            cmd += ["-H", f"Authorization: Bearer {token}"]
+        cmd.append(url)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
         return r.stdout.strip() or "000"
     except subprocess.TimeoutExpired:
         return "000"
 
 
-def check_http(url: str, alive_only: bool, retries: int) -> tuple[bool, str]:
+def check_http(url: str, alive_only: bool, retries: int, token: str = "") -> tuple[bool, str]:
     """GET url. http: 2xx/3xx pass. http-alive: any non-000 passes (401 = alive)."""
     code = "000"
     for attempt in range(retries):
-        code = curl_code(url, HTTP_TIMEOUT)
+        code = curl_code(url, HTTP_TIMEOUT, token=token)
         ok = (code != "000") if alive_only else (code.startswith("2") or code.startswith("3"))
         if ok:
             return True, f"HTTP {code}"
@@ -220,6 +222,9 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
                            "key_env": ent.get("name", ""),
                            "label": ent.get("name", ""),
                            "category": ent.get("category", "setting"),
+                           "check_url": ent.get("check_url", ""),
+                           "check_auth": ent.get("check_auth", ""),
+                           "check_mode": ent.get("check_mode", ""),
                            "required": False})
         elif etype == "activemodel":
             # informational: rendered by /integrations from report["active_models"]
@@ -243,11 +248,19 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
     """Returns (status, detail): ok | fail | unconfigured."""
     prim = c["primitive"]
     if prim == "env":
-        if bool(c.get("key_env")) and bool(env.get(c["key_env"], "")):
-            return "ok", f"key_env {c.get('key_env')}: set"
-        if c.get("required"):
-            return "fail", f"key_env {c.get('key_env')}: empty or unset"
-        return "unconfigured", f"key_env {c.get('key_env')}: not configured (optional)"
+        if not (bool(c.get("key_env")) and bool(env.get(c["key_env"], ""))):
+            if c.get("required"):
+                return "fail", f"key_env {c.get('key_env')}: empty or unset"
+            return "unconfigured", f"key_env {c.get('key_env')}: not configured (optional)"
+        # value-level check: registry may carry a real endpoint for this key
+        c_url = c.get("check_url", "")
+        if c_url:
+            mode = c.get("check_mode", "alive")
+            tok = env.get(c["key_env"], "").strip().strip('"\'') \
+                if c.get("check_auth") == "bearer" else ""
+            ok2, d2 = check_http(c_url, alive_only=(mode == "alive"), retries=2, token=tok)
+            return ("ok" if ok2 else "fail"), f"key set; endpoint {d2}"
+        return "ok", f"key_env {c.get('key_env')}: set"
     if prim == "tg-getme":
         token = (env.get(c.get("key_env", "")) or "").strip().strip('"\'')
         if not token:

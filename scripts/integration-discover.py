@@ -112,7 +112,11 @@ def extract_entities():
             entities[f"envkey:{k}"] = {
                 "type": "envkey", "name": k,
                 "category": e.get("category", "setting"),
-                "free": e.get("free", False)}
+                "free": e.get("free", False),
+                "description": e.get("description", ""),
+                "check_url": e.get("check_url", ""),
+                "check_auth": e.get("check_auth", ""),
+                "check_mode": e.get("check_mode", "")}
 
     # ── Discover v2, layer 3: active model references ───────────────────────
     # What is ACTUALLY used (deep-check target): model/fallback_model/auxiliary.

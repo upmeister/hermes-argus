@@ -105,8 +105,11 @@ INTEGRATIONS_HERMES_SCRIPTS=(health-check-integrations.sh)
 INTEGRATIONS_SYSTEMD=(hermes-vps-kit-config.path hermes-vps-kit-discover.service)
 
 # TG_BOT: интерактивный мониторинг-бот (control plane) — OFF по умолчанию
+# webhook.py разворачивается в ОБЕ копии: poller импортирует её из своего каталога
+# (~/.hermes/scripts), discord-bot — из ~/scripts (урок 2026-09-07: частичный
+# деплой оставлял свежую и старую копии — AttributeError на import).
 TG_BOT_HOME_SCRIPTS=(webhook.py ai-deep-check.py)
-TG_BOT_HERMES_SCRIPTS=(monitoring-bot-poller.py)
+TG_BOT_HERMES_SCRIPTS=(monitoring-bot-poller.py webhook.py)
 
 # DISCORD_BOT: control plane для Discord (C5) — OFF по умолчанию
 DISCORD_HOME_SCRIPTS=(discord-bot.py)

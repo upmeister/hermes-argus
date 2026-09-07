@@ -22,9 +22,9 @@ import sys
 import discord
 from discord.ext import commands
 
-HERMES_SCRIPTS = os.path.expanduser("~/.hermes/scripts")
-if HERMES_SCRIPTS not in sys.path:
-    sys.path.insert(0, HERMES_SCRIPTS)
+# webhook.py lives next to this script (~/scripts) — its dir is sys.path[0].
+# Do NOT prepend ~/.hermes/scripts: a stale copy there would shadow the fresh one
+# (lesson 2026-09-07: AttributeError handle_settings after partial deploy).
 import webhook  # noqa: E402  — shared handler library (returns strings)
 
 TOKEN = (os.environ.get("DISCORD_BOT_TOKEN") or "").strip().strip('"\'')
@@ -61,6 +61,7 @@ cmd("integrations_all", webhook.handle_integrations_all)
 cmd("watchdog", webhook.handle_watchdog_status)
 cmd("uptime", webhook.handle_uptime)
 cmd("deepcheck", webhook.handle_deep_check)
+cmd("settings", webhook.handle_settings)
 
 
 @bot.command(name="help")
