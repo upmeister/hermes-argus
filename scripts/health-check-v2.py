@@ -170,6 +170,21 @@ def parse_host_port(value: str, default: str = "127.0.0.1:8444") -> tuple[str, i
     return "127.0.0.1", 8444
 
 
+def parse_expiry(v: str):
+    """expires_at from auth.json: epoch float or ISO — tolerant parse, None if unknown."""
+    v = (v or "").strip()
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
     checks = []
     entries = {e["key"]: e for e in registry.get("entries", [])}
@@ -206,9 +221,12 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
                            "registry_key": key_env})
             base_url = (ent.get("base_url") or "").strip()
             if base_url.startswith("http"):
-                checks.append({"id": f"{eid}#http", "entity": eid,
-                               "primitive": "http-alive", "url": base_url,
-                               "label": f"provider {ent.get('name')} root"})
+                # api-catalog instead of root http-alive: API roots 404 by design;
+                # /models with the provider key proves key + egress + route
+                checks.append({"id": f"{eid}#catalog", "entity": eid,
+                               "primitive": "api-catalog", "base": base_url,
+                               "key_env": key_env,
+                               "label": f"provider {ent.get('name')} (catalog)"})
         elif etype == "mcp":
             checks.append({"id": eid, "entity": eid, "primitive": "mcp-test",
                            "mcp_name": ent.get("name", ""), "label": f"mcp {ent.get('name')}"})
@@ -216,6 +234,13 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
             key = ent.get("name", "")
             checks.append({"id": eid, "entity": eid, "primitive": "env",
                            "key_env": key, "label": f"envref {key}"})
+        elif etype == "oauth":
+            checks.append({"id": eid, "entity": eid, "primitive": "oauth",
+                           "name": ent.get("name", ""),
+                           "label": f"oauth {ent.get('name')}",
+                           "expires_at": ent.get("expires_at", ""),
+                           "status": ent.get("status", ""),
+                           "required": False})
         elif etype == "envkey":
             # discover v2 layer 2: registry key set in .env = configured integration
             checks.append({"id": eid, "entity": eid, "primitive": "env",
@@ -261,6 +286,39 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
             ok2, d2 = check_http(c_url, alive_only=(mode == "alive"), retries=2, token=tok)
             return ("ok" if ok2 else "fail"), f"key set; endpoint {d2}"
         return "ok", f"key_env {c.get('key_env')}: set"
+    if prim == "api-catalog":
+        token = env.get(c.get("key_env"), "").strip().strip('"\'')
+        base = c.get("base", "").rstrip("/")
+        candidates = [base + "/models"] if base.endswith("/v1") \
+            else [base + "/v1/models", base + "/models"]
+        last = "000"
+        for url in candidates:
+            code = curl_code(url, HTTP_TIMEOUT, token=token)
+            if code.startswith("2"):
+                return "ok", f"catalog HTTP {code}"
+            if code == "429":
+                return "ok", "catalog rate-limited (429) — alive, key accepted"
+            if code in (401, 403):
+                return "fail", f"key rejected (HTTP {code})"
+            if code != "000":
+                last = code
+        if last == "404":
+            return "fail", "no catalog route (404 on both /v1/models and /models)"
+        return "fail", f"unreachable (HTTP {last})"
+    if prim == "oauth":
+        name = c.get("name", "")
+        if c.get("status") == "pat-only":
+            return ("unconfigured",
+                    "classic GitHub PAT is rejected by Copilot — run the device-flow "
+                    "login to store COPILOT_GITHUB_TOKEN")
+        # Static check only: auth.json access tokens rotate via the refresh flow
+        # (expires_at may be past between runs — that is normal, NOT a failure).
+        exp_ts = parse_expiry(c.get("expires_at", ""))
+        if exp_ts and exp_ts <= time.time():
+            return "ok", "logged in (access token past expiry — refresh flow renews it)"
+        if exp_ts:
+            return "ok", f"logged in (valid until {c.get('expires_at', '')[:19]})"
+        return "ok", "logged in"
     if prim == "tg-getme":
         token = (env.get(c.get("key_env", "")) or "").strip().strip('"\'')
         if not token:

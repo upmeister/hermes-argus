@@ -2,11 +2,12 @@
 """ai-deep-check.py — C2 deep check: real chat calls (max_tokens=1) to AI providers.
 
 BUTTON-ONLY, never scheduled (plan §11: regular models-check stays free and
-background; deep check is user-triggered). Invoked from the monitoring bot
-(/deepcheck). Cost safety gate: chat calls run ONLY against known free-tier
-models — registry free_models or :free-suffixed ids from the provider's own
-catalog. Providers without a known free model get an authenticated /models
-check instead (key validity + egress). --allow-paid overrides for manual runs.
+background; deep check is user-triggered, invoked from the monitoring bot
+/deepcheck). Paid chat calls are ON by default since the C2 review
+(Vlad, 2026-09-07): chat = max_tokens=1 "ping", negligible cost. Model
+priority: registry free_models -> :free-suffixed catalog ids -> first catalog
+model. DEEP_CHECK_ALLOW_PAID=OFF in ~/.hermes/.env or --no-paid restores
+conservative behavior (catalog-only checks).
 
 Levels per live provider (from the discover snapshot):
   catalog — GET {base}/models with Bearer token: key valid, egress ok
@@ -93,9 +94,13 @@ def main() -> None:
     ap.add_argument("--env", type=Path, default=DEFAULT_ENV)
     ap.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
-    ap.add_argument("--allow-paid", action="store_true",
-                    help="manual override: chat-call providers without a known free model")
+    ap.add_argument("--no-paid", action="store_true",
+                    help="conservative manual run: chat only against known free models")
     args = ap.parse_args()
+
+    # --allow-paid is the DEFAULT since C2 review (Vlad, 2026-09-07): paid chat
+    # calls are max_tokens=1 "ping" (negligible cost). DEEP_CHECK_ALLOW_PAID=OFF
+    # in .env restores the conservative behavior; --no-paid overrides per run.
 
     env = {}
     try:
@@ -156,13 +161,15 @@ def main() -> None:
                        if isinstance(m, dict)] if isinstance(data, dict) else []
 
         chat_model = free_chat_model(name, catalog_ids, free_models)
-        if chat_model is None and args.allow_paid and catalog_ids:
+        allow_paid = ((env.get("DEEP_CHECK_ALLOW_PAID") or "ON").strip().upper() != "OFF") \
+            and not args.no_paid
+        if chat_model is None and allow_paid and catalog_ids:
             chat_model = catalog_ids[0]
 
         if chat_model is None:
             rec["status"] = "ok"
             rec["detail"] = (f"key ok, catalog {len(catalog_ids)} models; "
-                             "chat skipped — no known free model (use --allow-paid)")
+                             "chat skipped — no known free model (paid checks disabled)")
             results.append(rec)
             continue
 
