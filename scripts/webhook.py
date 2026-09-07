@@ -331,7 +331,31 @@ def handle_watchdog_status() -> str:
 
 
 def handle_integrations_check() -> str:
-    """Быстрая проверка интеграций."""
+    """Quick status from the cached health-check-v2 report (fresh < 26h) —
+    covers MCP and everything else the v2 engine sees. Falls back to the
+    legacy --quick script when the report is missing or stale. The legacy
+    --quick itself stays the watchdog L1 contract (untouched)."""
+    now = _time.time()
+    try:
+        with open(os.path.expanduser("~/.hermes/state/health-check-v2-report.json"),
+                  encoding="utf-8") as f:
+            report = json.load(f)
+        updated = datetime.fromisoformat(report.get("updated", "")).timestamp()
+        if now - updated < 26 * 3600:
+            fails = [c for c in report.get("checks", []) if c.get("status") == "fail"]
+            age = datetime.fromisoformat(report["updated"]).astimezone().strftime("%H:%M")
+            head = (f"🩺 Интеграции (отчёт {age}): "
+                    f"{report.get('ok', 0)}/{report.get('total', 0)} ok")
+            if not fails:
+                return f"✅ Argus: {head} — всё в порядке"
+            probs = [f"❌ {c.get('label')}: {c.get('detail')}" for c in fails[:8]]
+            extra = len(fails) - 8
+            if extra > 0:
+                probs.append(f"…и ещё {extra}")
+            return head + "\n" + "\n".join(probs)
+    except Exception:
+        pass
+    # Legacy fallback (report missing or stale)
     try:
         r = subprocess.run(
             [os.path.expanduser("~/.hermes/scripts/health-check-integrations.sh"), "--quick"],
@@ -423,6 +447,7 @@ def handle_integrations_all() -> str:
               "envkey:provider": "🤖 AI-провайдеры (built-in)",
               "envkey:tool": "🔧 Инструменты", "envkey:messaging": "💬 Messaging",
               "envkey:skill": "🧩 Навыки", "envkey:setting": "⚙️ Прочие ключи",
+              "oauth": "🔐 OAuth-провайдеры",
               "mcp": "🔌 MCP", "local": "🖥 Self-hosted", "envref": "🔑 Env-refs"}
     age = ""
     try:
@@ -546,7 +571,8 @@ def handle_settings() -> str:
     lines.append(f"• TELEGRAM_PROXY: {val('TELEGRAM_PROXY') or 'дефолт 127.0.0.1:8444'}")
     lines.append("")
 
-    lines.append(f"🎚 Поведение: BREAKER_MAX = {val('BREAKER_MAX') or '3'}")
+    lines.append(f"🎚 Поведение: BREAKER_MAX = {val('BREAKER_MAX') or '3'} · "
+                 f"DEEP_CHECK_ALLOW_PAID = {val('DEEP_CHECK_ALLOW_PAID') or 'ON (default)'}")
     lines.append("")
     lines.append("Изменения: модули/поведение — config.env → ./deploy.sh; секреты — "
                  "~/.hermes/.env → рестарт сервиса. /settings только читает (S1).")
