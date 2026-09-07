@@ -28,7 +28,7 @@ echo "[$(date -Is)] health-check-v2 exit=$RC" >> "$LOG"
 [ "$RC" = "2" ] && exit 0
 [ -f "$REPORT" ] || { echo "[$(date -Is)] report missing, skip alerting" >> "$LOG"; exit 0; }
 
-GROUPS=$(python3 - "$STATE" "$REPORT" <<'PYEOF'
+ALERT_GROUPS=$(python3 - "$STATE" "$REPORT" <<'PYEOF'
 import html, json, sys
 from pathlib import Path
 
@@ -76,13 +76,13 @@ PYEOF
 
 source "$H/.env" 2>/dev/null || true
 if [ -z "${WATCHDOG_BOT_TOKEN:-}" ]; then
-    echo "$GROUPS" >> "$LOG"
+    echo "$ALERT_GROUPS" >> "$LOG"
     exit 0
 fi
 
 send_group() {
     local key="$1" header="$2" body
-    body=$(printf '%s' "$GROUPS" | python3 -c "
+    body=$(printf '%s' "$ALERT_GROUPS" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 items = d.get('$key') or []
