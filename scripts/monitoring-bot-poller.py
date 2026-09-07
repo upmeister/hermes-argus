@@ -139,7 +139,7 @@ def route_command(text: str) -> None:
     elif text.startswith("/logs"):
         parts = text.split()
         lines = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 20
-        send_message(webhook.handle_show_logs(lines))
+        webhook.send_logs_messages(lines)
     elif text.startswith("/watchdog"):
         send_message(webhook.handle_watchdog_status())
     elif text.startswith("/integrations_all"):
