@@ -158,18 +158,35 @@ def extract_entities():
     for flow in OAUTH_FLOWS:
         p = auth_provs.get(flow)
         if isinstance(p, dict) and p.get("access_token"):
+            # expires_at is deliberately NOT stored: auth.json rotates on every
+            # refresh — a stored expiry produced "changed: oauth nous" noise
+            # (Vlad, 2026-09-07).
             entities[f"oauth:{flow}"] = {
                 "type": "oauth", "name": flow,
-                "expires_at": str(p.get("expires_at") or ""),
                 "active": auth.get("active_provider") == flow}
     if env.get("COPILOT_GITHUB_TOKEN", False):
         entities["oauth:copilot"] = {"type": "oauth", "name": "copilot",
-                                     "expires_at": "", "active": False}
+                                     "active": False}
     elif env.get("GH_TOKEN", False) or env.get("GITHUB_TOKEN", False):
         # A plain PAT cannot drive Copilot — surface as misconfigured
         entities["oauth:copilot"] = {"type": "oauth", "name": "copilot",
-                                     "expires_at": "", "active": False,
-                                     "status": "pat-only"}
+                                     "active": False, "status": "pat-only"}
+
+    # ── Discover v2, layer 5: community model-provider plugins ──────────────
+    # plugins/model-providers/<name>/plugin.yaml is static metadata (name,
+    # description); runtime registration lives in the plugin __init__.py.
+    # Live example: clinepass (Vlad 2026-09-07 — was invisible to /integrations).
+    plugins_dir = HERMES_DIR / "plugins" / "model-providers"
+    if plugins_dir.is_dir():
+        for d in sorted(plugins_dir.iterdir()):
+            yml = d / "plugin.yaml"
+            if not yml.is_file():
+                continue
+            meta = load_yaml(yml) or {}
+            name = str(meta.get("name") or d.name)
+            entities[f"plugin-provider:{name}"] = {
+                "type": "plugin-provider", "name": name,
+                "description": str(meta.get("description", ""))[:140]}
 
     # Literal URL-ключи (self-hosted: SearXNG, LM Studio, Ollama, Honcho self...).
     # Hermes знает их как OPTIONAL_ENV_VARS; юзер пишет значение прямо в config.yaml
