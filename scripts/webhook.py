@@ -18,6 +18,7 @@
   webhook-monitoring.service отключён. Файл остался чистой библиотекой для poller'а.
 """
 
+import html
 import json
 import os
 import re
@@ -54,9 +55,12 @@ def tg_api(method: str, data: dict) -> dict:
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
-def send_message(text: str, silent: bool = False, reply_markup: dict = None):
+def send_message(text: str, silent: bool = False, reply_markup: dict = None,
+                 html_mode: bool = False):
     """Отправка сообщения в мониторинг-чат."""
     data = {"chat_id": CHAT_ID, "text": text}
+    if html_mode:
+        data["parse_mode"] = "HTML"
     if silent:
         data["disable_notification"] = True
     if reply_markup:
@@ -176,16 +180,41 @@ def handle_silence_1h() -> str:
         f.write(str(silence_until))
     return "\U0001f515 Алерты приглушены на 1 час"
 
-def handle_show_logs(lines: int = 20) -> str:
-    """Показать последние строки gateway.log."""
+def send_logs_messages(lines: int = 20) -> None:
+    """C-phase 2: /logs with HTML <code> + line-chunked pagination.
+
+    Log content is html-escaped (logs contain angle brackets and ampersands —
+    HTML injection guard); each chunk stays under the TG 4096-char limit.
+    NL is built via chr(10) so the source has no escape sequences to break."""
+    NL = chr(10)
     try:
         result = subprocess.run(
             ["tail", f"-{lines}", "@HERMES_DIR@/logs/gateway.log"],
             capture_output=True, text=True, timeout=5
         )
-        return f"📋 Последние {lines} строк gateway.log:\n<pre>{result.stdout[-1500:]}</pre>"
+        raw = (result.stdout or "").rstrip()
+        esc = html.escape(raw) if raw else "(пусто — gateway.log пуст или отсутствует)"
+        body_lines = esc.split(NL)
+        header = f"📋 gateway.log — последние {lines} строк:"
+        chunks, cur = [], ""
+        for ln in body_lines:
+            if len(cur) + len(ln) + 1 > 3400:
+                chunks.append(cur)
+                cur = ""
+            cur += ln + NL
+        if cur:
+            chunks.append(cur)
+        send_message(header)
+        total = min(len(chunks), 3)
+        for i, chunk in enumerate(chunks[:3]):
+            tail_note = f"{NL}…часть {i + 1}/{total}" if total > 1 else ""
+            send_message(f"<code>{chunk}</code>{tail_note}", html_mode=True)
+        if len(chunks) > 3:
+            send_message(f"⚠️ Лог длинный — показано 3/{len(chunks)} частей. "
+                         f"Уменьшите объём: /logs 10", html_mode=True)
     except Exception as e:
-        return f"❌ Не удалось прочитать логи: {e}"
+        send_message(f"❌ Не удалось прочитать логи: {e}")
+
 
 def handle_health_status() -> str:
     """Краткий статус сервера."""
@@ -287,7 +316,7 @@ def handle_watchdog_status() -> str:
     """Статус всех уровней мониторинга (сервисы, cron, analyzer, heartbeat)."""
     try:
         h = os.path.expanduser("~/.hermes")
-        lines = []
+        lines = ["👁 Argus: статус стражи"]
         for s in ["hermes-dashboard", "hermes-gateway", "telegram-smart-proxy",
                    "monitoring-bot-poller"]:
             ok = subprocess.run(
@@ -443,7 +472,7 @@ def handle_integrations_all() -> str:
         buckets.setdefault(g, []).append(line)
 
     titles = {"kit:watchdog": "🛡 Watchdog kit", "kit:proxy": "🌐 Proxy",
-              "kit:infra": "🧰 Infra", "provider": "🤖 AI-провайдеры (custom)",
+              "kit:infra": "🧰 Argus Infra", "provider": "🤖 AI-провайдеры (custom)",
               "envkey:provider": "🤖 AI-провайдеры (built-in)",
               "envkey:tool": "🔧 Инструменты", "envkey:messaging": "💬 Messaging",
               "envkey:skill": "🧩 Навыки", "envkey:setting": "⚙️ Прочие ключи",
@@ -455,7 +484,7 @@ def handle_integrations_all() -> str:
     except Exception:
         pass
 
-    lines = [f"🩺 Интеграции — отчёт {age}" if age else "🩺 Интеграции",
+    lines = [f"👁 Argus наблюдает — интеграции (отчёт {age})" if age else "👁 Argus наблюдает — интеграции",
              f"✅ {report.get('ok', 0)} · ❌ {report.get('fail', 0)} · "
              f"⚪ {report.get('unconfigured', 0)} из {report.get('total', 0)}"]
     ams = report.get("active_models") or []
@@ -494,6 +523,10 @@ def handle_deep_check() -> str:
             if err:
                 msg += ": " + err[-200:]
             return f"{_CROSS} Deep check: {msg}"
+        # engine prints plain "[OK  ]/[FAIL]/[SKIP]" markers — replace with
+        # emoji for the chat (Vlad, 2026-09-08)
+        out = (out.replace("[OK  ]", "✅").replace("[FAIL]", "❌")
+                  .replace("[SKIP]", "⚪"))
         return "🧪 **Deep AI check**\n" + (out[-3500:] if len(out) > 3500 else out)
     except subprocess.TimeoutExpired:
         return f"{_CROSS} Deep check превысил таймаут 240с"
@@ -539,7 +572,7 @@ def handle_settings() -> str:
     def val(key: str) -> str:
         return (env.get(key, "") or "").strip().strip('"\'')
 
-    lines = ["⚙️ Настройки Argus (read-only)", ""]
+    lines = ["⚙️ Argus · Настройки (read-only)", ""]
 
     lines.append("🧩 Модули (config.env):")
     if cfg:
@@ -616,34 +649,26 @@ def handle_reboot_cancel() -> str:
 
 
 def menu_keyboard():
-    """Постоянная клавиатура для команды /menu."""
+    """Inline action panel for /menu. Main navigation lives on the REPLY
+    keyboard (hybrid decision, Vlad 2026-09-08): inline stays for actions —
+    restarts, reboot confirm, silence."""
     return {
         "inline_keyboard": [
-            [
-                {"text": "\U0001f4ca Статус", "callback_data": "health"},
-                {"text": "\U0001f6dc Сеть", "callback_data": "network"},
-            ],
-            [
-                {"text": "\U0001f50d Мониторинг", "callback_data": "watchdog"},
-                {"text": "\u23f1 Аптайм", "callback_data": "uptime"},
-            ],
             [
                 {"text": "\U0001f504 Gateway", "callback_data": "restart_gw"},
                 {"text": "\U0001f504 Dashboard", "callback_data": "restart_dash"},
             ],
             [
-                {"text": "\U0001f504 All", "callback_data": "restart_all"},
-                {"text": "\U0001f50c Интеграции", "callback_data": "integrations"},
-            ],
-            [
-                {"text": "\U0001f4cb Интеграции (all)", "callback_data": "integrations_all"},
+                {"text": "\u26a0\ufe0f Reboot server", "callback_data": "reboot"},
+                {"text": "\U0001f507 Silence 1ч", "callback_data": "silence_1h"},
             ],
             [
                 {"text": "\U0001f9ea Deep AI", "callback_data": "deep_ai"},
                 {"text": "\U0001f4cb Логи", "callback_data": "show_logs"},
             ],
             [
-                {"text": "\U0001f507 Silence", "callback_data": "silence_1h"},
+                {"text": "\U0001f4ca Статус", "callback_data": "health"},
+                {"text": "\U0001f50d Мониторинг", "callback_data": "watchdog"},
             ],
         ]
     }
@@ -691,7 +716,7 @@ def handle_callback_query(query: dict) -> None:
         log_to_changelog("Перезапуск gateway+dashboard (кнопка)", "fast-path, без LLM")
         send_message(f"🔄 **Restart All:**\n{handle_restart_gateway()}\n---\n{handle_restart_dashboard()}", silent=True)
     elif action == "show_logs":
-        send_message(handle_show_logs(), silent=True)
+        send_logs_messages()
     elif action == "network":
         send_message(handle_network_status(), silent=True)
     elif action == "health":
@@ -710,6 +735,14 @@ def handle_callback_query(query: dict) -> None:
         send_message(handle_deep_check(), silent=True)
     elif action == "uptime":
         send_message(handle_uptime(), silent=True)
+    elif action == "reboot":
+        log_to_changelog("Reboot server (кнопка, шаг 1)", "запрос подтверждения")
+        kb = {"inline_keyboard": [[
+            {"text": "✅ Подтвердить ребут", "callback_data": "reboot_confirm"},
+            {"text": "❌ Отмена", "callback_data": "reboot_cancel"}]]}
+        send_message("⚠️ Перезагрузка сервера. Точно ребутаем? "
+                     "(shutdown через 1 минуту после подтверждения)",
+                     reply_markup=kb, silent=True)
     elif action == "reboot_confirm":
         send_message(handle_reboot_confirm(), silent=True)
     elif action == "reboot_cancel":

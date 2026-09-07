@@ -254,6 +254,10 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
         elif etype == "activemodel":
             # informational: rendered by /integrations from report["active_models"]
             continue
+        elif etype == "plugin-provider":
+            # informational: community model-provider plugins (clinepass case);
+            # rendered by /integrations from report["plugin_providers"]
+            continue
         elif etype == "local":
             url = ent.get("url", "")
             if url:
@@ -284,6 +288,8 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
             tok = env.get(c["key_env"], "").strip().strip('"\'') \
                 if c.get("check_auth") == "bearer" else ""
             ok2, d2 = check_http(c_url, alive_only=(mode == "alive"), retries=2, token=tok)
+            if ok2 and mode == "alive" and not d2.startswith("HTTP 2"):
+                d2 += " — auth wall, service alive"
             return ("ok" if ok2 else "fail"), f"key set; endpoint {d2}"
         return "ok", f"key_env {c.get('key_env')}: set"
     if prim == "api-catalog":
@@ -380,12 +386,18 @@ def main() -> None:
         for e in (snapshot.get("entities") or {}).values()
         if e.get("type") == "activemodel"
     ]
+    plugin_providers = [
+        {"name": e.get("name"), "description": e.get("description", "")}
+        for e in (snapshot.get("entities") or {}).values()
+        if e.get("type") == "plugin-provider"
+    ]
     report = {
         "updated": datetime.now(timezone.utc).isoformat(),
         "total": len(results), "ok": len(results) - len(fails) - len(unconf),
         "fail": len(fails), "unconfigured": len(unconf),
         "checks": results,
         "active_models": active_models,
+        "plugin_providers": plugin_providers,
         "free_models": registry.get("free_models", {}),
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)

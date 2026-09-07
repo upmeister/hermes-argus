@@ -108,7 +108,7 @@ INTEGRATIONS_SYSTEMD=(hermes-vps-kit-config.path hermes-vps-kit-discover.service
 # webhook.py разворачивается в ОБЕ копии: poller импортирует её из своего каталога
 # (~/.hermes/scripts), discord-bot — из ~/scripts (урок 2026-09-07: частичный
 # деплой оставлял свежую и старую копии — AttributeError на import).
-TG_BOT_HOME_SCRIPTS=(webhook.py ai-deep-check.py)
+TG_BOT_HOME_SCRIPTS=(webhook.py ai-deep-check.py register-commands.sh)
 TG_BOT_HERMES_SCRIPTS=(monitoring-bot-poller.py webhook.py)
 
 # DISCORD_BOT: control plane для Discord (C5) — OFF по умолчанию
@@ -181,6 +181,7 @@ if module_enabled MODULE_TG_BOT; then
     echo "📁 [TG_BOT] мониторинг-бот (control plane)..."
     deploy_scripts "$HOME_DIR/scripts" "${TG_BOT_HOME_SCRIPTS[@]}"
     deploy_scripts "$HERMES_DIR/scripts" "${TG_BOT_HERMES_SCRIPTS[@]}"
+    bash "$HOME_DIR/scripts/register-commands.sh" || true
     echo "   ℹ️  Перезапуск poller — вручную и вне активного использования бота."
 fi
 
