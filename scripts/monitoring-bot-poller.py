@@ -99,8 +99,31 @@ def _send_deny(chat_id, callback_id: str | None = None, query: dict | None = Non
 # ── Маршрутизация команд (слеш-дубли всех кнопок) ──────────────────────
 # Кнопки из webhook.alert_keyboard() и команды ниже — один набор действий.
 
+# Hybrid UI (Vlad, 2026-09-08): MAIN navigation on a persistent REPLY
+# keyboard (Russian labels mapped to commands); inline keyboards stay for
+# actions (restarts, reboot confirm, silence) and /menu.
+REPLY_LABELS = {
+    "👁 Статус": "/health",
+    "🔌 Интеграции": "/integrations",
+    "📋 Интеграции все": "/integrations_all",
+    "🧪 Deep AI": "/deepcheck",
+    "📋 Логи": "/logs",
+    "⚙️ Настройки": "/settings",
+    "☰ Панель": "/menu",
+    "❓ Помощь": "/help",
+}
+
+
+def reply_keyboard() -> dict:
+    keys = list(REPLY_LABELS.keys())
+    rows = [keys[i:i + 2] for i in range(0, len(keys), 2)]
+    return {"keyboard": [[{"text": t} for t in row] for row in rows],
+            "resize_keyboard": True, "is_persistent": True}
+
+
 def route_command(text: str) -> None:
     """Выполняет команду и шлёт ответ. Обработчики — из webhook.py."""
+    text = REPLY_LABELS.get((text or "").strip(), text)
     if text.startswith("/health"):
         send_message(webhook.handle_health_status())
     elif text.startswith("/restart_gw") or text.startswith("/restart_gateway"):
@@ -162,14 +185,17 @@ def route_command(text: str) -> None:
     elif text.startswith("/reboot"):
         send_message(webhook.handle_reboot(""))
     elif text.startswith("/menu"):
-        # Отправляем кнопки
+        # Inline-панель действий (reply keyboard с навигацией уже открыта)
         import json as _json
-        send_message("📋 **Доступные команды:**\n\nВыберите действие:", reply_markup=webhook.menu_keyboard())
+        send_message("👁 Argus — панель стража. Действия:", reply_markup=webhook.menu_keyboard())
+    elif text.startswith("/help"):
+        send_message("👁 Argus — команды:\n"
+                     "/health /integrations /integrations_all /watchdog /uptime\n"
+                     "/deepcheck /settings /logs [N] /network /silence [N]\n"
+                     "/restart_gw /restart_dash /restart_all /reboot /menu")
     else:
-        send_message("🤔 Неизвестная команда.\n"
-                     "Доступно: /health, /restart_gw, /restart_dash, /restart_all, "
-                     "/network, /silence [N], /logs [N], "
-                     "/watchdog, /integrations, /uptime, /reboot, /menu")
+        send_message("🤔 Argus не понял команду.\n"
+                     "Панель: /menu · Команды: /help")
 
 # ── Main poll loop ──────────────────────────────────────────────────────
 
@@ -219,7 +245,13 @@ def main():
 
                 msg = update.get("message", {})
                 text = msg.get("text", "")
-                if not text or not text.startswith("/"):
+                if not text:
+                    continue
+                if not text.startswith("/"):
+                    # Hybrid UI: plain text gets the branded welcome + the
+                    # persistent reply keyboard (main navigation lives there)
+                    send_message("👁 Argus на посту. Смотрю в оба.",
+                                 reply_markup=reply_keyboard())
                     continue
 
                 # Команды — в потоке: рестарты блокируют до 30с, не стопорим polling

@@ -523,6 +523,10 @@ def handle_deep_check() -> str:
             if err:
                 msg += ": " + err[-200:]
             return f"{_CROSS} Deep check: {msg}"
+        # engine prints plain "[OK  ]/[FAIL]/[SKIP]" markers — replace with
+        # emoji for the chat (Vlad, 2026-09-08)
+        out = (out.replace("[OK  ]", "✅").replace("[FAIL]", "❌")
+                  .replace("[SKIP]", "⚪"))
         return "🧪 **Deep AI check**\n" + (out[-3500:] if len(out) > 3500 else out)
     except subprocess.TimeoutExpired:
         return f"{_CROSS} Deep check превысил таймаут 240с"
@@ -645,34 +649,26 @@ def handle_reboot_cancel() -> str:
 
 
 def menu_keyboard():
-    """Постоянная клавиатура для команды /menu."""
+    """Inline action panel for /menu. Main navigation lives on the REPLY
+    keyboard (hybrid decision, Vlad 2026-09-08): inline stays for actions —
+    restarts, reboot confirm, silence."""
     return {
         "inline_keyboard": [
-            [
-                {"text": "\U0001f4ca Статус", "callback_data": "health"},
-                {"text": "\U0001f6dc Сеть", "callback_data": "network"},
-            ],
-            [
-                {"text": "\U0001f50d Мониторинг", "callback_data": "watchdog"},
-                {"text": "\u23f1 Аптайм", "callback_data": "uptime"},
-            ],
             [
                 {"text": "\U0001f504 Gateway", "callback_data": "restart_gw"},
                 {"text": "\U0001f504 Dashboard", "callback_data": "restart_dash"},
             ],
             [
-                {"text": "\U0001f504 All", "callback_data": "restart_all"},
-                {"text": "\U0001f50c Интеграции", "callback_data": "integrations"},
-            ],
-            [
-                {"text": "\U0001f4cb Интеграции (all)", "callback_data": "integrations_all"},
+                {"text": "\u26a0\ufe0f Reboot server", "callback_data": "reboot"},
+                {"text": "\U0001f507 Silence 1ч", "callback_data": "silence_1h"},
             ],
             [
                 {"text": "\U0001f9ea Deep AI", "callback_data": "deep_ai"},
                 {"text": "\U0001f4cb Логи", "callback_data": "show_logs"},
             ],
             [
-                {"text": "\U0001f507 Silence", "callback_data": "silence_1h"},
+                {"text": "\U0001f4ca Статус", "callback_data": "health"},
+                {"text": "\U0001f50d Мониторинг", "callback_data": "watchdog"},
             ],
         ]
     }
