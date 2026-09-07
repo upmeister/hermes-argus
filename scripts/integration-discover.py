@@ -14,6 +14,17 @@ CONFIG = HERMES_DIR / "config.yaml"
 ENV_FILE = HERMES_DIR / ".env"
 STATE_DIR = HERMES_DIR / "state"
 SNAPSHOT = STATE_DIR / "integration-snapshot.json"
+REGISTRY = STATE_DIR / "registry.yaml"
+
+
+def load_registry():
+    """registry.yaml (deployed by INTEGRATIONS module) — source of known keys.
+    Missing registry only disables layer 2 (envkey entities)."""
+    try:
+        import yaml
+        return yaml.safe_load(REGISTRY.read_text()) or {}
+    except Exception:
+        return {}
 
 
 def load_yaml(path):
@@ -42,20 +53,27 @@ def extract_entities():
     env = env_names(ENV_FILE)
     entities = {}
 
+    # providers: key_env (runtime key) OR inline api_key (presence only, never
+    # stored); base_url falls back to the `api` field (live example:
+    # opencode-go-safety keeps its endpoint in `api`, not `base_url`)
     for name, p in (cfg.get("providers") or {}).items():
-        if isinstance(p, dict) and p.get("key_env"):
+        if isinstance(p, dict) and (p.get("key_env") or p.get("api_key")):
+            key_env = p.get("key_env") or ""
+            key_present = bool(p.get("api_key")) or env.get(key_env, False)
             entities[f"provider:{name}"] = {
-                "type": "provider", "name": name, "key_env": p["key_env"],
-                "key_present": env.get(p["key_env"], False),
-                "base_url": p.get("base_url", "")}
+                "type": "provider", "name": name, "key_env": key_env,
+                "key_present": key_present,
+                "base_url": p.get("base_url") or p.get("api") or ""}
 
     for i, p in enumerate(cfg.get("custom_providers") or []):
-        if isinstance(p, dict) and p.get("key_env"):
+        if isinstance(p, dict) and (p.get("key_env") or p.get("api_key")):
             nm = p.get("name") or p.get("base_url") or f"legacy-{i}"
+            key_env = p.get("key_env") or ""
+            key_present = bool(p.get("api_key")) or env.get(key_env, False)
             entities[f"provider:{nm}"] = {
-                "type": "provider", "name": str(nm), "key_env": p["key_env"],
-                "key_present": env.get(p["key_env"], False),
-                "base_url": p.get("base_url", "")}
+                "type": "provider", "name": str(nm), "key_env": key_env,
+                "key_present": key_present,
+                "base_url": p.get("base_url") or p.get("api") or ""}
 
     for name, s in (cfg.get("mcp_servers") or {}).items():
         if isinstance(s, dict):
@@ -72,6 +90,49 @@ def extract_entities():
                                        "key_present": env.get(v, False)}
     except FileNotFoundError:
         pass
+
+    # ── Discover v2, layer 2: registry-driven env keys ──────────────────────
+    # Any registry key set in .env = a configured integration (tools, messaging,
+    # built-in AI providers...). Excluded: kit keys (the engine checks those via
+    # kit_entries) and keys already represented above (provider key_env / envref)
+    # — otherwise the same key would be reported twice.
+    reg = load_registry()
+    kit_keys = {k.get("key") for k in reg.get("kit_entries", []) if isinstance(k, dict)}
+    covered = set()
+    for e in entities.values():
+        if e.get("key_env"):
+            covered.add(e["key_env"])
+        if e.get("name") and e.get("type") == "envref":
+            covered.add(e["name"])
+    for e in reg.get("entries", []):
+        k = e.get("key", "")
+        if not k or k in kit_keys or k in covered:
+            continue
+        if env.get(k, False):
+            entities[f"envkey:{k}"] = {
+                "type": "envkey", "name": k,
+                "category": e.get("category", "setting"),
+                "free": e.get("free", False)}
+
+    # ── Discover v2, layer 3: active model references ───────────────────────
+    # What is ACTUALLY used (deep-check target): model/fallback_model/auxiliary.
+    # The primary model lives in model.default (not model.model).
+    def model_ref(eid, role, section, use_default_key=False):
+        if isinstance(section, dict):
+            model = section.get("default", "") if use_default_key else section.get("model", "")
+            if model:
+                entities[eid] = {
+                    "type": "activemodel", "role": role,
+                    "provider": section.get("provider", ""),
+                    "model": model,
+                    "key_env": section.get("key_env", "")}
+
+    model_ref("model:primary", "primary", cfg.get("model") or {}, use_default_key=True)
+    model_ref("model:fallback", "fallback", cfg.get("fallback_model") or {})
+    aux = cfg.get("auxiliary") or {}
+    if isinstance(aux, dict):
+        for role in ("vision", "compression"):
+            model_ref(f"model:{role}", role, aux.get(role) or {})
 
     # Literal URL-ключи (self-hosted: SearXNG, LM Studio, Ollama, Honcho self...).
     # Hermes знает их как OPTIONAL_ENV_VARS; юзер пишет значение прямо в config.yaml
@@ -104,6 +165,10 @@ def diff_entities(old, new):
 def main():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     entities, env = extract_entities()
+    # --baseline: write the snapshot WITHOUT diff/alerts. Used after discover
+    # upgrades that add whole new entity layers (lesson 2026-09-06: a first run
+    # without baseline produced a 181-alert storm for the fallback tracker).
+    baseline = "--baseline" in sys.argv
 
     old_snap = None
     if SNAPSHOT.exists():
@@ -118,14 +183,14 @@ def main():
         "entities": entities,
         "env_keys": sorted(env.keys()),
     }
-    events = diff_entities(old_snap.get("entities", {}) if old_snap else {}, entities)
+    events = [] if baseline else diff_entities(old_snap.get("entities", {}) if old_snap else {}, entities)
 
     tmp = SNAPSHOT.with_suffix(".tmp")
     tmp.write_text(json.dumps(snap, ensure_ascii=False, indent=1))
     tmp.replace(SNAPSHOT)
 
     report = {"updated": snap["updated"], "total_entities": len(entities),
-              "total_env_keys": len(env), "events": events}
+              "total_env_keys": len(env), "baseline": baseline, "events": events}
     text = json.dumps(report, ensure_ascii=False, indent=1)
     out = os.environ.get("DISCOVER_REPORT", "")
     if out:
