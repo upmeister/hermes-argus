@@ -15,6 +15,12 @@ ENV_FILE = HERMES_DIR / ".env"
 STATE_DIR = HERMES_DIR / "state"
 SNAPSHOT = STATE_DIR / "integration-snapshot.json"
 REGISTRY = STATE_DIR / "registry.yaml"
+AUTH_JSON = HERMES_DIR / "auth.json"
+
+# OAuth provider flows stored in auth.json providers.<flow> (hermes_cli/auth.py).
+# Detection is STATIC (field names / expiry only) — never call `hermes auth
+# status`: it rotates refresh tokens as a side effect (research 2026-09-07).
+OAUTH_FLOWS = ("nous", "openai-codex", "xai-oauth", "qwen-oauth", "minimax-oauth")
 
 
 def load_registry():
@@ -137,6 +143,33 @@ def extract_entities():
     if isinstance(aux, dict):
         for role in ("vision", "compression"):
             model_ref(f"model:{role}", role, aux.get(role) or {})
+
+    # ── Discover v2, layer 4: OAuth / web-token providers ───────────────────
+    # Tokens live in auth.json providers.<flow> (nous portal, codex, xai/qwen/
+    # minimax oauth) and .env (Copilot). Status is expiry-only — token values
+    # are never read or emitted. Copilot nuance: classic GitHub PATs are
+    # REJECTED by copilot (validate_copilot_token) — the real OAuth token lands
+    # in .env as COPILOT_GITHUB_TOKEN via the device flow.
+    try:
+        auth = json.loads(AUTH_JSON.read_text()) if AUTH_JSON.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        auth = {}
+    auth_provs = auth.get("providers") or {}
+    for flow in OAUTH_FLOWS:
+        p = auth_provs.get(flow)
+        if isinstance(p, dict) and p.get("access_token"):
+            entities[f"oauth:{flow}"] = {
+                "type": "oauth", "name": flow,
+                "expires_at": str(p.get("expires_at") or ""),
+                "active": auth.get("active_provider") == flow}
+    if env.get("COPILOT_GITHUB_TOKEN", False):
+        entities["oauth:copilot"] = {"type": "oauth", "name": "copilot",
+                                     "expires_at": "", "active": False}
+    elif env.get("GH_TOKEN", False) or env.get("GITHUB_TOKEN", False):
+        # A plain PAT cannot drive Copilot — surface as misconfigured
+        entities["oauth:copilot"] = {"type": "oauth", "name": "copilot",
+                                     "expires_at": "", "active": False,
+                                     "status": "pat-only"}
 
     # Literal URL-ключи (self-hosted: SearXNG, LM Studio, Ollama, Honcho self...).
     # Hermes знает их как OPTIONAL_ENV_VARS; юзер пишет значение прямо в config.yaml
