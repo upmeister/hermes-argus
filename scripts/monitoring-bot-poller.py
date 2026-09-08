@@ -132,6 +132,21 @@ def reply_keyboard() -> dict:
             "resize_keyboard": True, "is_persistent": True}
 
 
+def _secret_worker(key: str, value: str) -> None:
+    """S3: send the report FIRST, then a DETACHED restart (F4: the poller
+    process must not die before its reply leaves the chat)."""
+    try:
+        text, restart = webhook.handle_secret_value(key, value)
+        send_message(text)
+    except Exception as e:
+        send_message(f"❌ Ошибка записи секрета: {e}")
+        return
+    for unit in restart:
+        subprocess.Popen(["bash", "-c",
+                          f"sleep 2 && systemctl --user restart {unit}"],
+                         start_new_session=True)
+
+
 def route_command(text: str) -> None:
     """Выполняет команду и шлёт ответ. Обработчики — из webhook.py."""
     if text.startswith("/health"):
@@ -173,7 +188,9 @@ def route_command(text: str) -> None:
         send_message("🧪 Deep check AI-провайдеров запущен (до ~2 мин)...")
         send_message(webhook.handle_deep_check())
     elif text.startswith("/settings"):
-        send_message(webhook.handle_settings())
+        # S2: read-only view + inline MODULE_* toggles (settings_keyboard)
+        send_message(webhook.handle_settings(),
+                     reply_markup=webhook.settings_keyboard())
     elif text.startswith("/uptime"):
         send_message(webhook.handle_uptime())
     elif text.startswith("/reboot_confirm"):
@@ -200,9 +217,10 @@ def route_command(text: str) -> None:
             PENDING_SECRET.update({"key": key, "expires": _t.time() + 120})
             send_message(f"🔑 Пришли значение для {key} одним сообщением (2 мин)."
                          + chr(10) + "⚠️ Оно останется в истории чата. /cancel — отмена.")
+    elif text.startswith("/help"):
         send_message("👁 Argus — команды:\n"
                      "/health /integrations /integrations_all /watchdog /uptime\n"
-                     "/deepcheck /settings /logs [N] /network /silence [N]\n"
+                     "/deepcheck /settings /setsecret /logs [N] /network /silence [N]\n"
                      "/restart_gw /restart_dash /restart_all /reboot /menu")
     else:
         send_message("🤔 Argus не понял команду.\n"
@@ -263,7 +281,7 @@ def main():
                     if text == "/cancel":
                         send_message("🚫 Отменено.")
                     else:
-                        threading.Thread(target=webhook.handle_secret_value,
+                        threading.Thread(target=_secret_worker,
                                          args=(key, text), daemon=True).start()
                     continue
                 # Hybrid UI: reply-keyboard labels map to commands BEFORE

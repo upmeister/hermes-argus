@@ -715,11 +715,23 @@ def _run_deploy_async(chat_send, cfg_path: str) -> None:
     threading.Thread(target=worker, daemon=True).start()
 
 
-def handle_secret_value(key: str, value: str) -> str:
-    """S3: write a secret into ~/.hermes/.env (replace or append the line)."""
-    value = value.strip()
-    if not value or chr(10) in value or chr(13) in value:
-        return f"{_CROSS} Пустое или многострочное значение — отклонено."
+def handle_secret_value(key: str, value: str) -> tuple:
+    """S3: write a secret into ~/.hermes/.env.
+
+    Returns (report_text, restart_units). The value arrives from a Telegram
+    message — shell-dangerous characters are rejected outright (the .env is
+    bash-sourced: quotes, $(), backticks would execute on the next source).
+    Token values are never printed; restarts are returned to the caller
+    (F4: reply first, then a DETACHED restart)."""
+    value = (value or "").strip()
+    restart = []
+    if not value:
+        return f"{_CROSS} Пустое значение — отклонено.", []
+    forbidden = " " + chr(39) + chr(34) + chr(96) + "$;&|<>()" + chr(10) + chr(13)
+    bad = sorted({ch for ch in value if ch in forbidden})
+    if bad:
+        return (f"{_CROSS} Недопустимые символы в значении: "
+                + " ".join(bad) + " — отклонено."), []
     env_path = os.path.expanduser("~/.hermes/.env")
     lines = open(env_path, encoding="utf-8", errors="replace").read().splitlines()
     out, hit = [], False
@@ -736,18 +748,11 @@ def handle_secret_value(key: str, value: str) -> str:
     NL = chr(10)
     open(tmp, "w", encoding="utf-8", newline="").write(NL.join(out) + NL)
     os.replace(tmp, env_path)
-    restart = []
     if key.startswith(("WATCHDOG_", "WEBHOOK_")) or key == "TELEGRAM_PROXY":
         restart = ["monitoring-bot-poller"]
     elif key.startswith("DISCORD_"):
         restart = ["discord-bot"]
-    note = ""
-    for unit in restart:
-        subprocess.run(["systemctl", "--user", "restart", unit],
-                       capture_output=True, text=True, timeout=15)
-        note += f" · {unit} перезапущен"
-    return (f"{_CHECK} {key} обновлён ({_mask(value)}){note}. "
-            f"Проверь: /settings")
+    return f"{_CHECK} {key} обновлён ({_mask(value)}). Проверь: /settings", restart
 
 
 def handle_uptime() -> str:
@@ -867,6 +872,8 @@ def handle_callback_query(query: dict) -> None:
         send_message(handle_integrations_check(), silent=True)
     elif action == "integrations_all":
         send_message(handle_integrations_all(), silent=True)
+    elif action == "settings":
+        send_message(handle_settings(), reply_markup=settings_keyboard(), silent=True)
     elif action == "deep_ai":
         log_to_changelog("Deep AI check (кнопка)", "chat max_tokens=1, free-models gated")
         send_message("🧪 Deep check запущен (до ~2 мин)...", silent=True)
