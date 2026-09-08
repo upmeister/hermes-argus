@@ -160,7 +160,7 @@ def handle_restart_dashboard() -> str:
     """Перезапуск dashboard: fast-path, без LLM (опыт 08.08: висел 1.5ч)."""
     return handle_restart_service("hermes-dashboard", "@HERMES_DIR@/logs/gui.log")
 
-def handle_silence_1h() -> str:
+def handle_silence(hours: int = 1) -> str:
     """Режим тишины на 1 час: если уже активен — сброс."""
     remaining = _silence_remaining()
     if remaining > 0:
@@ -173,12 +173,34 @@ def handle_silence_1h() -> str:
             pass
         return "\U0001f50a Тишина сброшена. Алерты снова активны."
     
-    silence_until = int(datetime.now(timezone.utc).timestamp() + 3600)
+    silence_until = int(datetime.now(timezone.utc).timestamp() + hours * 3600)
     state_dir = os.path.expanduser("~/.hermes/logs/auto-remediate-state")
     os.makedirs(state_dir, exist_ok=True)
     with open(f"{state_dir}/silence-until.txt", "w") as f:
         f.write(str(silence_until))
     return "\U0001f515 Алерты приглушены на 1 час"
+
+def handle_start() -> str:
+    """Branded onboarding: what Argus is + live status from the cached report."""
+    lines = ["👁 Argus — страж Hermes Agent.",
+             "Слежу за интеграциями, провайдерами и живучестью сервера:",
+             "• discover следит за config.yaml (systemd.path + cron)",
+             "• health-check проверяет провайдеров, MCP и ключи (cron :20)",
+             "• watchdog/liveness чинят сервисы и алертят",
+             "• heartbeat стучится наружу (cronping/gh)", ""]
+    try:
+        with open(os.path.expanduser(
+                "~/.hermes/state/health-check-v2-report.json"), encoding="utf-8") as f:
+            report = json.load(f)
+        age = datetime.fromisoformat(report.get("updated", "")).astimezone().strftime("%H:%M")
+        lines.append(f"📡 Статус ({age}): {report.get('ok', 0)}/{report.get('total', 0)} ok"
+                     f", {report.get('fail', 0)} fail — детали: /integrations_all")
+    except Exception:
+        lines.append("📡 Статус: отчёт ещё не готов — /integrations_all")
+    lines.append("")
+    lines.append("Действия: /menu · Навигация уже открыта внизу экрана.")
+    return chr(10).join(lines)
+
 
 def send_logs_messages(lines: int = 20) -> None:
     """C-phase 2: /logs with HTML <code> + line-chunked pagination.
@@ -612,6 +634,127 @@ def handle_settings() -> str:
     return "\n".join(lines)[:3500]
 
 
+MODULE_NAMES = ("CORE", "INTEGRATIONS", "TG_BOT", "ANALYZER",
+                "HEARTBEAT", "GH_HEARTBEAT", "DISCORD_BOT")
+
+
+def _config_env_path() -> str:
+    """Locate the live config.env (same heuristic as handle_settings)."""
+    for cand in (os.path.expanduser("~/hermes-argus/config.env"),
+                 os.path.expanduser("~/hermes-vps-kit/config.env")):
+        if os.path.exists(cand):
+            return cand
+    return ""
+
+
+def _read_modules() -> dict:
+    mods = {}
+    path = _config_env_path()
+    if path:
+        try:
+            for line in open(path, encoding="utf-8", errors="replace"):
+                ls = line.strip()
+                if ls.startswith("MODULE_") and "=" in ls:
+                    k, _, v = ls.partition("=")
+                    mods[k.strip()] = v.strip().strip('"').upper()
+        except OSError:
+            pass
+    for name in MODULE_NAMES:
+        mods.setdefault(f"MODULE_{name}", "OFF")
+    return mods
+
+
+def settings_keyboard() -> dict:
+    """Inline rows for MODULE_* toggles (S2). Press = confirm step next."""
+    mods = _read_modules()
+    rows = []
+    for name in MODULE_NAMES:
+        key = f"MODULE_{name}"
+        cur = mods.get(key, "OFF")
+        newval = "OFF" if cur == "ON" else "ON"
+        rows.append([{"text": f"🧩 {key}: {cur} → {newval}",
+                      "callback_data": f"mod_toggle:{key}:{newval}"}])
+    return {"inline_keyboard": rows}
+
+
+def _set_config_module(key: str, value: str) -> str:
+    path = _config_env_path()
+    if not path:
+        return "config.env не найден"
+    lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    out, hit = [], False
+    prefix = key + "="
+    for line in lines:
+        if line.strip().startswith(prefix):
+            out.append(f'{key}="{value}"')
+            hit = True
+        else:
+            out.append(line)
+    if not hit:
+        out.append(f'{key}="{value}"')
+    tmp = path + ".tmp"
+    NL = chr(10)
+    open(tmp, "w", encoding="utf-8", newline="").write(NL.join(out) + NL)
+    os.replace(tmp, path)
+    return path
+
+
+def _run_deploy_async(chat_send, cfg_path: str) -> None:
+    """Background deploy (S2 apply). Reports the output tail to the chat."""
+    def worker():
+        try:
+            r = subprocess.run(["bash", "deploy.sh", cfg_path],
+                               cwd=os.path.dirname(cfg_path) or ".",
+                               capture_output=True, text=True, timeout=300)
+            NL = chr(10)
+            tail = NL.join((r.stdout or "").strip().splitlines()[-6:])
+            status = "✅ deploy завершён" if r.returncode == 0 else f"❌ deploy exit {r.returncode}"
+            chat_send(f"{status}{NL}{tail}", silent=True)
+        except Exception as e:
+            chat_send(f"❌ deploy error: {e}", silent=True)
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def handle_secret_value(key: str, value: str) -> tuple:
+    """S3: write a secret into ~/.hermes/.env.
+
+    Returns (report_text, restart_units). The value arrives from a Telegram
+    message — shell-dangerous characters are rejected outright (the .env is
+    bash-sourced: quotes, $(), backticks would execute on the next source).
+    Token values are never printed; restarts are returned to the caller
+    (F4: reply first, then a DETACHED restart)."""
+    value = (value or "").strip()
+    restart = []
+    if not value:
+        return f"{_CROSS} Пустое значение — отклонено.", []
+    forbidden = " " + chr(39) + chr(34) + chr(96) + "$;&|<>()" + chr(10) + chr(13)
+    bad = sorted({ch for ch in value if ch in forbidden})
+    if bad:
+        return (f"{_CROSS} Недопустимые символы в значении: "
+                + " ".join(bad) + " — отклонено."), []
+    env_path = os.path.expanduser("~/.hermes/.env")
+    lines = open(env_path, encoding="utf-8", errors="replace").read().splitlines()
+    out, hit = [], False
+    prefix = key + "="
+    for line in lines:
+        if line.strip().startswith(prefix):
+            out.append(f"{key}={value}")
+            hit = True
+        else:
+            out.append(line)
+    if not hit:
+        out.append(f"{key}={value}")
+    tmp = env_path + ".tmp"
+    NL = chr(10)
+    open(tmp, "w", encoding="utf-8", newline="").write(NL.join(out) + NL)
+    os.replace(tmp, env_path)
+    if key.startswith(("WATCHDOG_", "WEBHOOK_")) or key == "TELEGRAM_PROXY":
+        restart = ["monitoring-bot-poller"]
+    elif key.startswith("DISCORD_"):
+        restart = ["discord-bot"]
+    return f"{_CHECK} {key} обновлён ({_mask(value)}). Проверь: /settings", restart
+
+
 def handle_uptime() -> str:
     """Аптайм сервера."""
     try:
@@ -722,13 +865,15 @@ def handle_callback_query(query: dict) -> None:
     elif action == "health":
         send_message(handle_health_status(), silent=True)
     elif action == "silence_1h":
-        send_message(handle_silence_1h(), silent=True)
+        send_message(handle_silence(1), silent=True)
     elif action == "watchdog":
         send_message(handle_watchdog_status(), silent=True)
     elif action == "integrations":
         send_message(handle_integrations_check(), silent=True)
     elif action == "integrations_all":
         send_message(handle_integrations_all(), silent=True)
+    elif action == "settings":
+        send_message(handle_settings(), reply_markup=settings_keyboard(), silent=True)
     elif action == "deep_ai":
         log_to_changelog("Deep AI check (кнопка)", "chat max_tokens=1, free-models gated")
         send_message("🧪 Deep check запущен (до ~2 мин)...", silent=True)
@@ -743,6 +888,39 @@ def handle_callback_query(query: dict) -> None:
         send_message("⚠️ Перезагрузка сервера. Точно ребутаем? "
                      "(shutdown через 1 минуту после подтверждения)",
                      reply_markup=kb, silent=True)
+    elif action == "silence_menu":
+        kb = {"inline_keyboard": [
+            [{"text": "1ч", "callback_data": "silence_h:1"},
+             {"text": "4ч", "callback_data": "silence_h:4"},
+             {"text": "12ч", "callback_data": "silence_h:12"},
+             {"text": "24ч", "callback_data": "silence_h:24"}],
+            [{"text": "❌ Сбросить тишину", "callback_data": "silence_reset"}],
+        ]}
+        send_message("🔕 Заглушить алерты на:", reply_markup=kb, silent=True)
+    elif action.startswith("silence_h:"):
+        try:
+            hours = int(action.split(":", 1)[1])
+        except ValueError:
+            hours = 1
+        send_message(handle_silence(hours), silent=True)
+    elif action == "silence_reset":
+        send_message(handle_silence(0), silent=True)
+    elif action.startswith("mod_toggle:"):
+        _, key, newval = action.split(":", 2)
+        kb = {"inline_keyboard": [[
+            {"text": "✅ Применить + deploy", "callback_data": f"mod_apply:{key}:{newval}"},
+            {"text": "❌ Отмена", "callback_data": "mod_cancel"}]]}
+        send_message(f"⚠️ Применить {key}={newval}? Запустится deploy (до ~2 мин).",
+                     reply_markup=kb, silent=True)
+    elif action.startswith("mod_apply:"):
+        _, key, newval = action.split(":", 2)
+        path = _set_config_module(key, newval)
+        log_to_changelog(f"S2: {key}={newval}", "toggle из бота + deploy")
+        send_message(f"🧩 {key}={newval} записан в config.env, запускаю deploy...",
+                     silent=True)
+        _run_deploy_async(send_message, path)
+    elif action == "mod_cancel":
+        send_message("🚫 Отменено.", silent=True)
     elif action == "reboot_confirm":
         send_message(handle_reboot_confirm(), silent=True)
     elif action == "reboot_cancel":

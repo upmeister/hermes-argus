@@ -20,6 +20,7 @@ import json, sys, urllib.request
 
 token, proxy = sys.argv[1], sys.argv[2]
 commands = [
+    {"command": "start", "description": "Онбординг Argus + reply keyboard"},
     {"command": "health", "description": "Argus: статус сервисов и системы"},
     {"command": "integrations", "description": "Быстрый статус интеграций"},
     {"command": "integrations_all", "description": "Все интеграции по группам"},

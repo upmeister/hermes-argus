@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import threading
+import time as _time
 import time
 import urllib.request
 from datetime import datetime
@@ -114,6 +115,16 @@ REPLY_LABELS = {
 }
 
 
+# S3: one pending secret at a time; value arrives as the next plain message.
+# Gate: WATCHDOG_ALLOWED_USER_ID must be set (poller-level auth is not enough
+# for secret WRITES). Keys of Hermes itself are permanently out of scope.
+SECRET_ALLOWLIST = (
+    "WATCHDOG_BOT_TOKEN", "WATCHDOG_CHAT_ID", "WATCHDOG_ALLOWED_USER_ID",
+    "WEBHOOK_SECRET_TOKEN", "DISCORD_BOT_TOKEN", "DISCORD_ALLOWED_USER_IDS",
+    "CRONPING_TOKEN", "CRONPING_API_KEY", "DMS_SNITCH", "GH_TOKEN")
+PENDING_SECRET = {}
+
+
 def reply_keyboard() -> dict:
     keys = list(REPLY_LABELS.keys())
     rows = [keys[i:i + 2] for i in range(0, len(keys), 2)]
@@ -121,9 +132,23 @@ def reply_keyboard() -> dict:
             "resize_keyboard": True, "is_persistent": True}
 
 
+def _secret_worker(key: str, value: str) -> None:
+    """S3: send the report FIRST, then a DETACHED restart (F4: the poller
+    process must not die before its reply leaves the chat)."""
+    try:
+        text, restart = webhook.handle_secret_value(key, value)
+        send_message(text)
+    except Exception as e:
+        send_message(f"❌ Ошибка записи секрета: {e}")
+        return
+    for unit in restart:
+        subprocess.Popen(["bash", "-c",
+                          f"sleep 2 && systemctl --user restart {unit}"],
+                         start_new_session=True)
+
+
 def route_command(text: str) -> None:
     """Выполняет команду и шлёт ответ. Обработчики — из webhook.py."""
-    text = REPLY_LABELS.get((text or "").strip(), text)
     if text.startswith("/health"):
         send_message(webhook.handle_health_status())
     elif text.startswith("/restart_gw") or text.startswith("/restart_gateway"):
@@ -142,23 +167,11 @@ def route_command(text: str) -> None:
         send_message(webhook.handle_network_status())
     elif text.startswith("/silence"):
         parts = text.split()
-        if len(parts) > 1 and parts[1].isdigit():
-            hours = int(parts[1])
-            if 1 <= hours <= 24:
-                # Custom silence
-                import time
-                silence_until = int(time.time()) + hours * 3600
-                state_dir = os.path.expanduser("~/.hermes/logs/auto-remediate-state")
-                os.makedirs(state_dir, exist_ok=True)
-                with open(f"{state_dir}/silence-until.txt", "w") as f:
-                    f.write(str(silence_until))
-                send_message(f"🔕 Алерты приглушены на {hours} ч")
-            else:
-                send_message("🔇 Укажите часы от 1 до 24")
+        hours = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
+        if 1 <= hours <= 24:
+            send_message(webhook.handle_silence(hours))
         else:
-            send_message(webhook.handle_silence_1h())
-    elif text.startswith("/silence_1h"):
-        send_message(webhook.handle_silence_1h())
+            send_message("🔇 Укажите часы от 1 до 24")
     elif text.startswith("/logs"):
         parts = text.split()
         lines = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 20
@@ -175,7 +188,9 @@ def route_command(text: str) -> None:
         send_message("🧪 Deep check AI-провайдеров запущен (до ~2 мин)...")
         send_message(webhook.handle_deep_check())
     elif text.startswith("/settings"):
-        send_message(webhook.handle_settings())
+        # S2: read-only view + inline MODULE_* toggles (settings_keyboard)
+        send_message(webhook.handle_settings(),
+                     reply_markup=webhook.settings_keyboard())
     elif text.startswith("/uptime"):
         send_message(webhook.handle_uptime())
     elif text.startswith("/reboot_confirm"):
@@ -188,10 +203,24 @@ def route_command(text: str) -> None:
         # Inline-панель действий (reply keyboard с навигацией уже открыта)
         import json as _json
         send_message("👁 Argus — панель стража. Действия:", reply_markup=webhook.menu_keyboard())
+    elif text.startswith("/start"):
+        send_message(webhook.handle_start(), reply_markup=reply_keyboard())
+    elif text.startswith("/setsecret"):
+        parts = text.split(maxsplit=1)
+        key = parts[1].strip().upper() if len(parts) > 1 else ""
+        if not ALLOWED_USER_ID:
+            send_message("🚫 Гейт S3: сначала задай WATCHDOG_ALLOWED_USER_ID в .env.")
+        elif key not in SECRET_ALLOWLIST:
+            send_message("🤔 Ключ вне allowlist: " + ", ".join(SECRET_ALLOWLIST))
+        else:
+            import time as _t
+            PENDING_SECRET.update({"key": key, "expires": _t.time() + 120})
+            send_message(f"🔑 Пришли значение для {key} одним сообщением (2 мин)."
+                         + chr(10) + "⚠️ Оно останется в истории чата. /cancel — отмена.")
     elif text.startswith("/help"):
         send_message("👁 Argus — команды:\n"
                      "/health /integrations /integrations_all /watchdog /uptime\n"
-                     "/deepcheck /settings /logs [N] /network /silence [N]\n"
+                     "/deepcheck /settings /setsecret /logs [N] /network /silence [N]\n"
                      "/restart_gw /restart_dash /restart_all /reboot /menu")
     else:
         send_message("🤔 Argus не понял команду.\n"
@@ -247,6 +276,18 @@ def main():
                 text = msg.get("text", "")
                 if not text:
                     continue
+                if PENDING_SECRET.get("expires", 0) > _time.time():
+                    key = PENDING_SECRET.pop("key")
+                    if text == "/cancel":
+                        send_message("🚫 Отменено.")
+                    else:
+                        threading.Thread(target=_secret_worker,
+                                         args=(key, text), daemon=True).start()
+                    continue
+                # Hybrid UI: reply-keyboard labels map to commands BEFORE
+                # the command test (lesson 2026-09-08: unmapped labels hit
+                # the welcome branch — keyboard "did not work")
+                text = REPLY_LABELS.get(text.strip(), text)
                 if not text.startswith("/"):
                     # Hybrid UI: plain text gets the branded welcome + the
                     # persistent reply keyboard (main navigation lives there)
