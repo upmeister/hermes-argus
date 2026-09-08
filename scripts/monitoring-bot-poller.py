@@ -134,7 +134,6 @@ def reply_keyboard() -> dict:
 
 def route_command(text: str) -> None:
     """Выполняет команду и шлёт ответ. Обработчики — из webhook.py."""
-    text = REPLY_LABELS.get((text or "").strip(), text)
     if text.startswith("/health"):
         send_message(webhook.handle_health_status())
     elif text.startswith("/restart_gw") or text.startswith("/restart_gateway"):
@@ -267,6 +266,10 @@ def main():
                         threading.Thread(target=webhook.handle_secret_value,
                                          args=(key, text), daemon=True).start()
                     continue
+                # Hybrid UI: reply-keyboard labels map to commands BEFORE
+                # the command test (lesson 2026-09-08: unmapped labels hit
+                # the welcome branch — keyboard "did not work")
+                text = REPLY_LABELS.get(text.strip(), text)
                 if not text.startswith("/"):
                     # Hybrid UI: plain text gets the branded welcome + the
                     # persistent reply keyboard (main navigation lives there)
