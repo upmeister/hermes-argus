@@ -54,9 +54,11 @@ def tg_api(method: str, data: dict) -> dict:
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
-def send_message(text: str, reply_markup: dict = None):
+def send_message(text: str, reply_markup: dict = None, html_mode: bool = False):
     """Отправка текстового сообщения в мониторинг-чат."""
     data = {"chat_id": CHAT_ID, "text": text, "disable_notification": True}
+    if html_mode:
+        data["parse_mode"] = "HTML"
     if reply_markup:
         data["reply_markup"] = reply_markup
     return tg_api("sendMessage", data)
@@ -178,7 +180,8 @@ def route_command(text: str) -> None:
     elif text.startswith("/logs"):
         parts = text.split()
         lines = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 20
-        webhook.send_logs_messages(lines)
+        text, kb = webhook.logs_view(lines)
+        send_message(text, reply_markup=kb, html_mode=True)
     elif text.startswith("/watchdog"):
         send_message(webhook.handle_watchdog_status())
     elif text.startswith("/integrations_all"):
