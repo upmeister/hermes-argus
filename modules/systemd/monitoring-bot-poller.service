@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=%h/.hermes/.env
-ExecStart=%h/.hermes/hermes-agent/venv/bin/python %h/scripts/monitoring-bot-poller.py
+ExecStart=%h/.hermes/hermes-agent/venv/bin/python %h/.hermes/scripts/monitoring-bot-poller.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

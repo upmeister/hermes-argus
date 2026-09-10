@@ -343,6 +343,13 @@ def handle_watchdog_status() -> str:
     hermes_installed = os.path.isdir(os.path.join(h, "hermes-agent"))
 
     def svc_status(unit: str) -> str:
+        """B2 (review 09.09): `is-active` returns 'inactive' for MISSING units —
+        LoadState 'not-found' is the only honest way to detect absence."""
+        load = subprocess.run(["systemctl", "--user", "show", "-P", "LoadState", unit],
+                              capture_output=True, text=True, timeout=5
+                              ).stdout.strip()
+        if load == "not-found":
+            return "not-found"
         return subprocess.run(["systemctl", "--user", "is-active", unit],
                               capture_output=True, text=True, timeout=5
                               ).stdout.strip() or "unknown"
