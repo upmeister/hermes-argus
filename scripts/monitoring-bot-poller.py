@@ -54,9 +54,11 @@ def tg_api(method: str, data: dict) -> dict:
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
-def send_message(text: str, reply_markup: dict = None):
+def send_message(text: str, reply_markup: dict = None, html_mode: bool = False):
     """Отправка текстового сообщения в мониторинг-чат."""
     data = {"chat_id": CHAT_ID, "text": text, "disable_notification": True}
+    if html_mode:
+        data["parse_mode"] = "HTML"
     if reply_markup:
         data["reply_markup"] = reply_markup
     return tg_api("sendMessage", data)
