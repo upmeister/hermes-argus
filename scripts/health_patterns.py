@@ -30,12 +30,29 @@ PATTERNS = {
         # resetting" — это НОРМАЛЬНАЯ работа при РКН-волнах (334 из 386 матчей
         # за историю — этот шум), не ошибка. Исключение attempt \d/ намеренно
         # НЕ ловит attempt 10/10 — последняя попытка перед рестартом gateway.
+        # Фикс 2026-09-08 (C6-отчёт Питны + находка Влада 09.09): новый формат
+        # telegram_network не матчится старыми exclusion-подстроками —
+        # 'Sticky Telegram path X failed; re-walking IPv4 literals' и
+        # 'IPv4 Telegram API IP X failed:' держали issue активным до 6ч
+        # (ложный 'Telegram сломан' в /watchdog). Добавлены в исключения.
         # Также исключаем "MarkdownV2 parse failed, falling back to plain text" —
         # graceful-fallback форматирования (сообщение всё равно доставлено),
         # НЕ API-ошибка (фикс 18.08: 2 ложных матча 09:36).
         "pattern": r"\b(telegram|TELEGRAM)\b(?!.*(?:polling degraded|network error \(attempt \d/|restarted after network error|updater\.stop\(\) timed out|_redact_telegram_error_text|reconnect failed|retrying|trying fallback IPs|Fallback IP \S+ failed|Sticky fallback|MarkdownV2 parse failed|falling back to plain text|\d+ chars)).*(error|fail|timed out|429|Too Many Requests|send_path_degraded)",
         "source": "gateway_log",
         "severity": "warning",
+        # Строчный фильтр шума: lookahead не видит подстроки ДО якоря
+        # "Telegram" (кейс 2026-09-08: "IPv4 Telegram API IP X failed" —
+        # исключение "IPv4 Telegram API IP" оставалось позади матча).
+        "exclude_any": [
+            "polling degraded", "network error (attempt",
+            "restarted after network error", "updater.stop() timed out",
+            "_redact_telegram_error_text", "reconnect failed", "retrying",
+            "trying fallback IPs", "Fallback IP", "Sticky fallback",
+            "Sticky Telegram path", "re-walking IPv4 literals",
+            "IPv4 Telegram API IP", "MarkdownV2 parse failed",
+            "falling back to plain text",
+        ],
         "description": "Ошибки Telegram API (rate limit, timeout, сетевые)",
         "lookback_hours": 6,
     },
@@ -208,7 +225,10 @@ def find_issues(metrics: str, now: datetime = None) -> dict:
         # gateway_log: только свежие строки в lookback
         timeline = []
         matched_lines = []
+        exclude_any = tuple(config.get("exclude_any", ()))
         for line in log_lines:
+            if exclude_any and any(x in line for x in exclude_any):
+                continue
             if not re.search(pattern, line, re.IGNORECASE):
                 continue
             ts = _parse_ts(line)

@@ -335,50 +335,87 @@ def _silence_remaining() -> int:
 
 
 def handle_watchdog_status() -> str:
-    """Статус всех уровней мониторинга (сервисы, cron, analyzer, heartbeat)."""
-    try:
-        h = os.path.expanduser("~/.hermes")
-        lines = ["👁 Argus: статус стражи"]
-        for s in ["hermes-dashboard", "hermes-gateway", "telegram-smart-proxy",
-                   "monitoring-bot-poller"]:
-            ok = subprocess.run(
-                ["systemctl", "--user", "is-active", s],
-                capture_output=True, text=True, timeout=5
-            ).stdout.strip() == "active"
-            lines.append(f"{_CHECK if ok else _CROSS} Сервис {s}")
-        # Netdata — SYSTEM-юнит (не user); биндится на HERMES_HOST, на части
-        # установок — на loopback. Пробуем оба адреса, первый HTTP 200 wins
-        # (фикс 2026-09-07: ложный негатив «сломана» при живой netdata).
-        nd = "000"
-        for host in dict.fromkeys(["@HERMES_HOST@", "127.0.0.1"]):
-            nd = subprocess.run(
-                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "6",
-                 f"http://{host}:@NETDATA_PORT@/api/v1/info"],
-                capture_output=True, text=True, timeout=10
-            ).stdout.strip() or "000"
-            if nd == "200":
-                break
-        lines.append(f"{_CHECK if nd == '200' else _CROSS} Netdata API (HTTP {nd})")
-        cron = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
-        for name in ["hermes-watchdog", "gateway-liveness", "dashboard-liveness"]:
-            lines.append(f"{_CHECK if name in cron.stdout else _CROSS} Cron {name}")
+    """Статус стражи с честной семантикой: компоненты Argus vs Hermes-платформа.
+    Отсутствие платформенного компонента — ⏸ (не установлен / требуется
+    Hermes), а не ❌: Argus мониторит СУЩЕСТВУЮЩИЙ Hermes, не устанавливает."""
+    NL = chr(10)
+    h = os.path.expanduser("~/.hermes")
+    hermes_installed = os.path.isdir(os.path.join(h, "hermes-agent"))
+
+    def svc_status(unit: str) -> str:
+        return subprocess.run(["systemctl", "--user", "is-active", unit],
+                              capture_output=True, text=True, timeout=5
+                              ).stdout.strip() or "unknown"
+
+    def mark(st: str) -> str:
+        if st == "active":
+            return _CHECK
+        if st == "not-found":
+            return "⚪"
+        return _CROSS
+
+    lines = ["👁 Argus: статус стражи", "", "👁 Argus"]
+
+    ok = svc_status("monitoring-bot-poller") == "active"
+    lines.append(f"{_CHECK if ok else _CROSS} Сервис monitoring-bot-poller")
+
+    cron = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
+    for name in ["hermes-watchdog"]:
+        lines.append(f"{_CHECK if name in cron.stdout else _CROSS} Cron {name}")
+
+    if os.path.exists(os.path.join(h, "scripts", "health-analyzer.py")):
         try:
-            with open(f"{h}/logs/health-state.json") as f:
+            with open(os.path.join(h, "logs", "health-state.json"), encoding="utf-8") as f:
                 hs = json.load(f)
             last = hs.get("last_check", "?")[:19]
             active = [k for k, v in hs.get("issues", {}).items() if v.get("status") == "active"]
             lines.append(f"{_CHECK} Analyzer (last: {last})")
             if active:
                 lines.append(f"{_WARN} Issues: {', '.join(active)}")
-        except:
-            lines.append(f"{_CROSS} Analyzer: health-state.json не найден")
-        hb = f"{h}/hermes-infra/heartbeat.txt"
-        if os.path.exists(hb):
-            age = int(_time.time()) - os.path.getmtime(hb)
-            lines.append(f"{_CHECK if age < 900 else _WARN} Heartbeat ({age}s ago)")
-        return "\n".join(lines)
-    except Exception as e:
-        return f"{_CROSS} Ошибка: {e}"
+        except Exception:
+            lines.append(f"{_CROSS} Analyzer: health-state.json не читается")
+    else:
+        lines.append("⚪ Analyzer не установлен (MODULE_ANALYZER)")
+
+    hb = os.path.join(h, "hermes-infra", "heartbeat.txt")
+    if os.path.exists(hb):
+        age = int(_time.time()) - os.path.getmtime(hb)
+        lines.append(f"{_CHECK if age < 900 else _WARN} Heartbeat ({age}s ago)")
+
+    lines.append("")
+    lines.append("🖥 Hermes-платформа")
+    for sname in ["hermes-dashboard", "hermes-gateway", "telegram-smart-proxy"]:
+        st = svc_status(sname)
+        if st == "not-found" and not hermes_installed:
+            lines.append(f"⚪ Сервис {sname} — не установлен (требуется Hermes)")
+        else:
+            lines.append(f"{mark(st)} Сервис {sname} ({st})")
+
+    # Netdata: HTTP probe, оба адреса (бинд варьируется по установкам)
+    nd = "000"
+    for host in dict.fromkeys(["@HERMES_HOST@", "127.0.0.1"]):
+        nd = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "6",
+             f"http://{host}:@NETDATA_PORT@/api/v1/info"],
+            capture_output=True, text=True, timeout=10
+        ).stdout.strip() or "000"
+        if nd == "200":
+            break
+    if nd == "200":
+        lines.append(f"{_CHECK} Netdata API (HTTP {nd})")
+    elif hermes_installed:
+        lines.append(f"{_CROSS} Netdata API (HTTP {nd})")
+    else:
+        lines.append(f"⚪ Netdata API (HTTP {nd}) — не настроен")
+
+    for name in ["gateway-liveness", "dashboard-liveness"]:
+        present = name in cron.stdout
+        if hermes_installed:
+            lines.append(f"{_CHECK if present else _CROSS} Cron {name}")
+        else:
+            lines.append(f"⚪ Cron {name} — требуется Hermes")
+
+    return NL.join(lines)
 
 
 def handle_integrations_check() -> str:
@@ -594,7 +631,7 @@ def handle_settings() -> str:
     def val(key: str) -> str:
         return (env.get(key, "") or "").strip().strip('"\'')
 
-    lines = ["⚙️ Argus · Настройки (read-only)", ""]
+    lines = ["⚙️ Argus · Настройки", ""]
 
     lines.append("🧩 Модули (config.env):")
     if cfg:
@@ -629,8 +666,9 @@ def handle_settings() -> str:
     lines.append(f"🎚 Поведение: BREAKER_MAX = {val('BREAKER_MAX') or '3'} · "
                  f"DEEP_CHECK_ALLOW_PAID = {val('DEEP_CHECK_ALLOW_PAID') or 'ON (default)'}")
     lines.append("")
-    lines.append("Изменения: модули/поведение — config.env → ./deploy.sh; секреты — "
-                 "~/.hermes/.env → рестарт сервиса. /settings только читает (S1).")
+    lines.append("Тогглы модулей — кнопками ниже (S2: confirm → deploy).")
+    lines.append("Секреты — /setsecret KEY (S3): значение следующим сообщением.")
+    lines.append("Остальное — config.env → ./deploy.sh.")
     return "\n".join(lines)[:3500]
 
 
@@ -789,6 +827,17 @@ def handle_reboot_cancel() -> str:
     """Отмена ребута."""
     subprocess.run(["sudo", "-n", "shutdown", "-c"], capture_output=True, text=True, timeout=5)
     return f"{_CHECK} Перезагрузка отменена."
+
+
+def silence_chooser_keyboard() -> dict:
+    """Inline duration chooser for /silence (no-arg)."""
+    return {"inline_keyboard": [
+        [{"text": "1ч", "callback_data": "silence_h:1"},
+         {"text": "4ч", "callback_data": "silence_h:4"},
+         {"text": "12ч", "callback_data": "silence_h:12"},
+         {"text": "24ч", "callback_data": "silence_h:24"}],
+        [{"text": "❌ Сбросить тишину", "callback_data": "silence_reset"}],
+    ]}
 
 
 def menu_keyboard():

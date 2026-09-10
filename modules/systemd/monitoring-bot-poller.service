@@ -1,0 +1,15 @@
+[Unit]
+Description=Hermes Argus Telegram control-plane poller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.hermes/.env
+ExecStart=%h/.hermes/hermes-agent/venv/bin/python %h/scripts/monitoring-bot-poller.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+
+[Install]
+WantedBy=default.target
