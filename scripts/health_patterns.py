@@ -5,6 +5,7 @@
 - Учитываются только события в lookback-окне (иначе старый tail держит issue forever)
 """
 import re
+import sys
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import time
@@ -30,12 +31,29 @@ PATTERNS = {
         # resetting" — это НОРМАЛЬНАЯ работа при РКН-волнах (334 из 386 матчей
         # за историю — этот шум), не ошибка. Исключение attempt \d/ намеренно
         # НЕ ловит attempt 10/10 — последняя попытка перед рестартом gateway.
+        # Фикс 2026-09-08 (C6-отчёт Питны + находка Влада 09.09): новый формат
+        # telegram_network не матчится старыми exclusion-подстроками —
+        # 'Sticky Telegram path X failed; re-walking IPv4 literals' и
+        # 'IPv4 Telegram API IP X failed:' держали issue активным до 6ч
+        # (ложный 'Telegram сломан' в /watchdog). Добавлены в исключения.
         # Также исключаем "MarkdownV2 parse failed, falling back to plain text" —
         # graceful-fallback форматирования (сообщение всё равно доставлено),
         # НЕ API-ошибка (фикс 18.08: 2 ложных матча 09:36).
         "pattern": r"\b(telegram|TELEGRAM)\b(?!.*(?:polling degraded|network error \(attempt \d/|restarted after network error|updater\.stop\(\) timed out|_redact_telegram_error_text|reconnect failed|retrying|trying fallback IPs|Fallback IP \S+ failed|Sticky fallback|MarkdownV2 parse failed|falling back to plain text|\d+ chars)).*(error|fail|timed out|429|Too Many Requests|send_path_degraded)",
         "source": "gateway_log",
         "severity": "warning",
+        # Строчный фильтр шума: lookahead не видит подстроки ДО якоря
+        # "Telegram" (кейс 2026-09-08: "IPv4 Telegram API IP X failed" —
+        # исключение "IPv4 Telegram API IP" оставалось позади матча).
+        "exclude_any": [
+            "polling degraded", "network error (attempt",
+            "restarted after network error", "updater.stop() timed out",
+            "_redact_telegram_error_text", "reconnect failed", "retrying",
+            "trying fallback IPs", "Fallback IP", "Sticky fallback",
+            "Sticky Telegram path", "re-walking IPv4 literals",
+            "IPv4 Telegram API IP", "MarkdownV2 parse failed",
+            "falling back to plain text",
+        ],
         "description": "Ошибки Telegram API (rate limit, timeout, сетевые)",
         "lookback_hours": 6,
     },
@@ -167,6 +185,48 @@ def _parse_ts(line: str):
         return None
 
 
+def selftest() -> int:
+    """Fixture log in the REAL gateway.log format: RKN-failover noise must not
+    match, a real API error line must. Exit 1 on failure (run: --selftest)."""
+    import os as _os
+    import sys as _sys
+    import tempfile
+    from pathlib import Path
+    fixtures = [
+        # noise (RKN failover, new telegram_network formats — must be excluded)
+        "2026-09-09 23:00:00,123 WARNING gateway.platforms.telegram.telegram_network: "
+        "[Telegram] Sticky Telegram path 149.154.167.220 failed; re-walking IPv4 literals before the hostname",
+        "2026-09-09 23:01:00,456 WARNING gateway.platforms.telegram.telegram_network: "
+        "[Telegram] IPv4 Telegram API IP 149.154.167.220 failed:",
+        # real API error (must be detected)
+        "2026-09-09 23:26:00,000 ERROR gateway.platforms.telegram.telegram_network: "
+        "[Telegram] Telegram API error: HTTP 500",
+    ]
+    global GATEWAY_LOG
+    fd, tmp_name = tempfile.mkstemp(suffix=".log")
+    _os.close(fd)  # Windows: unlink открытого файла невозможен
+    tmp = Path(tmp_name)
+    tmp.write_text(chr(10).join(fixtures) + chr(10), encoding="utf-8")
+    saved, GATEWAY_LOG = GATEWAY_LOG, tmp
+    now = datetime(2026, 9, 9, 16, 30, tzinfo=timezone.utc)  # 23:30 local (+07)
+    res = find_issues(tmp.read_text(encoding="utf-8"), now=now)
+    GATEWAY_LOG = saved
+    tmp.unlink(missing_ok=True)
+
+    tg = res.get("telegram_api_error", {})
+    checks = [
+        ("real error detected with its timestamp",
+         tg.get("detected") is True and tg.get("last_error") == "2026-09-09T16:26:00"),
+        ("noise timestamp not used as last_error (exclude_any works)",
+         tg.get("last_error") != "2026-09-09T23:00:00"),
+    ]
+    failed = [name for name, ok in checks if not ok]
+    for name, ok in checks:
+        print(("PASS " if ok else "FAIL ") + name)
+    print(f"telegram_api_error selftest: {'PASS' if not failed else 'FAIL'}")
+    return 1 if failed else 0
+
+
 def find_issues(metrics: str, now: datetime = None) -> dict:
     """Сканирует метрики и логи на известные паттерны проблем."""
     if now is None:
@@ -208,7 +268,10 @@ def find_issues(metrics: str, now: datetime = None) -> dict:
         # gateway_log: только свежие строки в lookback
         timeline = []
         matched_lines = []
+        exclude_any = tuple(config.get("exclude_any", ()))
         for line in log_lines:
+            if exclude_any and any(x in line for x in exclude_any):
+                continue
             if not re.search(pattern, line, re.IGNORECASE):
                 continue
             ts = _parse_ts(line)
@@ -246,3 +309,8 @@ def find_issues(metrics: str, now: datetime = None) -> dict:
         found[issue_id] = info
 
     return found
+
+if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(selftest())
+    main()

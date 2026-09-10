@@ -15,16 +15,34 @@ REPO_URL="https://github.com/upmeister/hermes-argus.git"
 REPO_DIR="$HOME/hermes-argus"
 
 echo "🦾 hermes-argus bootstrap"
-echo "   Host: $(hostname) · user: $(USER:-$(whoami)) · $(lsb_release -ds 2>/dev/null || echo 'linux')"
+echo "   Host: $(hostname) · user: ${USER:-$(whoami)} · $(lsb_release -ds 2>/dev/null || echo 'linux')"
 
 # ── 1. Dependencies ─────────────────────────────────────────────────────────
 SUDO=""
 if [ "$(id -u)" != "0" ]; then
     SUDO="sudo"
+    # Headless-проверка (C6 F2): парольный sudo в неинтерактивной среде = тупик
+    if ! $SUDO -n true 2>/dev/null; then
+        echo "⚠️  sudo требует пароль, а интерактива нет. Варианты:"
+        echo "    1) поставь пакеты вручную и перезапусти install.sh:"
+        echo "       sudo apt-get install -y git curl python3 python3-yaml cron"
+        echo "    2) запусти install.sh в интерактивной сессии"
+        exit 1
+    fi
 fi
-echo "📦 Ставлю зависимости (git curl python3 python3-yaml cron)..."
-$SUDO apt-get update -qq
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl python3 python3-yaml cron >/dev/null
+
+# Ставим только отсутствующие пакеты (C6 F2: unconditional apt ломал headless)
+NEED=()
+for pkg in git curl python3 python3-yaml cron; do
+    dpkg -s "$pkg" >/dev/null 2>&1 || NEED+=("$pkg")
+done
+if [ "${#NEED[@]}" -gt 0 ]; then
+    echo "📦 Ставлю недостающее: ${NEED[*]}"
+    $SUDO apt-get update -qq
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${NEED[@]}" >/dev/null
+else
+    echo "📦 Зависимости уже установлены — apt пропущен"
+fi
 
 # ── 2. Repo ─────────────────────────────────────────────────────────────────
 if [ -d "$REPO_DIR/.git" ]; then

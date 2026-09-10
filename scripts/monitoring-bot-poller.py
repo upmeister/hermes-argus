@@ -33,7 +33,10 @@ ALLOWED_USER_ID = os.environ.get("WATCHDOG_ALLOWED_USER_ID", "").strip()
 # НЕ использовать get_proxy()/прямой путь: при mode=direct прямой api.telegram.org
 # мёртв во время РКН-волн, а прокси перечитывается только при старте процесса.
 # (Инцидент 2026-08-08: poller молчал с 29.07 из-за одноразовой инициализации.)
-os.environ["HTTPS_PROXY"] = "http://127.0.0.1:8444"
+# C6: сети с блокировкой TG требуют локального прокси на 8444 (реверс-туннель
+# или смарт-прокси); TELEGRAM_PROXY из .env позволяет переопределить
+os.environ.setdefault("HTTPS_PROXY",
+                      os.environ.get("TELEGRAM_PROXY", "http://127.0.0.1:8444"))
 os.environ.pop("https_proxy", None)
 
 # Обработчики кнопок/команд — единый источник истины (webhook.py).
@@ -104,13 +107,13 @@ def _send_deny(chat_id, callback_id: str | None = None, query: dict | None = Non
 # keyboard (Russian labels mapped to commands); inline keyboards stay for
 # actions (restarts, reboot confirm, silence) and /menu.
 REPLY_LABELS = {
-    "👁 Статус": "/health",
-    "🔌 Интеграции": "/integrations",
-    "📋 Интеграции все": "/integrations_all",
-    "🧪 Deep AI": "/deepcheck",
-    "📋 Логи": "/logs",
+    "📊 Статус Hermes": "/health",
+    "👁 Статус Argus": "/watchdog",
+    "🔌 Проверка интеграций": "/integrations",
+    "📋 Все интеграции": "/integrations_all",
     "⚙️ Настройки": "/settings",
-    "☰ Панель": "/menu",
+    "🔇 Тишина": "/silence",
+    "🛠 Обслуживание": "/menu",
     "❓ Помощь": "/help",
 }
 
@@ -167,11 +170,11 @@ def route_command(text: str) -> None:
         send_message(webhook.handle_network_status())
     elif text.startswith("/silence"):
         parts = text.split()
-        hours = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
-        if 1 <= hours <= 24:
-            send_message(webhook.handle_silence(hours))
+        if len(parts) > 1 and parts[1].isdigit() and 1 <= int(parts[1]) <= 24:
+            send_message(webhook.handle_silence(int(parts[1])))
         else:
-            send_message("🔇 Укажите часы от 1 до 24")
+            send_message("🔕 Заглушить алерты на:",
+                         reply_markup=webhook.silence_chooser_keyboard())
     elif text.startswith("/logs"):
         parts = text.split()
         lines = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 20

@@ -20,22 +20,22 @@ import json, sys, urllib.request
 
 token, proxy = sys.argv[1], sys.argv[2]
 commands = [
-    {"command": "start", "description": "Онбординг Argus + reply keyboard"},
-    {"command": "health", "description": "Argus: статус сервисов и системы"},
+    {"command": "health", "description": "Статус сервисов и системы"},
+    {"command": "watchdog", "description": "Статус стража Argus"},
     {"command": "integrations", "description": "Быстрый статус интеграций"},
     {"command": "integrations_all", "description": "Все интеграции по группам"},
-    {"command": "watchdog", "description": "Статус стража мониторинга"},
-    {"command": "uptime", "description": "Аптайм и нагрузка"},
-    {"command": "deepcheck", "description": "Deep check AI-провайдеров (chat ping)"},
-    {"command": "settings", "description": "Настройки Argus (read-only)"},
+    {"command": "deepcheck", "description": "Deep check AI-провайдеров"},
     {"command": "logs", "description": "Последние строки gateway.log"},
+    {"command": "settings", "description": "Настройки Argus"},
+    {"command": "silence", "description": "Заглушить алерты (выбор длительности)"},
+    {"command": "start", "description": "Онбординг Argus"},
+    {"command": "uptime", "description": "Аптайм и нагрузка"},
     {"command": "network", "description": "Статус сети"},
-    {"command": "silence", "description": "Заглушить алерты на N часов"},
-    {"command": "menu", "description": "Панель кнопок"},
-    {"command": "reboot", "description": "Перезагрузка сервера (2 шага)"},
-    {"command": "restart_gw", "description": "Рестарт gateway"},
+    {"command": "menu", "description": "Панель обслуживания"},
     {"command": "restart_dash", "description": "Рестарт dashboard"},
+    {"command": "restart_gw", "description": "Рестарт gateway"},
     {"command": "restart_all", "description": "Рестарт gateway+dashboard"},
+    {"command": "reboot", "description": "Перезагрузка сервера (2 шага)"},
 ]
 data = json.dumps({"commands": commands}).encode()
 req = urllib.request.Request(
