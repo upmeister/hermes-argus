@@ -161,24 +161,24 @@ def handle_restart_dashboard() -> str:
     return handle_restart_service("hermes-dashboard", "@HERMES_DIR@/logs/gui.log")
 
 def handle_silence(hours: int = 1) -> str:
-    """Режим тишины на 1 час: если уже активен — сброс."""
-    remaining = _silence_remaining()
-    if remaining > 0:
-        # Уже есть тишина — сбрасываем
-        try:
-            sf = os.path.expanduser("~/.hermes/logs/auto-remediate-state/silence-until.txt")
-            with open(sf, "w") as f:
-                f.write("0")
-        except:
-            pass
-        return "\U0001f50a Тишина сброшена. Алерты снова активны."
-    
-    silence_until = int(datetime.now(timezone.utc).timestamp() + hours * 3600)
+    """Тишина на N часов: hours > 0 — установить/продлить (перезаписывает),
+    hours == 0 — сброс (кнопка «Сбросить тишину»). Отчёт с фактом «до HH:MM»."""
     state_dir = os.path.expanduser("~/.hermes/logs/auto-remediate-state")
+    sf = os.path.join(state_dir, "silence-until.txt")
     os.makedirs(state_dir, exist_ok=True)
-    with open(f"{state_dir}/silence-until.txt", "w") as f:
-        f.write(str(silence_until))
-    return "\U0001f515 Алерты приглушены на 1 час"
+    now = datetime.now(timezone.utc)
+
+    if hours <= 0:
+        with open(sf, "w") as f:
+            f.write("0")
+        return "🔊 Тишина сброшена. Алерты снова активны."
+
+    until = int(now.timestamp() + hours * 3600)
+    with open(sf, "w") as f:
+        f.write(str(until))
+    until_local = datetime.fromtimestamp(until, timezone.utc).astimezone().strftime("%H:%M")
+    return f"🔕 Тишина до {until_local} ({hours} ч). Алерты в этот период не доставляются."
+
 
 def handle_start() -> str:
     """Branded onboarding: what Argus is + live status from the cached report."""
@@ -202,13 +202,10 @@ def handle_start() -> str:
     return chr(10).join(lines)
 
 
-def send_logs_messages(lines: int = 20) -> None:
-    """C-phase 2: /logs with HTML <code> + line-chunked pagination.
-
-    Log content is html-escaped (logs contain angle brackets and ampersands —
-    HTML injection guard); each chunk stays under the TG 4096-char limit.
-    NL is built via chr(10) so the source has no escape sequences to break."""
-    NL = chr(10)
+def logs_view(lines: int = 20) -> tuple:
+    """Stateless /logs view (2ch-monitor pattern): tail N lines of gateway.log,
+    html-escaped in <code>, keyboard with refresh + 'more' (N grows by 20 per
+    press — the page number lives in callback_data, no cursor storage)."""
     try:
         result = subprocess.run(
             ["tail", f"-{lines}", "@HERMES_DIR@/logs/gateway.log"],
@@ -216,26 +213,16 @@ def send_logs_messages(lines: int = 20) -> None:
         )
         raw = (result.stdout or "").rstrip()
         esc = html.escape(raw) if raw else "(пусто — gateway.log пуст или отсутствует)"
-        body_lines = esc.split(NL)
-        header = f"📋 gateway.log — последние {lines} строк:"
-        chunks, cur = [], ""
-        for ln in body_lines:
-            if len(cur) + len(ln) + 1 > 3400:
-                chunks.append(cur)
-                cur = ""
-            cur += ln + NL
-        if cur:
-            chunks.append(cur)
-        send_message(header)
-        total = min(len(chunks), 3)
-        for i, chunk in enumerate(chunks[:3]):
-            tail_note = f"{NL}…часть {i + 1}/{total}" if total > 1 else ""
-            send_message(f"<code>{chunk}</code>{tail_note}", html_mode=True)
-        if len(chunks) > 3:
-            send_message(f"⚠️ Лог длинный — показано 3/{len(chunks)} частей. "
-                         f"Уменьшите объём: /logs 10", html_mode=True)
+        text = f"📋 gateway.log — последние {lines} строк:" + chr(10) + f"<code>{esc[:3400]}</code>"
+        if len(esc) > 3400:
+            text += chr(10) + "⚠️ Показан хвост — увеличьте: /logs " + str(min(lines * 2, 200))
+        kb = {"inline_keyboard": [
+            [{"text": "🔄 Обновить", "callback_data": "show_logs"},
+             {"text": "📄 Ещё 20", "callback_data": f"logs_more:{min(lines + 20, 200)}"}],
+        ]}
+        return text, kb
     except Exception as e:
-        send_message(f"❌ Не удалось прочитать логи: {e}")
+        return f"❌ Не удалось прочитать логи: {e}", {"inline_keyboard": []}
 
 
 def handle_health_status() -> str:
@@ -658,11 +645,11 @@ def handle_settings() -> str:
     lines.append(f"• DISCORD_ALLOWED_USER_IDS: {_mask(val('DISCORD_ALLOWED_USER_IDS'))}")
     lines.append("")
 
-    lines.append("💓 Heartbeat:")
-    lines.append(f"• CRONPING_TOKEN: {_mask(val('CRONPING_TOKEN'))}")
-    lines.append(f"• DMS_SNITCH: {_mask(val('DMS_SNITCH'))}")
-    lines.append(f"• GH_TOKEN: {_mask(val('GH_TOKEN'))}")
-    lines.append(f"• GITHUB_REPO: {val('GITHUB_REPO') or '— не задано'}")
+    lines.append("💓 Heartbeat (бекенды активны при заданных ключах):")
+    lines.append(f"• Cronping: {'активен' if val('CRONPING_TOKEN') else '— не настроен'} ({_mask(val('CRONPING_TOKEN'))})")
+    lines.append(f"• Dead Man's Snitch: {'активен' if val('DMS_SNITCH') and val('DMS_SNITCH') != 'change_me' else '— не настроен'}")
+    lines.append(f"• GitHub: {'активен' if val('GITHUB_REPO') and val('GH_TOKEN') else '— не настроен'} (repo: {val('GITHUB_REPO') or '—'})")
+    lines.append("• MODULE_GH_HEARTBEAT — флаг установщика (создание репо); пингом управляют ключи выше")
     lines.append("")
 
     lines.append("🌐 Сеть:")
@@ -859,7 +846,7 @@ def menu_keyboard():
             ],
             [
                 {"text": "\u26a0\ufe0f Reboot server", "callback_data": "reboot"},
-                {"text": "\U0001f507 Silence 1ч", "callback_data": "silence_1h"},
+                {"text": "\U0001f507 Silence", "callback_data": "silence_menu"},
             ],
             [
                 {"text": "\U0001f9ea Deep AI", "callback_data": "deep_ai"},
@@ -915,7 +902,8 @@ def handle_callback_query(query: dict) -> None:
         log_to_changelog("Перезапуск gateway+dashboard (кнопка)", "fast-path, без LLM")
         send_message(f"🔄 **Restart All:**\n{handle_restart_gateway()}\n---\n{handle_restart_dashboard()}", silent=True)
     elif action == "show_logs":
-        send_logs_messages()
+        text, kb = logs_view(20)
+        send_message(text, reply_markup=kb, html_mode=True)
     elif action == "network":
         send_message(handle_network_status(), silent=True)
     elif action == "health":
@@ -928,6 +916,13 @@ def handle_callback_query(query: dict) -> None:
         send_message(handle_integrations_check(), silent=True)
     elif action == "integrations_all":
         send_message(handle_integrations_all(), silent=True)
+    elif action.startswith("logs_more:"):
+        try:
+            n = int(action.split(":", 1)[1])
+        except ValueError:
+            n = 40
+        text, kb = logs_view(n)
+        send_message(text, reply_markup=kb, html_mode=True)
     elif action == "settings":
         send_message(handle_settings(), reply_markup=settings_keyboard(), silent=True)
     elif action == "deep_ai":
