@@ -284,6 +284,7 @@ fi
 # CRON_PROFILE (C6 F6): full — весь набор; minimal — только тихие discovery/
 # health-check строки (для тест-VM, чтобы алерты не сыпались в реальный чат)
 CRON_PROFILE="${CRON_PROFILE:-full}"
+CRON_FILE="${CRON_FILE:-/tmp/hermes-argus-crontab.txt}"
 
 CRON_TMP=$(mktemp)
 {

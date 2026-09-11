@@ -491,6 +491,32 @@ def probe_discover_url_shape_and_literals(disc, tmp: Path):
           f"custom={custom.geturl()} literal={literal.geturl()}")
 
 
+def probe_deploy_cron_profile(tmp: Path):
+    """Minimal cron profile runs deploy and excludes noisy core jobs."""
+    home = tmp / "deploy-home"
+    config = write(tmp / "minimal-config.env",
+                   "MODULE_CORE=ON\n"
+                   "MODULE_INTEGRATIONS=ON\n"
+                   "MODULE_TG_BOT=OFF\n"
+                   "MODULE_ANALYZER=OFF\n"
+                   "MODULE_HEARTBEAT=OFF\n"
+                   "MODULE_GH_HEARTBEAT=OFF\n"
+                   "MODULE_DISCORD_BOT=OFF\n")
+    cron = tmp / "minimal-cron.txt"
+    env = dict(os.environ, HOME=str(home), CRON_PROFILE="minimal", CRON_FILE=str(cron))
+    result = subprocess.run(["bash", str(REPO / "deploy.sh"), str(config)],
+                            cwd=REPO, env=env, capture_output=True, text=True, timeout=60)
+    cron_text = cron.read_text(encoding="utf-8") if cron.exists() else ""
+    quiet = ("hermes-watchdog.sh" not in cron_text
+             and "network-guard.sh" not in cron_text
+             and "gateway-liveness.sh" not in cron_text)
+    integration = all(name in cron_text for name in (
+        "integration-discover-wrapper.sh", "fallback-tracker-v2.py",
+        "health-check-v2-wrapper.sh"))
+    check("deploy_cron_profile", result.returncode == 0 and quiet and integration,
+          f"rc={result.returncode} cron={cron_text!r}")
+
+
 # ── runner ──────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -533,6 +559,7 @@ def main() -> int:
 
     probe_discover_url_secret_leak(disc, tmp)
     probe_discover_url_shape_and_literals(disc, tmp)
+    probe_deploy_cron_profile(tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:
