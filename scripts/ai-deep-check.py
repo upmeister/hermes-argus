@@ -203,7 +203,7 @@ def run(argv: list[str] | None = None) -> int:
         catalog_ids = [m.get("id", "") for m in (data.get("data") or data.get("models") or [])
                        if isinstance(m, dict)] if isinstance(data, dict) else []
 
-        chat_model = (active_model_by_provider(snapshot, name)
+        chat_model = (active_model_by_provider(snap, name)
                       or free_chat_model(name, catalog_ids, free_models))
         allow_paid = ((env.get("DEEP_CHECK_ALLOW_PAID") or "ON").strip().upper() != "OFF") \
             and not args.no_paid
