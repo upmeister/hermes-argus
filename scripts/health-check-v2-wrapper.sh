@@ -20,19 +20,39 @@ LOG="$H/logs/health-check-v2.log"
 STATE="$H/state/health-check-v2-state.json"
 REPORT="$H/state/health-check-v2-report.json"
 
+report_before=$(stat -c '%d:%i:%s:%y:%z' "$REPORT" 2>/dev/null || printf 'absent')
 python3 "$HOME/scripts/health-check-v2.py" >>"$LOG" 2>&1
 RC=$?
 echo "[$(date -Is)] health-check-v2 exit=$RC" >> "$LOG"
 
-# Engine exit 2: registry missing/engine error — log only, no alert spam
+# Engine crash may also exit 1 (the same code as a real health failure). If the
+# report was not rewritten during this invocation, it is stale and must not be
+# processed as a recovery (probe wrapper_crash_replays_stale_green).
+if [ "$RC" != "2" ]; then
+    report_after=$(stat -c '%d:%i:%s:%y:%z' "$REPORT" 2>/dev/null || printf 'absent')
+    if [ "$report_after" = "$report_before" ]; then
+        echo "[$(date -Is)] engine produced no fresh report (exit $RC) — stale report NOT processed" >> "$LOG"
+        exit 0
+    fi
+fi
+
+# Engine exit 2: registry/snapshot configuration error — log only, no alert spam
 [ "$RC" = "2" ] && exit 0
-# Engine crash (not 0/1): the report on disk is STALE — processing it would
-# announce fake recoveries (probe wrapper_crash_replays_stale_green)
-if [ "$RC" != "0" ] && [ "$RC" != "1" ]; then
-    echo "[$(date -Is)] engine crash (exit $RC) — stale report NOT processed" >> "$LOG"
+[ -f "$REPORT" ] || { echo "[$(date -Is)] report missing, skip alerting" >> "$LOG"; exit 0; }
+if ! python3 - "$REPORT" <<'PYEOF'
+import json, sys
+from pathlib import Path
+try:
+    report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(report, dict) or not isinstance(report.get("checks"), list):
+    raise SystemExit(1)
+PYEOF
+then
+    echo "[$(date -Is)] report invalid, skip alerting and preserve state" >> "$LOG"
     exit 0
 fi
-[ -f "$REPORT" ] || { echo "[$(date -Is)] report missing, skip alerting" >> "$LOG"; exit 0; }
 
 ALERT_GROUPS=$(python3 - "$STATE" "$REPORT" <<'PYEOF'
 import html, json, sys
@@ -65,9 +85,9 @@ for c in report.get("checks", []):
         elif state[cid] > 2 and state[cid] % 12 == 0:
             groups["watching"].append(
                 f"⏳ {label}: still failing ({state[cid]} runs): {detail}")
-    elif c["status"] == "unconfigured":
-        # config drift is NOT recovery: counter preserved (probe
-        # wrapper_unconfigured_is_recovered — only explicit ok recovers)
+    elif c["status"] in ("unconfigured", "skipped"):
+        # config drift or an intentionally skipped check is NOT recovery:
+        # preserve the previous failure counter.
         pass
     else:
         if prev >= 2:

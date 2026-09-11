@@ -6,6 +6,7 @@
 события added/removed/changed. exit 0 = тишина, 2 = есть события.
 """
 import json, os, re, sys, hashlib
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,20 +49,60 @@ def env_names(path):
         for line in path.read_text().splitlines():
             m = re.match(r"^([A-Z_0-9]+)=", line)
             if m:
-                out[m.group(1)] = bool(line.split("=", 1)[1].strip())
+                value = line.split("=", 1)[1].strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                out[m.group(1)] = bool(value)
     except FileNotFoundError:
         pass
     return out
 
 
+_SECRET_QUERY_NAMES = re.compile(
+    r"^(?:token|key|api[-_]?key|secret|password|passwd|auth|authorization|"
+    r"credential|signature|sig|access[-_]?token|client[-_]?secret)$",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_unparsed_url(value: str) -> str:
+    """Best-effort redaction for values that are not absolute URLs."""
+    value = re.sub(
+        r"(?i)(?P<prefix>(?:\?|&)\s*(?:token|key|api[-_]?key|secret|password|"
+        r"passwd|auth|authorization|credential|signature|sig|access[-_]?token|"
+        r"client[-_]?secret)\s*=)[^&\s]*",
+        r"\g<prefix><redacted>",
+        value,
+    )
+    # Commands and other non-URL strings may still contain URL userinfo.
+    return re.sub(r"(?P<scheme>://)(?:[^/@\s]+@)(?P<host>[^/\s]+)",
+                  r"\g<scheme>\g<host>", value)
+
+
 def sanitize_url(url: str) -> str:
-    """Strip userinfo and redact credential-looking query params: URL-embedded
-    secrets (user:pass@host, ?token=...) must not reach snapshot/stdout
-    (probe discover_url_secret_leak)."""
-    u = re.sub(r"//[^/\s@]+@", "//<redacted>@<redacted-host>", url or "")
-    u = re.sub(r"([?&](?:token|key|api_key|secret|password)=[^&\s]*)",
-               r"<redacted>", u, flags=re.IGNORECASE)
-    return u
+    """Return a valid URL with userinfo removed and query secrets redacted."""
+    value = str(url or "")
+    try:
+        parts = urlsplit(value)
+        if not parts.scheme or not parts.netloc:
+            return _sanitize_unparsed_url(value)
+
+        # Rebuild netloc from hostname/port so username and password cannot
+        # survive. Accessing .port also validates malformed port values.
+        hostname = parts.hostname
+        if not hostname:
+            return _sanitize_unparsed_url(value)
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = f"[{hostname}]"
+        port = parts.port
+        netloc = hostname if port is None else f"{hostname}:{port}"
+
+        query = []
+        for name, item in parse_qsl(parts.query, keep_blank_values=True):
+            query.append((name, "<redacted>" if _SECRET_QUERY_NAMES.fullmatch(name) else item))
+        return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query), parts.fragment))
+    except (TypeError, ValueError):
+        return _sanitize_unparsed_url(value)
 
 
 def extract_entities():
@@ -209,7 +250,8 @@ def extract_entities():
     for key in KNOWN_URL_KEYS:
         val = cfg.get(key)
         if isinstance(val, str) and val.startswith("http"):
-            entities[f"local:{key}"] = {"type": "local", "name": key, "url": val}
+            entities[f"local:{key}"] = {
+                "type": "local", "name": key, "url": sanitize_url(val)}
 
     return entities, env
 

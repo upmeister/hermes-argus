@@ -88,6 +88,17 @@ def free_chat_model(provider: str, catalog_ids: list[str],
     return None
 
 
+def is_known_free_model(provider: str, model: str,
+                        catalog_ids: list[str], free_models: dict) -> bool:
+    """Whether an active model is safe to use when paid checks are disabled."""
+    if model and model in catalog_ids and FREE_RE.search(model):
+        return True
+    for key, models in (free_models or {}).items():
+        if (provider == key or provider.startswith(key)) and model in (models or []):
+            return True
+    return False
+
+
 def redact_error(text: str, *secrets: str) -> str:
     """Scrub known secret values and sk-style keys from upstream error text."""
     out = text or ""
@@ -203,11 +214,15 @@ def run(argv: list[str] | None = None) -> int:
         catalog_ids = [m.get("id", "") for m in (data.get("data") or data.get("models") or [])
                        if isinstance(m, dict)] if isinstance(data, dict) else []
 
-        chat_model = (active_model_by_provider(snap, name)
-                      or free_chat_model(name, catalog_ids, free_models))
-        allow_paid = ((env.get("DEEP_CHECK_ALLOW_PAID") or "ON").strip().upper() != "OFF") \
-            and not args.no_paid
-        if chat_model is None and allow_paid and catalog_ids:
+        paid_allowed = allow_paid(env, args.no_paid)
+        active_model = active_model_by_provider(snap, name)
+        if paid_allowed:
+            chat_model = active_model or free_chat_model(name, catalog_ids, free_models)
+        elif active_model and is_known_free_model(name, active_model, catalog_ids, free_models):
+            chat_model = active_model
+        else:
+            chat_model = free_chat_model(name, catalog_ids, free_models)
+        if chat_model is None and paid_allowed and catalog_ids:
             chat_model = catalog_ids[0]
 
         if chat_model is None:
@@ -242,11 +257,11 @@ def run(argv: list[str] | None = None) -> int:
             rec["detail"] = f"chat failed via {chat_model} (HTTP {code}){': ' + err if err else ''}"
         results.append(rec)
 
-    fails = [r for r in results if r["status"] == "fail"]
-    oks = [r for r in results if r["status"] == "ok"]
+    oks, fails, unconf, skipped = count_statuses(results)
     report = {"updated": datetime.now(timezone.utc).isoformat(),
-              "total": len(results), "ok": len(oks),
-              "fail": len(fails), "checks": results}
+              "total": len(results), "ok": len(oks), "fail": len(fails),
+              "unconfigured": len(unconf), "skipped": len(skipped),
+              "checks": results}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, ensure_ascii=False, indent=1),
                         encoding="utf-8", newline="\n")
@@ -254,7 +269,9 @@ def run(argv: list[str] | None = None) -> int:
     marks = {"ok": "OK  ", "fail": "FAIL", "skipped": "SKIP", "unconfigured": "SKIP"}
     for r in results:
         print(f"[{marks.get(r['status'], '????')}] {r['provider']}: {r['detail']}")
-    print(f"ai-deep-check: {report['ok']}/{report['total']} ok, {report['fail']} fail")
+    print(f"ai-deep-check: {report['ok']}/{report['total']} ok, "
+          f"{report['fail']} fail, {report['unconfigured']} unconfigured, "
+          f"{report['skipped']} skipped")
     return 1 if fails else 0
 
 

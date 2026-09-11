@@ -84,13 +84,16 @@ def check_tg_getme(token: str, proxy: str) -> tuple[bool, str]:
 
 
 def load_env(path: Path) -> dict:
-    """Key -> raw value. Values stay in memory and are never printed/reported."""
+    """Key -> value; outer dotenv quotes are removed, values stay in memory."""
     out = {}
     try:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             m = re.match(r"^([A-Z_0-9]+)=", line)
             if m:
-                out[m.group(1)] = line.split("=", 1)[1].strip()
+                value = line.split("=", 1)[1].strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                out[m.group(1)] = value
     except FileNotFoundError:
         pass
     return out
@@ -222,7 +225,8 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
             # not "unconfigured" (review probe missing_required_provider_key)
             checks.append({"id": eid, "entity": eid, "primitive": "env",
                            "key_env": key_env, "label": f"provider {ent.get('name')}",
-                           "registry_key": key_env, "required": True})
+                           "registry_key": key_env, "required": True,
+                           "key_present": bool(ent.get("key_present"))})
             base_url = (ent.get("base_url") or "").strip()
             if base_url.startswith("http"):
                 # api-catalog instead of root http-alive: API roots 404 by design;
@@ -288,10 +292,17 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
     """Returns (status, detail): ok | fail | unconfigured."""
     prim = c["primitive"]
     if prim == "env":
-        if not (bool(c.get("key_env")) and bool(env.get(c["key_env"], ""))):
+        key_env = c.get("key_env", "")
+        if not key_env:
+            if c.get("key_present"):
+                return "ok", "inline key configured (endpoint check unavailable)"
             if c.get("required"):
-                return "fail", f"key_env {c.get('key_env')}: empty or unset"
-            return "unconfigured", f"key_env {c.get('key_env')}: not configured (optional)"
+                return "fail", "provider key empty or unset"
+            return "unconfigured", "key_env empty (optional)"
+        if not env.get(key_env, ""):
+            if c.get("required"):
+                return "fail", f"key_env {key_env}: empty or unset"
+            return "unconfigured", f"key_env {key_env}: not configured (optional)"
         # value-level check: registry may carry a real endpoint for this key
         c_url = c.get("check_url", "")
         if c_url:
@@ -314,6 +325,10 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
                 # fail fast on ANY candidate: a public fallback catalog does not
                 # prove the key is valid (review probe catalog_401_then_public200)
                 return "fail", f"key rejected (HTTP {code})"
+            if code == "429":
+                # Rate limiting is degradation, not proof that the key is valid;
+                # fail fast so a public fallback cannot turn it green.
+                return "fail", "catalog rate-limited (429) — not proof of key validity"
             if code != "000":
                 last = code
         if last == "404":
@@ -394,8 +409,11 @@ def run(argv: list[str] | None = None) -> int:
                         "category": c.get("category", ""),
                         "registry": c.get("registry", {})})
 
+    oks = [r for r in results if r["status"] == "ok"]
     fails = [r for r in results if r["status"] == "fail"]
     unconf = [r for r in results if r["status"] == "unconfigured"]
+    skipped = [r for r in results
+               if r["status"] not in ("ok", "fail", "unconfigured")]
     active_models = [
         {"role": e.get("role"), "provider": e.get("provider"), "model": e.get("model")}
         for e in (snapshot.get("entities") or {}).values()
@@ -408,8 +426,8 @@ def run(argv: list[str] | None = None) -> int:
     ]
     report = {
         "updated": datetime.now(timezone.utc).isoformat(),
-        "total": len(results), "ok": len(results) - len(fails) - len(unconf),
-        "fail": len(fails), "unconfigured": len(unconf),
+        "total": len(results), "ok": len(oks), "fail": len(fails),
+        "unconfigured": len(unconf), "skipped": len(skipped),
         "checks": results,
         "active_models": active_models,
         "plugin_providers": plugin_providers,
@@ -423,7 +441,8 @@ def run(argv: list[str] | None = None) -> int:
     for r in results:
         print(f"[{marks.get(r['status'], '????')}] {r['label']}: {r['detail']}")
     print(f"health-check-v2: {report['ok']}/{report['total']} ok, "
-          f"{report['fail']} fail, {report['unconfigured']} unconfigured")
+          f"{report['fail']} fail, {report['unconfigured']} unconfigured, "
+          f"{report['skipped']} skipped")
     return 1 if fails else 0
 
 

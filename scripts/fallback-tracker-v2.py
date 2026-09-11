@@ -247,5 +247,9 @@ def main():
     for a in alerts:
         send_alert(a["text"], env, silent=a["silent"])
 
+
 if __name__ == "__main__":
-    main()
+    if "--selftest" in sys.argv:
+        selftest()
+    else:
+        main()

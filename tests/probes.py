@@ -101,6 +101,22 @@ def probe_catalog_401_then_public200(hc):
         "https://dummy.invalid/v1/models"], detail)
 
 
+def probe_catalog_429_then_public200(hc):
+    """429 на первом кандидате — fail fast, публичный каталог не спасает."""
+    calls = []
+
+    def fake_curl(url, timeout, token=""):
+        calls.append(url)
+        return "429" if url.endswith("/v1/models") else "200"
+
+    hc.curl_code = fake_curl
+    status, detail = hc.run_check(
+        {"id": "p", "primitive": "api-catalog", "base": "https://dummy.invalid",
+         "key_env": "DUMMY_KEY", "label": "p"}, "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
+    check("catalog_429_then_public200", status == "fail" and calls == [
+        "https://dummy.invalid/v1/models"], detail)
+
+
 def probe_honcho_503_green(hc):
     """alive-режим удалён: 503 = fail, а не 'auth wall, service alive'."""
     codes = iter(["503"])
@@ -122,18 +138,31 @@ def probe_missing_required_provider_key(hc):
     check("missing_required_provider_key", status == "fail", "status=" + status)
 
 
+def probe_quoted_empty_provider_key(hc, tmp: Path):
+    """Quoted empty dotenv values are empty, not configured."""
+    env = write(tmp / "quoted-empty.env", 'DUMMY_KEY=""\n')
+    loaded = hc.load_env(env)
+    c = {"id": "provider:dummy", "primitive": "env", "key_env": "DUMMY_KEY",
+         "required": True, "label": "dummy"}
+    status, _ = hc.run_check(c, "hermes", loaded)
+    check("quoted_empty_provider_key", loaded.get("DUMMY_KEY") == "" and status == "fail",
+          f"value={loaded.get('DUMMY_KEY')!r} status={status}")
+
+
 def probe_snapshot_missing_green(hc, tmp: Path):
     """Отсутствующий снапшот = exit 2 (ошибка состояния), не зелёный."""
+    registry = write(tmp / "valid-registry.yaml", "kit_entries: []\n")
     rc = hc.run(["--snapshot", str(tmp / "missing.json"),
-                 "--env", str(tmp / "no.env"), "--registry", str(tmp / "no.reg")])
+                 "--env", str(tmp / "no.env"), "--registry", str(registry)])
     check("snapshot_missing_green", rc == 2, f"rc={rc}")
 
 
 def probe_snapshot_corrupt_green(hc, tmp: Path):
     """Битый JSON снапшота = exit 2."""
+    registry = write(tmp / "valid-registry-corrupt.yaml", "kit_entries: []\n")
     p = write(tmp / "corrupt.json", "{not json")
     rc = hc.run(["--snapshot", str(p),
-                 "--env", str(tmp / "no.env"), "--registry", str(tmp / "no.reg")])
+                 "--env", str(tmp / "no.env"), "--registry", str(registry)])
     check("snapshot_corrupt_green", rc == 2, f"rc={rc}")
 
 
@@ -176,8 +205,11 @@ def probe_fallback_same_second_lost(ft, tmp: Path):
     events = ft.scan_events()
     st = {"last_ts": 0, "sessions": {}}
     st, alerts = ft.apply_events(st, events, {})
-    check("fallback_same_second_lost", len(events) == 2 and st["last_ts"] > 0,
-          f"events={len(events)}")
+    check("fallback_same_second_lost",
+          len(events) == 2
+          and st["last_ts"] == events[-1]["ts"]
+          and st["sessions"]["s1"]["hops"] == 2,
+          f"events={len(events)} state={st}")
 
 
 def probe_fallback_cross_session_restore(ft, tmp: Path):
@@ -187,13 +219,14 @@ def probe_fallback_cross_session_restore(ft, tmp: Path):
          "provider": "dummy", "model": "paid-model"},
         {"ts": 2.0, "ts_str": "t2", "sid": "session-B", "kind": "restore",
          "provider": "dummy", "model": "primary-model"},
-        {"ts": 3.0, "ts_str": "t3", "sid": "session-A", "kind": "hop",
-         "provider": "dummy", "model": "second-paid"},
     ]
     st, alerts = ft.apply_events({"last_ts": 0, "sessions": {}}, events, {})
     sess_a = st["sessions"].get("session-A", {})
-    check("fallback_cross_session_restore", sess_a.get("mode") == "fallback",
-          f"session-A mode={sess_a.get('mode')}")
+    sess_b = st["sessions"].get("session-B", {})
+    check("fallback_cross_session_restore",
+          sess_a.get("mode") == "fallback" and sess_a.get("hops") == 1
+          and sess_b.get("mode") == "primary",
+          f"session-A={sess_a} session-B={sess_b}")
 
 
 def probe_envref_enrichment(hc):
@@ -216,80 +249,120 @@ def probe_deep_activemodel_targeted(dc, tmp: Path):
                           "provider": "dummy", "model": "actual-primary"}}}))
     write(tmp / "env", "DUMMY_KEY=x" + chr(10))
     calls = []
-    dc.curl_json = lambda url, token, payload, timeout: (
-        calls.append((url, payload)) or
-        (200, {"data": [{"id": "unrelated-first"}]}))
+
+    def fake_curl(url, token, payload, timeout):
+        calls.append((url, payload))
+        if payload is None:
+            return 200, {"data": [{"id": "unrelated-first"}]}
+        return 200, {"choices": [{"message": {"content": "pong"}}]}
+
+    dc.curl_json = fake_curl
+    out = tmp / "rep.json"
     r = dc.run(["--snapshot", str(snap), "--env", str(tmp / "env"),
-                "--registry", str(tmp / "no.reg"), "--out", str(tmp / "rep.json")])
+                "--registry", str(tmp / "no.reg"), "--out", str(out)])
+    report = json.loads(out.read_text())
     chat_calls = [c for c in calls if "chat" in c[0]]
     targeted = any(p and p.get("model") == "actual-primary" for _, p in chat_calls)
-    check("deep_activemodel_targeted", targeted and len(calls) == 2,
-          f"calls={calls}")
+    check("deep_activemodel_targeted", r == 0 and targeted and len(calls) == 2
+          and report.get("ok") == 1 and report.get("fail") == 0,
+          f"rc={r} calls={calls} report={report}")
+
+
+def probe_deep_paid_off_main(dc, tmp: Path):
+    """Quoted DEEP_CHECK_ALLOW_PAID=OFF reaches main and prevents chat."""
+    snap = write(tmp / "paid-off-snap.json", json.dumps({"entities": {
+        "provider:dummy": {"type": "provider", "name": "dummy", "key_env": "DUMMY_KEY",
+                           "key_present": True, "base_url": "https://dummy.invalid/v1"},
+        "model:primary": {"type": "activemodel", "role": "primary",
+                          "provider": "dummy", "model": "actual-paid"}}}))
+    env = write(tmp / "paid-off.env", 'DUMMY_KEY=x\nDEEP_CHECK_ALLOW_PAID="OFF"\n')
+    calls = []
+
+    def fake_curl(url, token, payload, timeout):
+        calls.append((url, payload))
+        if payload is None:
+            return 200, {"data": [{"id": "actual-paid"}]}
+        return 200, {"choices": [{"message": {"content": "must-not-run"}}]}
+
+    dc.curl_json = fake_curl
+    out = tmp / "paid-off-report.json"
+    r = dc.run(["--snapshot", str(snap), "--env", str(env),
+                "--registry", str(tmp / "no-paid.reg"), "--out", str(out)])
+    report = json.loads(out.read_text())
+    check("deep_paid_off_main", r == 0 and len(calls) == 1 and report.get("ok") == 1
+          and report.get("fail") == 0 and report.get("unconfigured") == 0,
+          f"rc={r} calls={calls} report={report}")
+
+
+def probe_deep_unconfigured_report(dc, tmp: Path):
+    """Deep report exposes unconfigured separately from ok."""
+    snap = write(tmp / "unconfigured-snap.json", json.dumps({"entities": {
+        "provider:dummy": {"type": "provider", "name": "dummy", "key_env": "DUMMY_KEY",
+                           "key_present": False, "base_url": "https://dummy.invalid/v1"}}}))
+    env = write(tmp / "unconfigured.env", "")
+    out = tmp / "unconfigured-report.json"
+    r = dc.run(["--snapshot", str(snap), "--env", str(env),
+                "--registry", str(tmp / "no-unconfigured.reg"), "--out", str(out)])
+    report = json.loads(out.read_text())
+    check("deep_unconfigured_report", r == 0 and report.get("ok") == 0
+          and report.get("fail") == 0 and report.get("unconfigured") == 1
+          and report.get("skipped") == 0,
+          f"rc={r} report={report}")
 
 
 def probe_wrapper_crash_no_stale(hp, tmp: Path):
-    """Engine crash: wrapper не обрабатывает устаревший отчёт (нет recovery)."""
+    """Engine crash with RC=1 must not process an old report."""
     import subprocess
-    home = tmp / "home"
+    home = tmp / "crash-home"
+    hermes = home / ".hermes"
     write(home / "scripts" / "health-check-v2.py",
           'raise RuntimeError("dummy engine crash; no report generated")')
-    write(home / "state" / "health-check-v2-report.json", json.dumps({
+    write(hermes / "state" / "health-check-v2-report.json", json.dumps({
         "updated": "2026-09-10T00:00:00+00:00", "total": 1, "ok": 0, "fail": 1,
         "checks": [{"id": "provider:dummy", "label": "dummy", "status": "fail",
                     "detail": "old failure"}]}))
-    write(home / "state" / "health-check-v2-state.json",
+    write(hermes / "state" / "health-check-v2-state.json",
           json.dumps({"provider:dummy": 2}))
-    env = dict(os.environ, HOME=str(home))
+    write(hermes / "logs" / ".keep", "")
+    env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp))
     r = subprocess.run(["bash", str(REPO / "scripts" / "health-check-v2-wrapper.sh")],
-                       capture_output=True, text=True, timeout=30,
-                       env=env | {"XDG_RUNTIME_DIR": str(tmp)})
-    state = json.loads((home / "state" / "health-check-v2-state.json").read_text())
-    check("wrapper_crash_no_stale",
-          state.get("provider:dummy") == 2,
-          f"state after crash: {state}")
+                       capture_output=True, text=True, timeout=30, env=env)
+    state = json.loads((hermes / "state" / "health-check-v2-state.json").read_text())
+    log = (hermes / "logs" / "health-check-v2.log").read_text()
+    check("wrapper_crash_no_stale", r.returncode == 0
+          and state.get("provider:dummy") == 2
+          and "stale report NOT processed" in log,
+          f"rc={r.returncode} state={state}")
 
 
 def probe_wrapper_unconfigured_not_recovery(hp, tmp: Path):
-    """unconfigured не сбрасывает fail-счётчик и не даёт 🟢 recovery."""
-    home = tmp / "home"
-    write(home / "scripts" / "health-check-v2.py",
-          "import json" + chr(10) + "rep = {'updated': '2026-09-10T00:00:00+00:00',"
-          " 'total': 1, 'ok': 0, 'fail': 0, 'unconfigured': 1, 'checks': ["
-          "{'id': 'provider:dummy', 'label': 'dummy', 'status': 'unconfigured',"
-          " 'detail': 'n/a'}]}" + chr(10))
-    engine = home / "scripts" / "health-check-v2.py"
-    write(home / "state" / "health-check-v2-report.json",
-          json.dumps({"updated": "2026-09-10T00:00:00+00:00", "total": 1, "ok": 0,
-                      "fail": 0, "unconfigured": 1,
-                      "checks": [{"id": "provider:dummy", "label": "dummy",
-                                  "status": "unconfigured", "detail": "n/a"}]}))
-    write(home / "state" / "health-check-v2-state.json",
+    """unconfigured does not reset a prior failure counter in the real wrapper."""
+    import subprocess
+    home = tmp / "unconfigured-home"
+    hermes = home / ".hermes"
+    report = {"updated": "2026-09-10T00:00:00+00:00", "total": 1,
+              "ok": 0, "fail": 0, "unconfigured": 1,
+              "checks": [{"id": "provider:dummy", "label": "dummy",
+                          "status": "unconfigured", "detail": "n/a"}]}
+    engine = (
+        "from pathlib import Path\n"
+        "import json\n"
+        "p = Path.home() / '.hermes' / 'state' / 'health-check-v2-report.json'\n"
+        "p.parent.mkdir(parents=True, exist_ok=True)\n"
+        f"p.write_text({json.dumps(json.dumps(report))})\n"
+    )
+    write(home / "scripts" / "health-check-v2.py", engine)
+    write(hermes / "state" / "health-check-v2-report.json", json.dumps(report))
+    write(hermes / "state" / "health-check-v2-state.json",
           json.dumps({"provider:dummy": 2}))
-    env = dict(os.environ, HOME=str(home))
-    subprocess.run(["python3", str(engine)], capture_output=True, text=True, timeout=15)
-    # отчёт есть (unconfigured), состояние до прогона: fail-счётчик 2
-    state_before = {"provider:dummy": 2}
-    # wrapper должен: НЕ давать recovery, НЕ сбрасывать счётчик
-    NL = chr(10)
-    # симуляция python-части wrapper на fixture-отчёте — только статус-семантика
-    checks = json.loads((home / "state" / "health-check-v2-report.json").read_text())["checks"]
-    state = dict(state_before)
-    recovered = []
-    for c in checks:
-        cid = c["id"]
-        prev = state.get(cid, 0)
-        if c["status"] == "fail":
-            state[cid] = prev + 1
-        elif c["status"] == "unconfigured":
-            # counter preserved (не recovery, не сброс)
-            pass
-        else:
-            if prev >= 2:
-                recovered.append(cid)
-            state[cid] = 0
-    check("wrapper_unconfigured_not_recovery",
-          state.get("provider:dummy") == 2 and not recovered,
-          f"state={state} recovered={recovered}")
+    write(hermes / "logs" / ".keep", "")
+    env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp))
+    r = subprocess.run(["bash", str(REPO / "scripts" / "health-check-v2-wrapper.sh")],
+                       capture_output=True, text=True, timeout=30, env=env)
+    state = json.loads((hermes / "state" / "health-check-v2-state.json").read_text())
+    check("wrapper_unconfigured_not_recovery", r.returncode == 0
+          and state.get("provider:dummy") == 2,
+          f"rc={r.returncode} state={state}")
 
 
 def probe_fallback_registry_free_ignored(ft, tmp: Path):
@@ -316,15 +389,6 @@ def probe_fallback_baseline_first_incident(ft, tmp: Path):
     st2, alerts2 = ft.apply_events(st, new_incident, {})
     check("fallback_baseline_first_incident_alerts", len(alerts2) == 1,
           f"alerts={alerts2}")
-
-
-
-    """Модель из registry free_models классифицируется как free без ':free' в id."""
-    check("fallback_registry_free_ignored",
-          ft.is_free_model("openrouter", "minimax-m3",
-                           {"openrouter": ["minimax-m3"]}) is True,
-          "registry free_models must classify")
-
 
 # ── Пробы: health_patterns ──────────────────────────────────────────────────
 
@@ -354,7 +418,22 @@ def probe_pattern_sample_secret_leak(hp, tmp: Path):
     hp.GATEWAY_LOG = log
     res = hp.find_issues(open(log, encoding="utf-8").read())
     sample = str(res.get("telegram_api_error", {}).get("sample", ""))
-    check("pattern_sample_secret_leak", "DUMMY_LOG_SECRET" not in sample, "leak!")
+    check("pattern_sample_secret_leak", "DUMMY_LOG_SECRET" not in sample,
+          "redacted" if "DUMMY_LOG_SECRET" not in sample else "leak!")
+
+
+def probe_pattern_bearer_secret_leak(hp, tmp: Path):
+    """Bearer value is redacted even when preceded by Authorization:."""
+    from datetime import datetime as _dt
+    ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    log = write(tmp / "bearer.log",
+                f"{ts},000 ERROR gateway: "
+                "Telegram API error: Authorization: Bearer DUMMY_BEARER_SECRET\n")
+    hp.GATEWAY_LOG = log
+    res = hp.find_issues(open(log, encoding="utf-8").read())
+    sample = str(res.get("telegram_api_error", {}).get("sample", ""))
+    check("pattern_bearer_secret_leak", "DUMMY_BEARER_SECRET" not in sample,
+          "redacted" if "DUMMY_BEARER_SECRET" not in sample else "leak!")
 
 
 # ── Пробы: integration-discover (санитайзер URL) ───────────────────────────
@@ -374,6 +453,44 @@ def probe_discover_url_secret_leak(disc, tmp: Path):
     check("discover_url_secret_leak", not leaks, "leak!" if leaks else "sanitized")
 
 
+def probe_discover_url_shape_and_literals(disc, tmp: Path):
+    """userinfo удалён без placeholder-host; literal URL-ключи тоже очищаются."""
+    cfg = write(
+        tmp / "config-literal.yaml",
+        "custom_providers:\n"
+        "  - name: dummy\n"
+        "    key_env: DUMMY_KEY\n"
+        "    base_url: 'https://dummy:DUMMY_URL_PASSWORD@dummy.invalid/mcp?token=DUMMY_QUERY_SECRET'\n"
+        "SEARXNG_URL: 'https://literal:DUMMY_LITERAL_PASSWORD@search.invalid:8443/search?api_key=DUMMY_LITERAL_SECRET&region=eu'\n",
+    )
+    disc.CONFIG = cfg
+    disc.ENV_FILE = tmp / "no-literal.env"
+    disc.SNAPSHOT = tmp / "literal-snap.json"
+    entities, _env = disc.extract_entities()
+    provider = next(e for e in entities.values() if e.get("type") == "provider")
+    custom = disc.urlsplit(provider["base_url"])
+    literal = disc.urlsplit(entities["local:SEARXNG_URL"]["url"])
+    custom_qs = dict(disc.parse_qsl(custom.query, keep_blank_values=True))
+    literal_qs = dict(disc.parse_qsl(literal.query, keep_blank_values=True))
+    blob = json.dumps(entities, ensure_ascii=False)
+    secrets = (
+        "DUMMY_URL_PASSWORD", "DUMMY_QUERY_SECRET",
+        "DUMMY_LITERAL_PASSWORD", "DUMMY_LITERAL_SECRET",
+    )
+    ok = (
+        custom.username is None and custom.password is None
+        and custom.netloc == "dummy.invalid"
+        and custom_qs.get("token") == "<redacted>"
+        and literal.username is None and literal.password is None
+        and literal.hostname == "search.invalid" and literal.port == 8443
+        and literal_qs.get("api_key") == "<redacted>"
+        and literal_qs.get("region") == "eu"
+        and not any(secret in blob for secret in secrets)
+    )
+    check("discover_url_shape_and_literals", ok,
+          f"custom={custom.geturl()} literal={literal.geturl()}")
+
+
 # ── runner ──────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -386,8 +503,10 @@ def main() -> int:
 
     probe_catalog_429(hc)
     probe_catalog_401_then_public200(hc)
+    probe_catalog_429_then_public200(hc)
     probe_honcho_503_green(hc)
     probe_missing_required_provider_key(hc)
+    probe_quoted_empty_provider_key(hc, tmp)
     probe_snapshot_missing_green(hc, tmp)
     probe_snapshot_corrupt_green(hc, tmp)
 
@@ -401,6 +520,8 @@ def main() -> int:
     probe_fallback_registry_free_ignored(ft, tmp)
     probe_envref_enrichment(hc)
     probe_deep_activemodel_targeted(dc, tmp)
+    probe_deep_paid_off_main(dc, tmp)
+    probe_deep_unconfigured_report(dc, tmp)
     probe_wrapper_crash_no_stale(hp, tmp)
     probe_wrapper_unconfigured_not_recovery(hp, tmp)
     probe_fallback_baseline_first_incident(ft, tmp)
@@ -408,8 +529,10 @@ def main() -> int:
     probe_disk100(hp, tmp)
     probe_telegram_final_attempt(hp, tmp)
     probe_pattern_sample_secret_leak(hp, tmp)
+    probe_pattern_bearer_secret_leak(hp, tmp)
 
     probe_discover_url_secret_leak(disc, tmp)
+    probe_discover_url_shape_and_literals(disc, tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

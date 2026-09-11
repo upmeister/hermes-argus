@@ -228,12 +228,19 @@ def selftest() -> int:
 
 
 REDACT_RE = re.compile(
-    r"((?:token|key|api_key|password|authorization|bearer)[=:\s]+)\S+", re.IGNORECASE)
+    r"(?P<auth>\bauthorization\b\s*[:=]\s*bearer\s+)[^\s,;]+"
+    r"|(?P<bearer>\bbearer\s+)[^\s,;]+"
+    r"|(?P<key>\b(?:token|key|api_key|password)\b\s*[:=]\s*)[^\s,;]+",
+    re.IGNORECASE,
+)
 
 
 def redact_line(line: str) -> str:
-    """Маскировать значения после token=/key=/Bearer в строке лога."""
-    return REDACT_RE.sub(r"***", line or "")
+    """Mask values after token/key/password and Bearer authorization markers."""
+    def replacement(match):
+        prefix = match.group("auth") or match.group("bearer") or match.group("key")
+        return prefix + "***"
+    return REDACT_RE.sub(replacement, line or "")
 
 
 def find_issues(metrics: str, now: datetime = None) -> dict:
