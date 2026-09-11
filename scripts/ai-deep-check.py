@@ -139,7 +139,7 @@ def catalog_verdict(url: str, token: str) -> tuple:
     return "ok", "catalog ok", data
 
 
-def main() -> None:
+def run(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="C2 deep check: chat max_tokens=1 per provider")
     ap.add_argument("--snapshot", type=Path, default=DEFAULT_SNAPSHOT)
     ap.add_argument("--env", type=Path, default=DEFAULT_ENV)
@@ -147,7 +147,7 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--no-paid", action="store_true",
                     help="conservative manual run: chat only against known free models")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     # --allow-paid is the DEFAULT since C2 review (Vlad, 2026-09-07): paid chat
     # calls are max_tokens=1 "ping" (negligible cost). DEEP_CHECK_ALLOW_PAID=OFF
@@ -255,8 +255,8 @@ def main() -> None:
     for r in results:
         print(f"[{marks.get(r['status'], '????')}] {r['provider']}: {r['detail']}")
     print(f"ai-deep-check: {report['ok']}/{report['total']} ok, {report['fail']} fail")
-    sys.exit(1 if fails else 0)
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(run())

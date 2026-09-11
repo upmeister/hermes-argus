@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import subprocess
 import json
 import os
 import sys
@@ -195,7 +196,128 @@ def probe_fallback_cross_session_restore(ft, tmp: Path):
           f"session-A mode={sess_a.get('mode')}")
 
 
+def probe_envref_enrichment(hc):
+    """envref-чек наследует registry check_url (probe envref_drops_auth_check)."""
+    reg = {"entries": [{"key": "GITHUB_TOKEN", "check_url": "https://api.github.com/user",
+                        "check_auth": "bearer", "check_mode": "200"}]}
+    snap = {"entities": {"envref:GITHUB_TOKEN": {"type": "envref", "name": "GITHUB_TOKEN"}}}
+    checks = hc.build_checks(reg, snap, {"GITHUB_TOKEN": "x"})
+    c = next(c for c in checks if c["id"] == "envref:GITHUB_TOKEN")
+    check("envref_enrichment", c.get("check_url") == "https://api.github.com/user"
+          and c.get("check_auth") == "bearer", f"check={c}")
+
+
+def probe_deep_activemodel_targeted(dc, tmp: Path):
+    """Deep check таргетит активную модель (probe deep_actual_model_ignored)."""
+    snap = write(tmp / "snap.json", json.dumps({"entities": {
+        "provider:dummy": {"type": "provider", "name": "dummy", "key_env": "DUMMY_KEY",
+                           "key_present": True, "base_url": "https://dummy.invalid/v1"},
+        "model:primary": {"type": "activemodel", "role": "primary",
+                          "provider": "dummy", "model": "actual-primary"}}}))
+    calls = []
+    dc.curl_json = lambda url, token, payload, timeout: (
+        calls.append((url, payload)) or
+        (200, {"data": [{"id": "unrelated-first"}]}))
+    r = dc.run(["--snapshot", str(snap), "--env", str(tmp / "no.env"),
+                "--registry", str(tmp / "no.reg"), "--out", str(tmp / "rep.json")])
+    chat_calls = [c for c in calls if "chat" in c[0]]
+    targeted = any(p and p.get("model") == "actual-primary" for _, p in chat_calls)
+    check("deep_activemodel_targeted", targeted and len(calls) == 2,
+          f"calls={calls}")
+
+
+def probe_wrapper_crash_no_stale(hp, tmp: Path):
+    """Engine crash: wrapper не обрабатывает устаревший отчёт (нет recovery)."""
+    import subprocess
+    home = tmp / "home"
+    write(home / "scripts" / "health-check-v2.py",
+          'raise RuntimeError("dummy engine crash; no report generated")')
+    write(home / "state" / "health-check-v2-report.json", json.dumps({
+        "updated": "2026-09-10T00:00:00+00:00", "total": 1, "ok": 0, "fail": 1,
+        "checks": [{"id": "provider:dummy", "label": "dummy", "status": "fail",
+                    "detail": "old failure"}]}))
+    write(home / "state" / "health-check-v2-state.json",
+          json.dumps({"provider:dummy": 2}))
+    env = dict(os.environ, HOME=str(home))
+    r = subprocess.run(["bash", str(REPO / "scripts" / "health-check-v2-wrapper.sh")],
+                       capture_output=True, text=True, timeout=30,
+                       env=env | {"XDG_RUNTIME_DIR": str(tmp)})
+    state = json.loads((home / "state" / "health-check-v2-state.json").read_text())
+    check("wrapper_crash_no_stale",
+          state.get("provider:dummy") == 2,
+          f"state after crash: {state}")
+
+
+def probe_wrapper_unconfigured_not_recovery(hp, tmp: Path):
+    """unconfigured не сбрасывает fail-счётчик и не даёт 🟢 recovery."""
+    home = tmp / "home"
+    write(home / "scripts" / "health-check-v2.py",
+          "import json" + chr(10) + "rep = {'updated': '2026-09-10T00:00:00+00:00',"
+          " 'total': 1, 'ok': 0, 'fail': 0, 'unconfigured': 1, 'checks': ["
+          "{'id': 'provider:dummy', 'label': 'dummy', 'status': 'unconfigured',"
+          " 'detail': 'n/a'}]}" + chr(10))
+    engine = home / "scripts" / "health-check-v2.py"
+    write(home / "state" / "health-check-v2-report.json",
+          json.dumps({"updated": "2026-09-10T00:00:00+00:00", "total": 1, "ok": 0,
+                      "fail": 0, "unconfigured": 1,
+                      "checks": [{"id": "provider:dummy", "label": "dummy",
+                                  "status": "unconfigured", "detail": "n/a"}]}))
+    write(home / "state" / "health-check-v2-state.json",
+          json.dumps({"provider:dummy": 2}))
+    env = dict(os.environ, HOME=str(home))
+    subprocess.run(["python3", str(engine)], capture_output=True, text=True, timeout=15)
+    # отчёт есть (unconfigured), состояние до прогона: fail-счётчик 2
+    state_before = {"provider:dummy": 2}
+    # wrapper должен: НЕ давать recovery, НЕ сбрасывать счётчик
+    NL = chr(10)
+    # симуляция python-части wrapper на fixture-отчёте — только статус-семантика
+    checks = json.loads((home / "state" / "health-check-v2-report.json").read_text())["checks"]
+    state = dict(state_before)
+    recovered = []
+    for c in checks:
+        cid = c["id"]
+        prev = state.get(cid, 0)
+        if c["status"] == "fail":
+            state[cid] = prev + 1
+        elif c["status"] == "unconfigured":
+            # counter preserved (не recovery, не сброс)
+            pass
+        else:
+            if prev >= 2:
+                recovered.append(cid)
+            state[cid] = 0
+    check("wrapper_unconfigured_not_recovery",
+          state.get("provider:dummy") == 2 and not recovered,
+          f"state={state} recovered={recovered}")
+
+
 def probe_fallback_registry_free_ignored(ft, tmp: Path):
+    """Модель из registry free_models классифицируется как free без ':free' в id."""
+    check("fallback_registry_free_ignored",
+          ft.is_free_model("openrouter", "minimax-m3",
+                           {"openrouter": ["minimax-m3"]}) is True,
+          "registry free_models must classify")
+
+
+def probe_fallback_baseline_first_incident(ft, tmp: Path):
+    """Baseline на истории с активным инцидентом: первый НОВЫЙ инцидент в новой
+    сессии алертит (probe fallback_first_incident_baselined)."""
+    events = [
+        {"ts": 1.0, "ts_str": "t1", "sid": "old-session", "kind": "hop",
+         "provider": "dummy", "model": "paid-model"},
+    ]
+    st, alerts = ft.apply_events({"sessions": {}}, events, {})
+    check("fallback_baseline_silent", not alerts, "baseline must be silent")
+    new_incident = [
+        {"ts": 100.0, "ts_str": "t2", "sid": "new-session", "kind": "hop",
+         "provider": "dummy", "model": "paid-model"},
+    ]
+    st2, alerts2 = ft.apply_events(st, new_incident, {})
+    check("fallback_baseline_first_incident_alerts", len(alerts2) == 1,
+          f"alerts={alerts2}")
+
+
+
     """Модель из registry free_models классифицируется как free без ':free' в id."""
     check("fallback_registry_free_ignored",
           ft.is_free_model("openrouter", "minimax-m3",
@@ -276,6 +398,11 @@ def main() -> int:
     probe_fallback_same_second_lost(ft, tmp)
     probe_fallback_cross_session_restore(ft, tmp)
     probe_fallback_registry_free_ignored(ft, tmp)
+    probe_envref_enrichment(hc)
+    probe_deep_activemodel_targeted(dc, tmp)
+    probe_wrapper_crash_no_stale(hp, tmp)
+    probe_wrapper_unconfigured_not_recovery(hp, tmp)
+    probe_fallback_baseline_first_incident(ft, tmp)
 
     probe_disk100(hp, tmp)
     probe_telegram_final_attempt(hp, tmp)

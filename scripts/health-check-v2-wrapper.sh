@@ -26,6 +26,12 @@ echo "[$(date -Is)] health-check-v2 exit=$RC" >> "$LOG"
 
 # Engine exit 2: registry missing/engine error — log only, no alert spam
 [ "$RC" = "2" ] && exit 0
+# Engine crash (not 0/1): the report on disk is STALE — processing it would
+# announce fake recoveries (probe wrapper_crash_replays_stale_green)
+if [ "$RC" != "0" ] && [ "$RC" != "1" ]; then
+    echo "[$(date -Is)] engine crash (exit $RC) — stale report NOT processed" >> "$LOG"
+    exit 0
+fi
 [ -f "$REPORT" ] || { echo "[$(date -Is)] report missing, skip alerting" >> "$LOG"; exit 0; }
 
 ALERT_GROUPS=$(python3 - "$STATE" "$REPORT" <<'PYEOF'
@@ -59,6 +65,10 @@ for c in report.get("checks", []):
         elif state[cid] > 2 and state[cid] % 12 == 0:
             groups["watching"].append(
                 f"⏳ {label}: still failing ({state[cid]} runs): {detail}")
+    elif c["status"] == "unconfigured":
+        # config drift is NOT recovery: counter preserved (probe
+        # wrapper_unconfigured_is_recovered — only explicit ok recovers)
+        pass
     else:
         if prev >= 2:
             groups["recovered"].append(f"🟢 {label} ({detail})")

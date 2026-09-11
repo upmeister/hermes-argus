@@ -246,3 +246,6 @@ def main():
     write_state(new_state)
     for a in alerts:
         send_alert(a["text"], env, silent=a["silent"])
+
+if __name__ == "__main__":
+    main()
