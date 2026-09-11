@@ -214,11 +214,12 @@ def probe_deep_activemodel_targeted(dc, tmp: Path):
                            "key_present": True, "base_url": "https://dummy.invalid/v1"},
         "model:primary": {"type": "activemodel", "role": "primary",
                           "provider": "dummy", "model": "actual-primary"}}}))
+    write(tmp / "env", "DUMMY_KEY=x" + chr(10))
     calls = []
     dc.curl_json = lambda url, token, payload, timeout: (
         calls.append((url, payload)) or
         (200, {"data": [{"id": "unrelated-first"}]}))
-    r = dc.run(["--snapshot", str(snap), "--env", str(tmp / "no.env"),
+    r = dc.run(["--snapshot", str(snap), "--env", str(tmp / "env"),
                 "--registry", str(tmp / "no.reg"), "--out", str(tmp / "rep.json")])
     chat_calls = [c for c in calls if "chat" in c[0]]
     targeted = any(p and p.get("model") == "actual-primary" for _, p in chat_calls)
