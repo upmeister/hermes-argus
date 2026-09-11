@@ -281,11 +281,15 @@ fi
 
 # ── Генерация cron-строк по включённым модулям ─────────────────────────────
 # Только СТРОКИ: весь crontab юзера не заменяем.
-CRON_FILE="/tmp/hermes-argus-crontab.txt"
+# CRON_PROFILE (C6 F6): full — весь набор; minimal — только тихие discovery/
+# health-check строки (для тест-VM, чтобы алерты не сыпались в реальный чат)
+CRON_PROFILE="${CRON_PROFILE:-full}"
+CRON_FILE="${CRON_FILE:-/tmp/hermes-argus-crontab.txt}"
+
 CRON_TMP=$(mktemp)
 {
     echo "# hermes-argus: cron-строки включённых модулей ($(date -Iseconds))"
-    if module_enabled MODULE_CORE; then
+    if module_enabled MODULE_CORE && [ "$CRON_PROFILE" = "full" ]; then
         echo "*/5 * * * * $HOME_DIR/scripts/hermes-watchdog.sh >> $HERMES_DIR/logs/watchdog-cron.log 2>&1"
         echo "*/2 * * * * $HOME_DIR/scripts/network-guard.sh >> $HERMES_DIR/logs/network-guard-cron.log 2>&1"
         echo "*/2 * * * * $HERMES_DIR/scripts/gateway-liveness.sh >> $HERMES_DIR/logs/gateway-liveness.log 2>&1"

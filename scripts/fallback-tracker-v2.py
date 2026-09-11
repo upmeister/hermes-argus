@@ -26,11 +26,11 @@ ENV_FILE = HOME / ".hermes" / ".env"
 # C1: session-id ([YYYYMMDD_HHMMSS_hex8]) сохраняется (группа 2) — per-turn
 # correlation id, меняется на каждый хоп.
 HOP_RE = re.compile(
-    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ \S+ (?:\[(\S+)\] )?"
+    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(\d{3}) \S+ (?:\[(\S+)\] )?"
     r"agent\.chat_completion_helpers: Fallback to ([^/\s]+)/(.+?): "
     r"attached fallback credential pool")
 RESTORE_RE = re.compile(
-    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ \S+ (?:\[(\S+)\] )?"
+    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(\d{3}) \S+ (?:\[(\S+)\] )?"
     r"agent\.agent_runtime_helpers: Primary runtime restored for new turn: (\S+) \(([^)]+)\)")
 FREE_RE = re.compile(r"(?:^|[:\-_/])free(?:$|[:\-_/.])", re.IGNORECASE)
 
@@ -44,15 +44,15 @@ def parse_line(line):
     m = HOP_RE.match(line)
     if m:
         ts = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=timezone.utc).timestamp()
-        return {"ts": ts, "ts_str": m.group(1), "sid": m.group(2) or "n/a",
-                "kind": "hop", "provider": m.group(3), "model": m.group(4)}
+            tzinfo=timezone.utc).timestamp() + int(m.group(2)) / 1000.0
+        return {"ts": ts, "ts_str": m.group(1), "sid": m.group(3) or "n/a",
+                "kind": "hop", "provider": m.group(4), "model": m.group(5)}
     m = RESTORE_RE.search(line)
     if m:
         ts = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=timezone.utc).timestamp()
-        return {"ts": ts, "ts_str": m.group(1), "sid": m.group(2) or "n/a",
-                "kind": "restore", "model": m.group(3), "provider": m.group(4)}
+            tzinfo=timezone.utc).timestamp() + int(m.group(2)) / 1000.0
+        return {"ts": ts, "ts_str": m.group(1), "sid": m.group(3) or "n/a",
+                "kind": "restore", "model": m.group(4), "provider": m.group(5)}
     return None
 
 
@@ -156,57 +156,96 @@ def selftest():
     sys.exit(1 if failed else 0)
 
 
+def load_free_models() -> dict:
+    """registry.yaml free_models (provider -> [models]); {} on any failure."""
+    try:
+        import yaml
+        reg = Path(STATE_FILE).parent / "registry.yaml"
+        return (yaml.safe_load(reg.read_text(encoding="utf-8")) or {}).get("free_models", {}) or {}
+    except Exception:
+        return {}
+
+
+def is_free_model(provider: str, model: str, free_models: dict) -> bool:
+    """Free = ':free'-style token in the model id OR the registry free_models
+    list for this provider (probe fallback_registry_free_ignored)."""
+    if FREE_RE.search(model or ""):
+        return True
+    for key, models in (free_models or {}).items():
+        if (provider == key or provider.startswith(key)) and model in (models or []):
+            return True
+    return False
+
+
+def apply_events(state: dict, events: list, free_models: dict | None = None) -> tuple[dict, list]:
+    """Pure cascade state machine: (state, events) -> (new_state, alerts).
+
+    Per-session cascade state: a restore closes only ITS OWN session's cascade
+    (probe fallback_cross_session_restore). Alerts are dicts {text, silent} —
+    the caller owns delivery.
+    """
+    alerts = []
+    sessions = state.get("sessions", {})
+    if not events:
+        state.setdefault("last_ts", 0)
+        state["sessions"] = sessions
+        return state, alerts
+
+    # First run with history: baseline to the newest event, no alerts.
+    if "last_ts" not in state:
+        last = events[-1]
+        sid = last.get("sid", "n/a")
+        sess = sessions.setdefault(sid, {"mode": "primary", "hops": 0})
+        sess["mode"] = "primary" if last["kind"] == "restore" else (
+            "free-hop" if is_free_model(last.get("provider", ""), last.get("model", ""), free_models)
+            else "fallback")
+        state.update({"last_ts": last["ts"], "sessions": sessions})
+        return state, alerts
+
+    fresh = [e for e in events if e["ts"] > state.get("last_ts", 0)]
+    for e in fresh:
+        sid = e.get("sid", "n/a")
+        sess = sessions.setdefault(sid, {"mode": "primary", "hops": 0})
+        if e["kind"] == "hop":
+            is_free = is_free_model(e.get("provider", ""), e.get("model", ""), free_models)
+            if sess["mode"] == "primary" or (is_free and sess["mode"] != "free-hop"):
+                label = "FREE-TIER" if is_free else "fallback"
+                alerts.append({
+                    "text": (f"📌 Модель недоступна: фолбек на {e['provider']}/{e['model']} "
+                             f"({label}) · session {sid} · log {e['ts_str']}. Наблюдаю за каскадом."),
+                    "silent": False})
+            sess["mode"] = "free-hop" if is_free else "fallback"
+            sess["hops"] = sess.get("hops", 0) + 1
+        elif e["kind"] == "restore":
+            if sess["mode"] != "primary":
+                alerts.append({
+                    "text": (f"✅ Primary восстановлен: {e['model']} ({e['provider']}) "
+                             f"· session {sid} · log {e['ts_str']}. "
+                             f"Каскад завершён (хопов: {sess.get('hops', '?')})."),
+                    "silent": True})
+            sess.update({"mode": "primary", "hops": 0})
+        state["last_ts"] = e["ts"]
+
+    state["sessions"] = sessions
+    return state, alerts
+
+
 def main():
     env = load_env()
     st = read_state()
     events = scan_events()
-    if not events:
-        return
+    free_models = load_free_models()
 
-    # Первый запуск: baseline без алертов (иначе 181 исторических алертов)
-    if "last_ts" not in st:
-        last = events[-1]
-        st.update({"last_ts": last["ts"],
-                   "mode": "primary" if last["kind"] == "restore" else (
-                       "free-hop" if FREE_RE.search(last.get("model", "")) else "fallback"),
-                   "hops": 0})
+    # Baseline на пустых логах: last_ts=0, чтобы первый будущий инцидент алертил
+    if not events and "last_ts" not in st:
+        st.update({"last_ts": 0, "sessions": {}})
         write_state(st)
         return
 
-    now_mode = st.get("mode", "primary")
-    last_processed = st.get("last_ts", 0)
-
-    # Пропускаем уже обработанное
-    fresh = [e for e in events if e["ts"] > last_processed]
-    if not fresh:
-        return
-
-    for e in fresh:
-        now_mode = st.get("mode", "primary")  # режим НА момент события
-        if e["kind"] == "hop":
-            is_free = bool(FREE_RE.search(e["model"]))
-            # Алерт только на ПЕРВЫЙ хоп (переход primary→fallback) или на free-провал
-            if now_mode == "primary" or (is_free and now_mode != "free-hop"):
-                label = "FREE-TIER" if is_free else "fallback"
-                send_alert(
-                    f"📉 Модель недоступна: фолбек на {e['provider']}/{e['model']} "
-                    f"({label}) · session {e['sid']} · log {e['ts_str']}. "
-                    f"Наблюдаю за каскадом.",
-                    env, silent=False)
-            st.update({"mode": "free-hop" if is_free else "fallback",
-                       "last_hop": f"{e['provider']}/{e['model']}",
-                       "hops": st.get("hops", 0) + 1})
-        elif e["kind"] == "restore":
-            if now_mode != "primary":
-                send_alert(
-                    f"✅ Primary восстановлен: {e['model']} ({e['provider']}) "
-                    f"· session {e['sid']} · log {e['ts_str']}. "
-                    f"Каскад завершён (хопов: {st.get('hops', '?')}).",
-                    env, silent=True)
-            st.update({"mode": "primary", "hops": 0})
-        st["last_ts"] = e["ts"]
-
-    write_state(st)
+    new_state, alerts = apply_events(st, events, free_models)
+    write_state(new_state)
+    for a in alerts:
+        send_alert(a["text"], env, silent=a["silent"])
 
 
 if __name__ == "__main__":
