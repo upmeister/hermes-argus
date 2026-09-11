@@ -11,7 +11,6 @@ Primitives (mapped from snapshot entity types):
   env        — key present and non-empty in ~/.hermes/.env
   tcp        — TCP connect to host:port (kit proxy entries)
   http       — GET url, 2xx/3xx expected (local self-hosted services)
-  http-alive — GET url, any non-000 response passes (API roots: 401 = alive)
   mcp-test   — `hermes mcp test <name>`, parse stdout (exit code is always 0)
 
 Output: JSON report to --out (machine-readable, consumed by
@@ -120,14 +119,17 @@ def curl_code(url: str, timeout: int, token: str = "") -> str:
         return "000"
 
 
-def check_http(url: str, alive_only: bool, retries: int, token: str = "") -> tuple[bool, str]:
-    """GET url. http: 2xx/3xx pass. http-alive: any non-000 passes (401 = alive)."""
+def check_http(url: str, retries: int, token: str = "") -> tuple[bool, str]:
+    """GET url: 2xx/3xx = ok; 401/403 = 'key rejected'; прочие 4xx/5xx/000 = fail.
+    alive-семантика удалена (ревью Питны honcho_503_green: 5xx не маскируется)."""
     code = "000"
     for attempt in range(retries):
         code = curl_code(url, HTTP_TIMEOUT, token=token)
-        ok = (code != "000") if alive_only else (code.startswith("2") or code.startswith("3"))
+        ok = code.startswith("2") or code.startswith("3")
         if ok:
             return True, f"HTTP {code}"
+        if code in ("401", "403"):
+            return False, f"key rejected (HTTP {code})"
         if attempt < retries - 1:
             time.sleep(HTTP_RETRY_DELAY)
     return False, f"HTTP {code}"
@@ -216,9 +218,11 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
         etype = ent.get("type")
         if etype == "provider":
             key_env = ent.get("key_env", "")
+            # snapshot provider = explicit configuration: missing key is a FAIL,
+            # not "unconfigured" (review probe missing_required_provider_key)
             checks.append({"id": eid, "entity": eid, "primitive": "env",
                            "key_env": key_env, "label": f"provider {ent.get('name')}",
-                           "registry_key": key_env})
+                           "registry_key": key_env, "required": True})
             base_url = (ent.get("base_url") or "").strip()
             if base_url.startswith("http"):
                 # api-catalog instead of root http-alive: API roots 404 by design;
@@ -232,8 +236,10 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
                            "mcp_name": ent.get("name", ""), "label": f"mcp {ent.get('name')}"})
         elif etype == "envref":
             key = ent.get("name", "")
+            # registry enrichment: the referenced key may carry a real endpoint
             checks.append({"id": eid, "entity": eid, "primitive": "env",
-                           "key_env": key, "label": f"envref {key}"})
+                           "key_env": key, "label": f"envref {key}",
+                           "registry_key": key})
         elif etype == "oauth":
             checks.append({"id": eid, "entity": eid, "primitive": "oauth",
                            "name": ent.get("name", ""),
@@ -270,6 +276,11 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
         if rk and rk in entries:
             e = entries[rk]
             c["registry"] = {"url": e.get("url"), "free": e.get("free", False)}
+            # envref/provider checks inherit a real endpoint from the registry
+            if c.get("primitive") == "env" and e.get("check_url"):
+                c["check_url"] = e["check_url"]
+                c["check_auth"] = e.get("check_auth", "none")
+                c["check_mode"] = e.get("check_mode", "200")
     return checks
 
 
@@ -284,12 +295,9 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
         # value-level check: registry may carry a real endpoint for this key
         c_url = c.get("check_url", "")
         if c_url:
-            mode = c.get("check_mode", "alive")
             tok = env.get(c["key_env"], "").strip().strip('"\'') \
                 if c.get("check_auth") == "bearer" else ""
-            ok2, d2 = check_http(c_url, alive_only=(mode == "alive"), retries=2, token=tok)
-            if ok2 and mode == "alive" and not d2.startswith("HTTP 2"):
-                d2 += " — auth wall, service alive"
+            ok2, d2 = check_http(c_url, retries=2, token=tok)
             return ("ok" if ok2 else "fail"), f"key set; endpoint {d2}"
         return "ok", f"key_env {c.get('key_env')}: set"
     if prim == "api-catalog":
@@ -302,14 +310,16 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
             code = curl_code(url, HTTP_TIMEOUT, token=token)
             if code.startswith("2"):
                 return "ok", f"catalog HTTP {code}"
-            if code == "429":
-                return "ok", "catalog rate-limited (429) — alive, key accepted"
-            if code in (401, 403):
+            if code in ("401", "403"):
+                # fail fast on ANY candidate: a public fallback catalog does not
+                # prove the key is valid (review probe catalog_401_then_public200)
                 return "fail", f"key rejected (HTTP {code})"
             if code != "000":
                 last = code
         if last == "404":
             return "fail", "no catalog route (404 on both /v1/models and /models)"
+        if last == "429":
+            return "fail", "catalog rate-limited (429) — not proof of key validity"
         return "fail", f"unreachable (HTTP {last})"
     if prim == "oauth":
         name = c.get("name", "")
@@ -337,10 +347,7 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
         ok, detail = check_tcp(c["host"], c["port"])
         return ("ok" if ok else "fail"), detail
     if prim == "http":
-        ok, detail = check_http(c["url"], alive_only=False, retries=HTTP_RETRIES)
-        return ("ok" if ok else "fail"), detail
-    if prim == "http-alive":
-        ok, detail = check_http(c["url"], alive_only=True, retries=HTTP_RETRIES)
+        ok, detail = check_http(c["url"], retries=HTTP_RETRIES)
         return ("ok" if ok else "fail"), detail
     if prim == "mcp-test":
         ok, detail = check_mcp(hermes_bin, c["mcp_name"])
@@ -348,7 +355,8 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
     return "fail", f"unknown primitive {prim}"
 
 
-def main() -> None:
+def run(argv: list[str] | None = None) -> int:
+    """Engine entry, returns the process exit code (testable without os.exit)."""
     ap = argparse.ArgumentParser(description="Registry-driven integration health engine")
     ap.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     ap.add_argument("--snapshot", type=Path, default=DEFAULT_SNAPSHOT)
@@ -356,17 +364,24 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--hermes-bin", default=str(DEFAULT_HERMES_BIN))
     ap.add_argument("--skip", default="", help="comma-separated check ids to skip")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     env = load_env(args.env)
     registry = load_registry(args.registry)
     if not registry:
         print("health-check-v2: registry.yaml missing/empty — run gen-registry.py + deploy", file=sys.stderr)
-        sys.exit(2)
+        return 2
+    # Discover snapshot is the SOURCE of what is live: missing/corrupt snapshot
+    # is an error state (review probe snapshot_missing_green/corrupt), not a
+    # silent kit-only green.
+    if not args.snapshot.exists():
+        print("health-check-v2: discover snapshot missing — run integration-discover first", file=sys.stderr)
+        return 2
     try:
-        snapshot = json.loads(args.snapshot.read_text(encoding="utf-8")) if args.snapshot.exists() else {}
-    except json.JSONDecodeError:
-        snapshot = {}
+        snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"health-check-v2: snapshot corrupt ({e}) — run integration-discover first", file=sys.stderr)
+        return 2
 
     checks = [c for c in build_checks(registry, snapshot, env)
               if c["id"] not in set(filter(None, args.skip.split(",")))]
@@ -409,8 +424,8 @@ def main() -> None:
         print(f"[{marks.get(r['status'], '????')}] {r['label']}: {r['detail']}")
     print(f"health-check-v2: {report['ok']}/{report['total']} ok, "
           f"{report['fail']} fail, {report['unconfigured']} unconfigured")
-    sys.exit(1 if fails else 0)
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

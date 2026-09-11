@@ -88,6 +88,57 @@ def free_chat_model(provider: str, catalog_ids: list[str],
     return None
 
 
+def redact_error(text: str, *secrets: str) -> str:
+    """Scrub known secret values and sk-style keys from upstream error text."""
+    out = text or ""
+    for sec in filter(None, secrets):
+        out = out.replace(sec, "***")
+    return re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-***", out)
+
+
+def allow_paid(env: dict, no_paid: bool) -> bool:
+    """Paid chat calls ON by default; DEEP_CHECK_ALLOW_PAID (quotes tolerated)
+    or --no-paid disables."""
+    if no_paid:
+        return False
+    raw = (env.get("DEEP_CHECK_ALLOW_PAID") or "ON").strip().strip(chr(34) + chr(39)).upper()
+    return raw != "OFF"
+
+
+def active_model_by_provider(snapshot: dict, provider: str) -> str | None:
+    """Configured active model for this provider (activemodel entities), if any."""
+    for e in (snapshot.get("entities") or {}).values():
+        if e.get("type") == "activemodel" and e.get("provider") == provider:
+            return e.get("model") or None
+    return None
+
+
+def count_statuses(checks: list) -> tuple:
+    """Split checks into (ok, fail, unconfigured, skipped) — statuses never
+    collapse into ok (review probe deep_skipped_counted_ok)."""
+    oks = [c for c in checks if c.get("status") == "ok"]
+    fails = [c for c in checks if c.get("status") == "fail"]
+    unconf = [c for c in checks if c.get("status") == "unconfigured"]
+    skipped = [c for c in checks if c.get("status") not in ("ok", "fail", "unconfigured")]
+    return oks, fails, unconf, skipped
+
+
+def catalog_verdict(url: str, token: str) -> tuple:
+    """Catalog probe verdict: ok only for a JSON 2xx carrying a models list.
+    HTML/captcha/WAF 200 is not proof of a catalog (probe deep_html200_green)."""
+    code, data = curl_json(url, token, None, HTTP_TIMEOUT)
+    if code in (401, 403):
+        return "fail", f"key rejected at catalog (HTTP {code})", None
+    if code == 0 or code >= 500:
+        return "fail", f"catalog unreachable (HTTP {code})", None
+    if code >= 400:
+        return "fail", f"catalog HTTP {code}", None
+    if not isinstance(data, dict) or not isinstance(
+            data.get("data") or data.get("models"), list):
+        return "fail", "catalog: non-JSON 2xx response", None
+    return "ok", "catalog ok", data
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="C2 deep check: chat max_tokens=1 per provider")
     ap.add_argument("--snapshot", type=Path, default=DEFAULT_SNAPSHOT)
@@ -143,24 +194,17 @@ def main() -> None:
             continue
 
         models_url, chat_url = api_endpoints(base)
-        code, data = curl_json(models_url, token, None, HTTP_TIMEOUT)
-        if code == 401 or code == 403:
-            rec["status"], rec["detail"] = "fail", f"key rejected at catalog (HTTP {code})"
-            results.append(rec)
-            continue
-        if code == 0 or code >= 500:
-            rec["status"], rec["detail"] = "fail", f"catalog unreachable (HTTP {code})"
-            results.append(rec)
-            continue
-        if code >= 400:
-            rec["status"], rec["detail"] = "fail", f"catalog HTTP {code}"
+        status, detail, data = catalog_verdict(models_url, token)
+        if status == "fail":
+            rec["status"], rec["detail"] = "fail", detail
             results.append(rec)
             continue
 
         catalog_ids = [m.get("id", "") for m in (data.get("data") or data.get("models") or [])
                        if isinstance(m, dict)] if isinstance(data, dict) else []
 
-        chat_model = free_chat_model(name, catalog_ids, free_models)
+        chat_model = (active_model_by_provider(snapshot, name)
+                      or free_chat_model(name, catalog_ids, free_models))
         allow_paid = ((env.get("DEEP_CHECK_ALLOW_PAID") or "ON").strip().upper() != "OFF") \
             and not args.no_paid
         if chat_model is None and allow_paid and catalog_ids:
@@ -183,7 +227,7 @@ def main() -> None:
         rec["latency_ms"] = latency
         err = ""
         if isinstance(data, dict) and isinstance(data.get("error"), dict):
-            err = str(data["error"].get("message", ""))[:120]
+            err = redact_error(str(data["error"].get("message", ""))[:120], token)
         if code == 200 and isinstance(data, dict) and data.get("choices"):
             rec["status"] = "ok"
             rec["detail"] = f"chat ok via {chat_model} ({latency}ms)"
@@ -199,8 +243,9 @@ def main() -> None:
         results.append(rec)
 
     fails = [r for r in results if r["status"] == "fail"]
+    oks = [r for r in results if r["status"] == "ok"]
     report = {"updated": datetime.now(timezone.utc).isoformat(),
-              "total": len(results), "ok": len(results) - len(fails),
+              "total": len(results), "ok": len(oks),
               "fail": len(fails), "checks": results}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, ensure_ascii=False, indent=1),

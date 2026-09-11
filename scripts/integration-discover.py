@@ -54,6 +54,16 @@ def env_names(path):
     return out
 
 
+def sanitize_url(url: str) -> str:
+    """Strip userinfo and redact credential-looking query params: URL-embedded
+    secrets (user:pass@host, ?token=...) must not reach snapshot/stdout
+    (probe discover_url_secret_leak)."""
+    u = re.sub(r"//[^/\s@]+@", "//<redacted>@<redacted-host>", url or "")
+    u = re.sub(r"([?&](?:token|key|api_key|secret|password)=[^&\s]*)",
+               r"<redacted>", u, flags=re.IGNORECASE)
+    return u
+
+
 def extract_entities():
     cfg = load_yaml(CONFIG)
     env = env_names(ENV_FILE)
@@ -69,17 +79,17 @@ def extract_entities():
             entities[f"provider:{name}"] = {
                 "type": "provider", "name": name, "key_env": key_env,
                 "key_present": key_present,
-                "base_url": p.get("base_url") or p.get("api") or ""}
+                "base_url": sanitize_url(p.get("base_url") or p.get("api") or "")}
 
     for i, p in enumerate(cfg.get("custom_providers") or []):
         if isinstance(p, dict) and (p.get("key_env") or p.get("api_key")):
-            nm = p.get("name") or p.get("base_url") or f"legacy-{i}"
+            nm = sanitize_url(str(p.get("name") or p.get("base_url") or f"legacy-{i}"))
             key_env = p.get("key_env") or ""
             key_present = bool(p.get("api_key")) or env.get(key_env, False)
             entities[f"provider:{nm}"] = {
                 "type": "provider", "name": str(nm), "key_env": key_env,
                 "key_present": key_present,
-                "base_url": p.get("base_url") or p.get("api") or ""}
+                "base_url": sanitize_url(p.get("base_url") or p.get("api") or "")}
 
     for name, s in (cfg.get("mcp_servers") or {}).items():
         if isinstance(s, dict):
@@ -87,7 +97,7 @@ def extract_entities():
             entities[f"mcp:{name}"] = {
                 "type": "mcp", "name": name,
                 "transport": "http" if url else "stdio",
-                "url": url if url else s.get("command", "")}
+                "url": sanitize_url(url if url else s.get("command", ""))}
 
     try:
         for m in re.finditer(r"\$\{([A-Z_0-9]+)\}", CONFIG.read_text()):

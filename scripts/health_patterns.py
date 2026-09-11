@@ -46,9 +46,9 @@ PATTERNS = {
         # "Telegram" (кейс 2026-09-08: "IPv4 Telegram API IP X failed" —
         # исключение "IPv4 Telegram API IP" оставалось позади матча).
         "exclude_any": [
-            "polling degraded", "network error (attempt",
+            "polling degraded",
             "restarted after network error", "updater.stop() timed out",
-            "_redact_telegram_error_text", "reconnect failed", "retrying",
+            "_redact_telegram_error_text", "reconnect failed",
             "trying fallback IPs", "Fallback IP", "Sticky fallback",
             "Sticky Telegram path", "re-walking IPv4 literals",
             "IPv4 Telegram API IP", "MarkdownV2 parse failed",
@@ -76,7 +76,7 @@ PATTERNS = {
         "min_matches": 3,
     },
     "disk_high": {
-        "pattern": r"disk.*(8[5-9]|9[0-9])%",
+        "pattern": r"disk.*(8[5-9]|9[0-9]|100)%",  # 100% тоже критично (probe disk100)
         "source": "metrics",
         "severity": "warning",
         "description": "Диск заполнен >85%",
@@ -227,6 +227,15 @@ def selftest() -> int:
     return 1 if failed else 0
 
 
+REDACT_RE = re.compile(
+    r"((?:token|key|api_key|password|authorization|bearer)[=:\s]+)\S+", re.IGNORECASE)
+
+
+def redact_line(line: str) -> str:
+    """Маскировать значения после token=/key=/Bearer в строке лога."""
+    return REDACT_RE.sub(r"***", line or "")
+
+
 def find_issues(metrics: str, now: datetime = None) -> dict:
     """Сканирует метрики и логи на известные паттерны проблем."""
     if now is None:
@@ -280,7 +289,7 @@ def find_issues(metrics: str, now: datetime = None) -> dict:
             if ts < cutoff:
                 continue
             timeline.append(ts)
-            matched_lines.append(line.strip()[:200])
+            matched_lines.append(redact_line(line.strip()[:200]))
 
         if len(timeline) < min_matches:
             continue
