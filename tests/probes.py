@@ -166,6 +166,14 @@ def probe_snapshot_corrupt_green(hc, tmp: Path):
     check("snapshot_corrupt_green", rc == 2, f"rc={rc}")
 
 
+def probe_health_cli_entrypoint(tmp: Path):
+    """The installed CLI entrypoint invokes run(), not a removed main()."""
+    result = subprocess.run(["python3", str(REPO / "scripts" / "health-check-v2.py"), "--help"],
+                            cwd=REPO, capture_output=True, text=True, timeout=15)
+    check("health_cli_entrypoint", result.returncode == 0 and "usage:" in result.stdout.lower(),
+          f"rc={result.returncode} stderr={result.stderr.strip()}")
+
+
 # ── Пробы: ai-deep-check ────────────────────────────────────────────────────
 
 def probe_deep_skipped_counted_ok(dc):
@@ -535,6 +543,7 @@ def main() -> int:
     probe_quoted_empty_provider_key(hc, tmp)
     probe_snapshot_missing_green(hc, tmp)
     probe_snapshot_corrupt_green(hc, tmp)
+    probe_health_cli_entrypoint(tmp)
 
     probe_deep_skipped_counted_ok(dc)
     probe_deep_html200_green(dc)
