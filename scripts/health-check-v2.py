@@ -30,6 +30,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote, urlsplit, urlunsplit
 
 HERMES_DIR = Path(os.environ.get("HERMES_DIR", Path.home() / ".hermes"))
 DEFAULT_REGISTRY = HERMES_DIR / "state" / "registry.yaml"
@@ -113,29 +114,165 @@ def curl_code(url: str, timeout: int, token: str = "") -> str:
     try:
         cmd = ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
                "--max-time", str(timeout)]
+        header_input = None
         if token:
-            cmd += ["-H", f"Authorization: Bearer {token}"]
+            # Read Authorization from stdin so it never appears in argv/ps.
+            cmd += ["-H", "@-"]
+            header_input = f"Authorization: Bearer {token}\n"
         cmd.append(url)
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+        r = subprocess.run(cmd, input=header_input, capture_output=True,
+                           text=True, timeout=timeout + 5)
         return r.stdout.strip() or "000"
     except subprocess.TimeoutExpired:
         return "000"
 
 
-def check_http(url: str, retries: int, token: str = "") -> tuple[bool, str]:
-    """GET url: 2xx/3xx = ok; 401/403 = 'key rejected'; прочие 4xx/5xx/000 = fail.
-    alive-семантика удалена (ревью Питны honcho_503_green: 5xx не маскируется)."""
+def curl_json(url: str, timeout: int, token: str = "") -> tuple[str, object | None]:
+    """GET JSON without exposing the response body to logs or reports.
+
+    The body remains in this process only long enough for schema validation;
+    callers receive a status code and parsed object, never a curl command or
+    raw response text.  This matters for queue/status because future Honcho
+    versions may include identifiers in the response.
+    """
+    try:
+        cmd = ["curl", "-sS", "-w", chr(10) + "%{http_code}",
+               "--max-time", str(timeout)]
+        header_input = None
+        if token:
+            # Keep credentials in the pipe, not in the child process argv.
+            cmd += ["-H", "@-"]
+            header_input = f"Authorization: Bearer {token}\n"
+        cmd.append(url)
+        r = subprocess.run(cmd, input=header_input, capture_output=True,
+                           text=True, timeout=timeout + 5)
+        body, _, code = r.stdout.rpartition(chr(10))
+        code = code.strip() or "000"
+    except (subprocess.TimeoutExpired, OSError):
+        return "000", None
+    if not code.isdigit():
+        return "000", None
+    try:
+        return code, json.loads(body)
+    except json.JSONDecodeError:
+        return code, None
+
+
+def check_http(url: str, retries: int, token: str = "", mode: str = "200") -> tuple[bool, str]:
+    """GET url; generic checks require a normal 2xx/3xx response.
+
+    Authentication failures are never retried.  Semantic JSON checks use
+    :func:`check_http_json` below instead of treating an API root's 404 as a
+    successful auth handshake.
+    """
+    del mode  # retained for registry/API compatibility; semantic mode is separate
     code = "000"
     for attempt in range(retries):
         code = curl_code(url, HTTP_TIMEOUT, token=token)
-        ok = code.startswith("2") or code.startswith("3")
-        if ok:
+        if code.startswith("2") or code.startswith("3"):
             return True, f"HTTP {code}"
         if code in ("401", "403"):
             return False, f"key rejected (HTTP {code})"
         if attempt < retries - 1:
             time.sleep(HTTP_RETRY_DELAY)
     return False, f"HTTP {code}"
+
+
+def _validate_json_object(payload: object | None, required_int_keys: list[str]) -> tuple[bool, str]:
+    """Validate only the stable, non-sensitive fields declared by registry."""
+    if not isinstance(payload, dict):
+        return False, "expected JSON object"
+    for key in required_int_keys:
+        value = payload.get(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return False, f"JSON field {key} missing or not integer"
+    return True, f"JSON schema ok ({len(required_int_keys)} integer fields)"
+
+
+def check_http_json(url: str, retries: int, token: str = "",
+                    required_int_keys: list[str] | None = None) -> tuple[bool, str]:
+    """GET an authenticated JSON endpoint and require HTTP 200 plus schema."""
+    required_int_keys = required_int_keys or []
+    code = "000"
+    for attempt in range(retries):
+        code, payload = curl_json(url, HTTP_TIMEOUT, token=token)
+        if code == "200":
+            ok, detail = _validate_json_object(payload, required_int_keys)
+            return ok, f"HTTP 200; {detail}"
+        if code in ("401", "403"):
+            return False, f"key rejected (HTTP {code})"
+        if code == "429":
+            return False, "rate-limited (HTTP 429) — not proof of key validity"
+        if attempt < retries - 1:
+            time.sleep(HTTP_RETRY_DELAY)
+    return False, f"expected HTTP 200, got {code}"
+
+
+def _runtime_value(env: dict, key: str) -> str:
+    """Prefer the parsed protected env file, then an explicitly exported value."""
+    return (env.get(key) or os.environ.get(key) or "").strip().strip("\"'")
+
+
+def _safe_base_url(raw: str) -> str | None:
+    """Return a credential-free HTTP(S) base URL, or None when malformed."""
+    raw = (raw or "").strip().strip("\"'").rstrip("/")
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return None
+    try:
+        hostname = parts.hostname
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not hostname:
+        return None
+    # urlsplit.hostname strips userinfo for validation; reject it rather than
+    # accidentally carrying credentials into a health-check URL.
+    if parts.username is not None or parts.password is not None:
+        return None
+    if parts.query or parts.fragment:
+        return None
+    netloc = hostname
+    if ":" in hostname and not hostname.startswith("["):
+        netloc = f"[{hostname}]"
+    if port is not None:
+        netloc += f":{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path.rstrip("/"), "", ""))
+
+
+def _honcho_route_url(template: str, env: dict) -> tuple[str | None, str]:
+    """Resolve a Honcho workspace route without allowing path injection."""
+    base = _safe_base_url(_runtime_value(env, "HONCHO_BASE_URL")
+                          or _runtime_value(env, "HONCHO_URL")
+                          or "https://api.honcho.dev")
+    if not base:
+        return None, "invalid Honcho base URL"
+    workspace = _runtime_value(env, "HONCHO_WORKSPACE_ID")
+    config_path = HERMES_DIR / "honcho.json"
+    if not workspace:
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            workspace = str(config.get("workspace") or "").strip()
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            workspace = ""
+    if not workspace:
+        return None, "Honcho workspace is empty or not configured"
+    if "/" in workspace or "\\" in workspace or workspace in (".", ".."):
+        return None, "Honcho workspace contains a path separator"
+    workspace_path = quote(workspace, safe="")
+    try:
+        return template.format(base=base, workspace=workspace_path), ""
+    except (KeyError, ValueError):
+        return None, "invalid Honcho route template"
+
+
+def resolve_check_url(c: dict, env: dict) -> tuple[str | None, str]:
+    """Resolve registry URL templates; fixed URLs pass through unchanged."""
+    template = c.get("check_url", "")
+    if c.get("check_context") == "honcho":
+        return _honcho_route_url(template, env)
+    return template, "" if template else "check URL is empty"
 
 
 def check_tcp(host: str, port: int) -> tuple[bool, str]:
@@ -253,13 +390,12 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
                            "required": False})
         elif etype == "envkey":
             # discover v2 layer 2: registry key set in .env = configured integration
+            key = ent.get("name", "")
             checks.append({"id": eid, "entity": eid, "primitive": "env",
-                           "key_env": ent.get("name", ""),
-                           "label": ent.get("name", ""),
+                           "key_env": key,
+                           "label": key,
                            "category": ent.get("category", "setting"),
-                           "check_url": ent.get("check_url", ""),
-                           "check_auth": ent.get("check_auth", ""),
-                           "check_mode": ent.get("check_mode", ""),
+                           "registry_key": key,
                            "required": False})
         elif etype == "activemodel":
             # informational: rendered by /integrations from report["active_models"]
@@ -284,7 +420,9 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
             if c.get("primitive") == "env" and e.get("check_url"):
                 c["check_url"] = e["check_url"]
                 c["check_auth"] = e.get("check_auth", "none")
+                c["check_context"] = e.get("check_context", "")
                 c["check_mode"] = e.get("check_mode", "200")
+                c["check_json_int_keys"] = e.get("check_json_int_keys", [])
     return checks
 
 
@@ -308,7 +446,21 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
         if c_url:
             tok = env.get(c["key_env"], "").strip().strip('"\'') \
                 if c.get("check_auth") == "bearer" else ""
-            ok2, d2 = check_http(c_url, retries=2, token=tok)
+            resolved_url, resolve_error = resolve_check_url(c, env)
+            if not resolved_url:
+                return "fail", f"key set; endpoint unavailable ({resolve_error})"
+            if c.get("check_mode") == "200-json":
+                ok2, d2 = check_http_json(
+                    resolved_url,
+                    retries=HTTP_RETRIES,
+                    token=tok,
+                    required_int_keys=c.get("check_json_int_keys", []),
+                )
+            else:
+                ok2, d2 = check_http(
+                    resolved_url, retries=HTTP_RETRIES, token=tok,
+                    mode=c.get("check_mode", "200"),
+                )
             return ("ok" if ok2 else "fail"), f"key set; endpoint {d2}"
         return "ok", f"key_env {c.get('key_env')}: set"
     if prim == "api-catalog":

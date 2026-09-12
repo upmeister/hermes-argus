@@ -48,14 +48,26 @@ EXPLICIT_FREE_MODELS: dict[str, list[str]] = {
 
 # Per-key endpoint checks (data, not code — ported from legacy full-mode checks):
 #   key -> (url, auth, mode)
-#   auth: "bearer" — Authorization: Bearer <key value>; "none" — anonymous
-#   mode: "200" — expect HTTP 200; "alive" — any non-000 response passes
-# Presence-only keys (no entry here) are still checked for "key is set".
+#   auth: "bearer" — Authorization header; "none" — anonymous
+#   mode: "200" — expect HTTP 200; "200-json" — HTTP 200 + registry schema;
+#         "alive" — legacy non-000 reachability (avoid for new entries)
 CHECK_URLS = {
     "OPENROUTER_API_KEY": ("https://openrouter.ai/api/v1/models", "bearer", "200"),
     "GITHUB_TOKEN": ("https://api.github.com/user", "bearer", "200"),
     "FIRECRAWL_API_KEY": ("https://api.firecrawl.dev/v1/team/credit-usage", "bearer", "200"),
-    "HONCHO_API_KEY": ("https://api.honcho.dev/", "none", "alive"),
+    "HONCHO_API_KEY": ("{base}/v3/workspaces/{workspace}/queue/status", "bearer", "200-json"),
+}
+
+# Optional fields for non-generic endpoint resolvers. Keep credentials out of
+# this registry; only route context and a safe response contract belong here.
+CHECK_METADATA = {
+    "HONCHO_API_KEY": {
+        "check_context": "honcho",
+        "check_json_int_keys": [
+            "total_work_units", "completed_work_units",
+            "in_progress_work_units", "pending_work_units",
+        ],
+    },
 }
 
 # kit-группы argus: ключи, которые деплоит сам kit. check — примитив
@@ -262,6 +274,7 @@ def emit_registry(meta: dict, entries: dict) -> str:
             if d.get("category") == "provider" else False
         if key in CHECK_URLS:
             rec["check_url"], rec["check_auth"], rec["check_mode"] = CHECK_URLS[key]
+            rec.update(CHECK_METADATA.get(key, {}))
         lines.extend(ylist_of_dicts([rec], indent="  "))
     return "\n".join(lines)
 

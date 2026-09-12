@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""probes.py — регрессионный суит по 25 пробам ревью Питны (2026-09-10).
+"""probes.py — регрессионный суит по 38 пробам ревью Питны (2026-09-10).
 
 Каждый дефект из engine-tests/REVIEW.md = тест-кейс. Прогон:
   python3 tests/probes.py            # все пробы
@@ -127,6 +127,138 @@ def probe_honcho_503_green(hc):
     check("honcho_503_green", status == "fail", detail)
 
 
+def probe_generator_honcho_contract():
+    """The registry generator cannot silently restore the root/404 probe."""
+    gen = load_module("gen-registry")
+    url, auth, mode = gen.CHECK_URLS["HONCHO_API_KEY"]
+    meta = gen.CHECK_METADATA["HONCHO_API_KEY"]
+    check("generator_honcho_contract",
+          url == "{base}/v3/workspaces/{workspace}/queue/status"
+          and auth == "bearer" and mode == "200-json"
+          and meta.get("check_context") == "honcho"
+          and len(meta.get("check_json_int_keys", [])) == 4,
+          f"{url} / {auth} / {mode}")
+
+
+def probe_honcho_queue_json_200(hc, tmp: Path):
+    """Honcho workspace queue route returns 200 and the stable counter schema."""
+    old_home = hc.HERMES_DIR
+    hc.HERMES_DIR = tmp
+    write(tmp / "honcho.json", '{"workspace": "hermes"}\n')
+    seen = []
+
+    def fake_curl_json(url, timeout, token=""):
+        seen.append((url, token))
+        return "200", {
+            "total_work_units": 0,
+            "completed_work_units": 0,
+            "in_progress_work_units": 0,
+            "pending_work_units": 0,
+        }
+
+    hc.curl_json = fake_curl_json
+    status, detail = hc.run_check(
+        {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
+         "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
+         "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
+         "check_json_int_keys": ["total_work_units", "completed_work_units",
+                                 "in_progress_work_units", "pending_work_units"],
+         "label": "Honcho", "required": False},
+        "hermes", {"DUMMY_KEY": DUMMY_TOKEN, "HONCHO_BASE_URL": "https://honcho.invalid"})
+    hc.HERMES_DIR = old_home
+    expected_url = "https://honcho.invalid/v3/workspaces/hermes/queue/status"
+    check("honcho_queue_json_200", status == "ok"
+          and seen == [(expected_url, DUMMY_TOKEN)]
+          and "HTTP 200" in detail and "JSON schema ok" in detail, detail)
+
+
+def probe_honcho_queue_json_401(hc, tmp: Path):
+    """Invalid/missing Honcho credentials remain a hard failure."""
+    old_home = hc.HERMES_DIR
+    hc.HERMES_DIR = tmp
+    write(tmp / "honcho.json", '{"workspace": "hermes"}\n')
+    seen = []
+
+    def fake_curl_json(url, timeout, token=""):
+        seen.append((url, token))
+        return "401", {"error": "invalid"}
+
+    hc.curl_json = fake_curl_json
+    status, detail = hc.run_check(
+        {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
+         "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
+         "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
+         "check_json_int_keys": ["total_work_units"], "label": "Honcho", "required": False},
+        "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
+    hc.HERMES_DIR = old_home
+    check("honcho_queue_json_401", status == "fail" and seen
+          and seen[0][1] == DUMMY_TOKEN and "key rejected" in detail, detail)
+
+
+def probe_honcho_queue_json_schema(hc, tmp: Path):
+    """HTTP 200 without the declared queue counters is not semantic success."""
+    old_home = hc.HERMES_DIR
+    hc.HERMES_DIR = tmp
+    write(tmp / "honcho.json", '{"workspace": "hermes"}\n')
+    hc.curl_json = lambda url, timeout, token="": ("200", {"total_work_units": 0})
+    status, detail = hc.run_check(
+        {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
+         "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
+         "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
+         "check_json_int_keys": ["total_work_units", "pending_work_units"],
+         "label": "Honcho", "required": False},
+        "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
+    hc.HERMES_DIR = old_home
+    check("honcho_queue_json_schema", status == "fail"
+          and "pending_work_units" in detail, detail)
+
+
+def probe_honcho_token_not_in_argv(hc):
+    """Authorization is piped to curl, never placed in its process argv."""
+    real_run = hc.subprocess.run
+    captured = {}
+
+    class Result:
+        stdout = '{"total_work_units": 0}\n200'
+
+    def fake_run(cmd, **kwargs):
+        captured["argv"] = list(cmd)
+        captured["input"] = kwargs.get("input")
+        return Result()
+
+    hc.subprocess.run = fake_run
+    try:
+        code, payload = hc.curl_json("https://honcho.invalid/queue/status", 5, DUMMY_TOKEN)
+    finally:
+        hc.subprocess.run = real_run
+    argv = " ".join(captured.get("argv", []))
+    piped = captured.get("input") or ""
+    check("honcho_token_not_in_argv", code == "200"
+          and isinstance(payload, dict)
+          and DUMMY_TOKEN not in argv
+          and DUMMY_TOKEN in piped
+          and "@-" in captured.get("argv", []),
+          f"argv_has_token={DUMMY_TOKEN in argv} input_present={bool(piped)}")
+
+
+def probe_honcho_workspace_path_injection(hc, tmp: Path):
+    """A workspace identifier cannot escape the intended URL path."""
+    old_home = hc.HERMES_DIR
+    hc.HERMES_DIR = tmp
+    write(tmp / "honcho.json", '{"workspace": "hermes/other"}\n')
+    called = []
+    hc.curl_json = lambda url, timeout, token="": (called.append(url) or ("200", {}))
+    status, detail = hc.run_check(
+        {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
+         "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
+         "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
+         "check_json_int_keys": [], "label": "Honcho", "required": False},
+        "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
+    hc.HERMES_DIR = old_home
+    check("honcho_workspace_path_injection", status == "fail" and not called
+          and "path separator" in detail, detail)
+
+
 def probe_missing_required_provider_key(hc):
     """Провайдер из снапшота с пустым ключом = fail (не unconfigured)."""
     checks = hc.build_checks(
@@ -246,6 +378,37 @@ def probe_envref_enrichment(hc):
     c = next(c for c in checks if c["id"] == "envref:GITHUB_TOKEN")
     check("envref_enrichment", c.get("check_url") == "https://api.github.com/user"
           and c.get("check_auth") == "bearer", f"check={c}")
+
+
+def probe_envkey_enrichment(hc):
+    """envkey checks inherit the registry route and semantic metadata."""
+    reg = {"entries": [{"key": "DUMMY_KEY",
+                         "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
+                         "check_context": "honcho", "check_auth": "bearer",
+                         "check_mode": "200-json",
+                         "check_json_int_keys": ["total_work_units"]}]}
+    snap = {"entities": {"envkey:DUMMY_KEY": {"type": "envkey", "name": "DUMMY_KEY",
+                                                 "category": "tool"}}}
+    checks = hc.build_checks(reg, snap, {"DUMMY_KEY": DUMMY_TOKEN})
+    c = next(c for c in checks if c["id"] == "envkey:DUMMY_KEY")
+    seen = []
+    hc.HERMES_DIR = Path(tempfile.mkdtemp(prefix="argus-honcho-enrichment-"))
+    write(hc.HERMES_DIR / "honcho.json", '{"workspace": "hermes"}\n')
+
+    def fake_curl_json(url, timeout, token=""):
+        seen.append((url, token))
+        return "200", {"total_work_units": 0}
+
+    hc.curl_json = fake_curl_json
+    status, detail = hc.run_check(c, "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
+    expected_url = "https://api.honcho.dev/v3/workspaces/hermes/queue/status"
+    ok = (c.get("registry_key") == "DUMMY_KEY"
+          and c.get("check_url") == "{base}/v3/workspaces/{workspace}/queue/status"
+          and c.get("check_context") == "honcho"
+          and c.get("check_auth") == "bearer"
+          and c.get("check_mode") == "200-json"
+          and status == "ok" and seen == [(expected_url, DUMMY_TOKEN)])
+    check("envkey_enrichment", ok, f"check={c} status={status} seen={seen} detail={detail}")
 
 
 def probe_deep_activemodel_targeted(dc, tmp: Path):
@@ -539,6 +702,12 @@ def main() -> int:
     probe_catalog_401_then_public200(hc)
     probe_catalog_429_then_public200(hc)
     probe_honcho_503_green(hc)
+    probe_honcho_token_not_in_argv(hc)
+    probe_generator_honcho_contract()
+    probe_honcho_queue_json_200(hc, tmp)
+    probe_honcho_queue_json_401(hc, tmp)
+    probe_honcho_queue_json_schema(hc, tmp)
+    probe_honcho_workspace_path_injection(hc, tmp)
     probe_missing_required_provider_key(hc)
     probe_quoted_empty_provider_key(hc, tmp)
     probe_snapshot_missing_green(hc, tmp)
@@ -554,6 +723,7 @@ def main() -> int:
     probe_fallback_cross_session_restore(ft, tmp)
     probe_fallback_registry_free_ignored(ft, tmp)
     probe_envref_enrichment(hc)
+    probe_envkey_enrichment(hc)
     probe_deep_activemodel_targeted(dc, tmp)
     probe_deep_paid_off_main(dc, tmp)
     probe_deep_unconfigured_report(dc, tmp)
