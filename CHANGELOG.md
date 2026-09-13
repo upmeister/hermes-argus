@@ -31,4 +31,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failures, response-schema failures, path-injection rejection, and secret
   handling.
 
+### Changed
+
+- Health reports now use a schema-v2 envelope (ADR 0001): canonical `summary`
+  with per-check `verdict`/`reason_code` and `claims`/`effects`/`evidence`
+  containers, plus temporary v1 top-level aliases. The alert wrapper and
+  `/integrations` read canonical verdicts: `unknown` and `skipped` no longer
+  reset failure counters, and `/integrations` renders them as ⚠️/⏸.
+- Health reports are validated fail-closed by all consumers: a report with an
+  unknown future schema, missing contract fields (`source`, per-check
+  `entity_id`/`primitive`/`reason_code`/`legacy_status`/`claims`/`effects`/
+  `evidence`), non-integer or boolean counts, non-ISO timestamps, malformed
+  inventory shapes, duplicate ids, or aliases inconsistent with the canonical
+  summary is rejected whole — it is never rendered as legacy or green, and
+  hysteresis state is preserved untouched.
+
 [Unreleased]: https://github.com/upmeister/hermes-argus/compare/main...HEAD

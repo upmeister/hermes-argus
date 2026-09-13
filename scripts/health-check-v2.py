@@ -15,6 +15,9 @@ Primitives (mapped from snapshot entity types):
 
 Output: JSON report to --out (machine-readable, consumed by
 health-check-v2-wrapper.sh and /integrations) + short human summary on stdout.
+The report is a schema-v2 envelope (ADR 0001): canonical `summary`, per-check
+`verdict`/`reason_code`, and temporary top-level v1 aliases so existing
+consumers keep working unchanged during the migration.
 Exit codes: 0 = all ok, 1 = at least one failure. Values from .env are never
 printed — only key names.
 """
@@ -403,6 +406,36 @@ def parse_expiry(v: str):
         return None
 
 
+# ADR 0001: canonical v2 verdicts and the conservative legacy projection.
+VERDICT_FOR_STATUS = {"ok": "healthy", "fail": "failed",
+                      "unconfigured": "unconfigured", "skipped": "skipped"}
+
+
+def canonical_verdict(status: str) -> str:
+    """Project a legacy status onto the canonical v2 verdict (ADR 0001).
+
+    Unrecognized statuses map to `unknown`: an unreadable result is never a
+    recovery, and only the old-consumer compatibility layer may collapse it
+    further (`unknown -> skipped`).
+    """
+    return VERDICT_FOR_STATUS.get(status, "unknown")
+
+
+def reason_code_for(status: str, required: bool) -> str:
+    """Conservative reason_code for legacy-projection results (ADR 0001).
+
+    Only what the legacy status honestly proves is encoded here; D0b adapters
+    replace `unclassified_failure` with classified codes.
+    """
+    if status == "ok":
+        return "ok"
+    if status == "unconfigured":
+        return "missing_required_config" if required else "optional_not_configured"
+    if status == "skipped":
+        return "policy_blocked"
+    return "unclassified_failure"
+
+
 def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
     checks = []
     entries = {e["key"]: e for e in registry.get("entries", [])}
@@ -632,16 +665,31 @@ def run(argv: list[str] | None = None) -> int:
     results = []
     for c in checks:
         status, detail = run_check(c, args.hermes_bin, env)
-        results.append({"id": c["id"], "label": c["label"], "primitive": c["primitive"],
-                        "status": status, "detail": detail,
-                        "category": c.get("category", ""),
-                        "registry": c.get("registry", {})})
+        results.append({
+            "id": c["id"], "entity_id": c["id"],
+            "label": c["label"], "primitive": c["primitive"],
+            # v1 fields, kept as explicit aliases during the D0 migration
+            "status": status, "legacy_status": status,
+            "detail": detail,
+            "category": c.get("category", ""),
+            "registry": c.get("registry", {}),
+            # ADR 0001 canonical fields; claims/effects/evidence containers
+            # stay empty here — D0b adapters populate them with real evidence,
+            # none is invented for existing primitives.
+            "verdict": canonical_verdict(status),
+            "reason_code": reason_code_for(status, bool(c.get("required", False))),
+            "claims": {}, "effects": {}, "evidence": {},
+        })
 
     oks = [r for r in results if r["status"] == "ok"]
     fails = [r for r in results if r["status"] == "fail"]
     unconf = [r for r in results if r["status"] == "unconfigured"]
     skipped = [r for r in results
                if r["status"] not in ("ok", "fail", "unconfigured")]
+    verdict_counts = {"healthy": 0, "failed": 0, "unknown": 0,
+                      "unconfigured": 0, "skipped": 0}
+    for r in results:
+        verdict_counts[r["verdict"]] += 1
     active_models = [
         {"role": e.get("role"), "provider": e.get("provider"), "model": e.get("model")}
         for e in (snapshot.get("entities") or {}).values()
@@ -652,11 +700,37 @@ def run(argv: list[str] | None = None) -> int:
         for e in (snapshot.get("entities") or {}).values()
         if e.get("type") == "plugin-provider"
     ]
+    registry_meta = registry.get("meta")
+    if not isinstance(registry_meta, dict):
+        registry_meta = {}
     report = {
+        "schema": 2,
         "updated": datetime.now(timezone.utc).isoformat(),
+        "source": {
+            "engine": "health-check-v2",
+            "registry": {
+                "schema": registry_meta.get("schema"),
+                "hermes_version": registry_meta.get("hermes_version"),
+            },
+        },
+        "summary": {
+            "total": len(results),
+            "healthy": verdict_counts["healthy"],
+            "failed": verdict_counts["failed"],
+            "unknown": verdict_counts["unknown"],
+            "unconfigured": verdict_counts["unconfigured"],
+            "skipped": verdict_counts["skipped"],
+        },
+        "inventory": {
+            "active_models": active_models,
+            "plugin_providers": plugin_providers,
+            "free_models": registry.get("free_models", {}),
+        },
+        "checks": results,
+        # Temporary v1 aliases (removed after the D0 migration): current
+        # consumers keep reading the flat counts and legacy fields unchanged.
         "total": len(results), "ok": len(oks), "fail": len(fails),
         "unconfigured": len(unconf), "skipped": len(skipped),
-        "checks": results,
         "active_models": active_models,
         "plugin_providers": plugin_providers,
         "free_models": registry.get("free_models", {}),

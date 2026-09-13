@@ -12,6 +12,9 @@
 # Architecture mirrors integration-discover.py / -wrapper.sh: stateless engine
 # + stateful alerting shell. Registry missing (engine exit 2) = config problem,
 # logged without alerting.
+# D0a dual-read: schema-2 reports are judged by the canonical ADR 0001 verdict,
+# legacy reports by the v1 status. unknown/unconfigured/skipped preserve the
+# failure counter — never a recovery; a malformed v2 report is rejected whole.
 
 set -u
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
@@ -41,13 +44,153 @@ fi
 [ -f "$REPORT" ] || { echo "[$(date -Is)] report missing, skip alerting" >> "$LOG"; exit 0; }
 if ! python3 - "$REPORT" <<'PYEOF'
 import json, sys
+from datetime import datetime
 from pathlib import Path
+
+VERDICTS = ("healthy", "failed", "unknown", "unconfigured", "skipped")
+V1_FOR_VERDICT = {"healthy": "ok", "failed": "fail",
+                  "unconfigured": "unconfigured",
+                  "skipped": "skipped", "unknown": "skipped"}
+
+
+def reject(reason):
+    print(f"reject: {reason}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def is_count(value):
+    # bool is an int in Python but not a valid count/schema
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def check_inventory_shape(active_models, plugin_providers, free_models):
+    if not isinstance(active_models, list):
+        return "active_models is not a list"
+    for m in active_models:
+        if not isinstance(m, dict):
+            return "active_models item is not an object"
+        for k in ("role", "provider", "model"):
+            if k not in m or not isinstance(m[k], (str, type(None))):
+                return f"active_models item field {k} must be a string or null"
+    if not isinstance(plugin_providers, list):
+        return "plugin_providers is not a list"
+    for p in plugin_providers:
+        if not isinstance(p, dict):
+            return "plugin_providers item is not an object"
+        for k in ("name", "description"):
+            if k not in p or not isinstance(p[k], (str, type(None))):
+                return f"plugin_providers item field {k} must be a string or null"
+    if not isinstance(free_models, dict):
+        return "free_models is not an object"
+    for provider, models in free_models.items():
+        if not isinstance(models, list) \
+                or not all(isinstance(x, str) for x in models):
+            return f"free_models[{provider!r}] must be a list of strings"
+    return ""
+
+
 try:
     report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 except Exception:
-    raise SystemExit(1)
-if not isinstance(report, dict) or not isinstance(report.get("checks"), list):
-    raise SystemExit(1)
+    reject("unreadable json")
+
+# Fail-closed whole-report validation (ADR 0001, D0a review pass 2): an
+# untrusted report must never touch the hysteresis state or reach the
+# alerting renderer.
+if not isinstance(report, dict):
+    reject("report is not an object")
+schema = report.get("schema", 1)
+if not is_count(schema) or schema not in (1, 2):
+    reject(f"unsupported schema {schema!r}")
+updated = report.get("updated")
+if not isinstance(updated, str) or not updated:
+    reject("missing updated")
+try:
+    datetime.fromisoformat(updated)
+except ValueError:
+    reject("updated is not an ISO timestamp")
+checks = report.get("checks")
+if not isinstance(checks, list):
+    reject("checks is not a list")
+vk = "verdict" if schema == 2 else "status"
+seen, counts = set(), {}
+for c in checks:
+    if not isinstance(c, dict):
+        reject("check record is not an object")
+    cid = c.get("id")
+    if not isinstance(cid, str) or not cid:
+        reject("check record without a string id")
+    if cid in seen:
+        reject(f"duplicate check id {cid!r}")
+    seen.add(cid)
+    v = c.get(vk)
+    if schema == 2:
+        if v not in VERDICTS:
+            reject(f"check {cid!r}: verdict {v!r} is not canonical")
+        for field in ("entity_id", "primitive", "reason_code"):
+            if not isinstance(c.get(field), str) or not c[field]:
+                reject(f"check {cid!r}: {field} must be a non-empty string")
+        if c.get("legacy_status") != V1_FOR_VERDICT[v]:
+            reject(f"check {cid!r}: legacy_status does not match the "
+                   f"documented projection of {v!r}")
+        for field in ("claims", "effects", "evidence"):
+            if not isinstance(c.get(field), dict):
+                reject(f"check {cid!r}: {field} must be an object")
+    elif not isinstance(v, str) or not v:
+        reject(f"check {cid!r}: status must be a non-empty string")
+    if not isinstance(c.get("label"), str) or not isinstance(c.get("detail"), str):
+        reject(f"check {cid!r}: label and detail must be strings")
+    counts[v] = counts.get(v, 0) + 1
+if schema == 2:
+    summary = report.get("summary")
+    if not isinstance(summary, dict):
+        reject("missing summary")
+    expected = {"total": len(checks)}
+    for k in VERDICTS:
+        expected[k] = counts.get(k, 0)
+    for k, want in expected.items():
+        if not is_count(summary.get(k)) or summary[k] != want:
+            reject(f"summary.{k} is missing, not an integer, or inconsistent")
+    inventory = report.get("inventory")
+    if not isinstance(inventory, dict):
+        reject("missing inventory")
+    if not isinstance(report.get("source"), dict):
+        reject("missing source")
+    reason = check_inventory_shape(inventory.get("active_models"),
+                                   inventory.get("plugin_providers"),
+                                   inventory.get("free_models"))
+    if reason:
+        reject(reason)
+    # v1 aliases must be present, integer-typed and consistent with the
+    # canonical summary (unknown -> skipped is the documented projection).
+    alias_counts = {"total": summary["total"], "ok": summary["healthy"],
+                    "fail": summary["failed"],
+                    "unconfigured": summary["unconfigured"],
+                    "skipped": summary["skipped"] + summary["unknown"]}
+    for k, want in alias_counts.items():
+        if not is_count(report.get(k)) or report[k] != want:
+            reject(f"v1 alias {k} is missing, not an integer, or inconsistent")
+    for k in ("active_models", "plugin_providers", "free_models"):
+        if k not in report or report[k] != inventory[k]:
+            reject(f"v1 alias {k} does not match inventory.{k}")
+else:
+    ok = counts.get("ok", 0)
+    fail = counts.get("fail", 0)
+    unconf = counts.get("unconfigured", 0)
+    # v1 semantics: skipped is everything not ok/fail/unconfigured
+    expected = {"total": len(checks), "ok": ok, "fail": fail,
+                "unconfigured": unconf,
+                "skipped": len(checks) - ok - fail - unconf}
+    for k, want in expected.items():
+        if not is_count(report.get(k, 0)) or report.get(k, 0) != want:
+            reject(f"{k} count is missing, not an integer, or inconsistent")
+    if "active_models" in report or "plugin_providers" in report \
+            or "free_models" in report:
+        reason = check_inventory_shape(report.get("active_models", []),
+                                       report.get("plugin_providers", []),
+                                       report.get("free_models", {}))
+        if reason:
+            reject(reason)
 PYEOF
 then
     echo "[$(date -Is)] report invalid, skip alerting and preserve state" >> "$LOG"
@@ -71,13 +214,24 @@ except Exception:
 
 groups = {"degraded": [], "recovered": [], "watching": []}
 live = set()
+# Dual-read (D0a): schema-2 reports are judged by the canonical ADR 0001
+# verdict; legacy reports are projected conservatively. `unknown` — and any
+# unreadable legacy status — preserves the failure counter: it is never a
+# recovery.
+legacy_verdict = {"ok": "healthy", "fail": "failed",
+                  "unconfigured": "unconfigured", "skipped": "skipped"}
+is_v2 = report.get("schema") == 2
 for c in report.get("checks", []):
     cid = c["id"]
     live.add(cid)
     prev = state.get(cid, 0)
     label = html.escape(str(c.get("label", cid)))
     detail = html.escape(str(c.get("detail", "")))
-    if c["status"] == "fail":
+    if is_v2:
+        verdict = c.get("verdict")
+    else:
+        verdict = legacy_verdict.get(c.get("status"), "unknown")
+    if verdict == "failed":
         state[cid] = prev + 1
         if state[cid] == 2:
             # hysteresis: alert exactly once on the 2nd consecutive fail
@@ -85,14 +239,15 @@ for c in report.get("checks", []):
         elif state[cid] > 2 and state[cid] % 12 == 0:
             groups["watching"].append(
                 f"⏳ {label}: still failing ({state[cid]} runs): {detail}")
-    elif c["status"] in ("unconfigured", "skipped"):
-        # config drift or an intentionally skipped check is NOT recovery:
-        # preserve the previous failure counter.
+    elif verdict in ("unknown", "unconfigured", "skipped"):
+        # config drift, an intentionally skipped check, or an unknown state is
+        # NOT recovery: preserve the previous failure counter.
         pass
-    else:
+    elif verdict == "healthy":
         if prev >= 2:
             groups["recovered"].append(f"🟢 {label} ({detail})")
         state[cid] = 0
+    # validated reports cannot carry any other verdict value
 
 # prune checks that disappeared from the snapshot
 state = {k: v for k, v in state.items() if k in live}
