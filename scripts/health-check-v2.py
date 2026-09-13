@@ -30,6 +30,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote, urlsplit, urlunsplit
 
 HERMES_DIR = Path(os.environ.get("HERMES_DIR", Path.home() / ".hermes"))
 DEFAULT_REGISTRY = HERMES_DIR / "state" / "registry.yaml"
@@ -37,6 +38,7 @@ DEFAULT_SNAPSHOT = HERMES_DIR / "state" / "integration-snapshot.json"
 DEFAULT_ENV = HERMES_DIR / ".env"
 DEFAULT_OUT = HERMES_DIR / "state" / "health-check-v2-report.json"
 DEFAULT_HERMES_BIN = HERMES_DIR / "hermes-agent" / "venv" / "bin" / "hermes"
+HONCHO_GLOBAL_CONFIG = Path.home() / ".honcho" / "config.json"
 
 HTTP_RETRIES = 3
 HTTP_RETRY_DELAY = 10  # seconds; conventions: 3 attempts / 10s pause
@@ -113,29 +115,240 @@ def curl_code(url: str, timeout: int, token: str = "") -> str:
     try:
         cmd = ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
                "--max-time", str(timeout)]
+        header_input = None
         if token:
-            cmd += ["-H", f"Authorization: Bearer {token}"]
+            # Read Authorization from stdin so it never appears in argv/ps.
+            cmd += ["-H", "@-"]
+            header_input = "Authorization: " + "Bearer " + token + "\n"
         cmd.append(url)
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+        r = subprocess.run(cmd, input=header_input, capture_output=True,
+                           text=True, timeout=timeout + 5)
         return r.stdout.strip() or "000"
     except subprocess.TimeoutExpired:
         return "000"
 
 
-def check_http(url: str, retries: int, token: str = "") -> tuple[bool, str]:
-    """GET url: 2xx/3xx = ok; 401/403 = 'key rejected'; прочие 4xx/5xx/000 = fail.
-    alive-семантика удалена (ревью Питны honcho_503_green: 5xx не маскируется)."""
+def curl_json(url: str, timeout: int, token: str = "") -> tuple[str, str, object | None]:
+    """GET JSON without exposing the response body to logs or reports.
+
+    The body remains in this process only long enough for schema validation;
+    callers receive a status code and parsed object, never a curl command or
+    raw response text.  This matters for queue/status because future Honcho
+    versions may include identifiers in the response.
+    """
+    try:
+        cmd = ["curl", "-sS", "-w",
+               chr(10) + "%{content_type}" + chr(10) + "%{http_code}",
+               "--max-time", str(timeout)]
+        header_input = None
+        if token:
+            # Keep credentials in the pipe, not in the child process argv.
+            cmd += ["-H", "@-"]
+            header_input = "Authorization: " + "Bearer " + token + "\n"
+        cmd.append(url)
+        r = subprocess.run(cmd, input=header_input, capture_output=True,
+                           text=True, timeout=timeout + 5)
+        body_and_type, _, code = r.stdout.rpartition(chr(10))
+        body, _, content_type = body_and_type.rpartition(chr(10))
+        code = code.strip() or "000"
+        content_type = content_type.strip().lower()
+    except (subprocess.TimeoutExpired, OSError):
+        return "000", "", None
+    if not code.isdigit():
+        return "000", content_type, None
+    try:
+        return code, content_type, json.loads(body)
+    except json.JSONDecodeError:
+        return code, content_type, None
+
+
+def check_http(url: str, retries: int, token: str = "", mode: str = "200") -> tuple[bool, str]:
+    """GET url; generic checks require a normal 2xx/3xx response.
+
+    Authentication failures are never retried.  Semantic JSON checks use
+    :func:`check_http_json` below instead of treating an API root's 404 as a
+    successful auth handshake.
+    """
+    del mode  # retained for registry/API compatibility; semantic mode is separate
     code = "000"
     for attempt in range(retries):
         code = curl_code(url, HTTP_TIMEOUT, token=token)
-        ok = code.startswith("2") or code.startswith("3")
-        if ok:
+        if code.startswith("2") or code.startswith("3"):
             return True, f"HTTP {code}"
         if code in ("401", "403"):
             return False, f"key rejected (HTTP {code})"
         if attempt < retries - 1:
             time.sleep(HTTP_RETRY_DELAY)
     return False, f"HTTP {code}"
+
+
+def _validate_json_object(payload: object | None, required_int_keys: list[str]) -> tuple[bool, str]:
+    """Validate only the stable, non-sensitive fields declared by registry."""
+    if not isinstance(payload, dict):
+        return False, "expected JSON object"
+    for key in required_int_keys:
+        value = payload.get(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return False, f"JSON field {key} missing or not integer"
+    return True, f"JSON schema ok ({len(required_int_keys)} integer fields)"
+
+
+def check_http_json(url: str, retries: int, token: str = "",
+                    required_int_keys: list[str] | None = None) -> tuple[bool, str]:
+    """GET an authenticated JSON endpoint and require HTTP 200 plus schema."""
+    required_int_keys = required_int_keys or []
+    code = "000"
+    for attempt in range(retries):
+        code, content_type, payload = curl_json(url, HTTP_TIMEOUT, token=token)
+        if code == "200":
+            media_type = content_type.split(";", 1)[0].strip()
+            if media_type != "application/json":
+                return False, (
+                    f"HTTP 200; expected application/json, got "
+                    f"{media_type or 'missing content-type'}")
+            ok, detail = _validate_json_object(payload, required_int_keys)
+            return ok, f"HTTP 200; application/json; {detail}"
+        if code in ("401", "403"):
+            return False, f"key rejected (HTTP {code})"
+        if code == "429":
+            return False, "rate-limited (HTTP 429) — not proof of key validity"
+        if attempt < retries - 1:
+            time.sleep(HTTP_RETRY_DELAY)
+    return False, f"expected HTTP 200, got {code}"
+
+
+def _runtime_value(env: dict, key: str) -> str:
+    """Prefer the parsed protected env file, then an explicitly exported value."""
+    return (env.get(key) or os.environ.get(key) or "").strip().strip("\"'")
+
+
+def _safe_base_url(raw: str) -> str | None:
+    """Return a credential-free HTTP(S) base URL, or None when malformed."""
+    raw = (raw or "").strip().strip("\"'").rstrip("/")
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return None
+    try:
+        hostname = parts.hostname
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not hostname:
+        return None
+    # urlsplit.hostname strips userinfo for validation; reject it rather than
+    # accidentally carrying credentials into a health-check URL.
+    if parts.username is not None or parts.password is not None:
+        return None
+    if parts.query or parts.fragment:
+        return None
+    netloc = hostname
+    if ":" in hostname and not hostname.startswith("["):
+        netloc = f"[{hostname}]"
+    if port is not None:
+        netloc += f":{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path.rstrip("/"), "", ""))
+
+
+def _default_hermes_home() -> Path:
+    """Default-profile home for the current HERMES_DIR layout."""
+    return HERMES_DIR.parent.parent if HERMES_DIR.parent.name == "profiles" else HERMES_DIR
+
+
+def _honcho_config_path() -> Path:
+    """Mirror upstream Honcho config-path precedence without importing Hermes internals."""
+    local = HERMES_DIR / "honcho.json"
+    if local.exists():
+        return local
+    default = _default_hermes_home() / "honcho.json"
+    if default != local and default.exists():
+        return default
+    return HONCHO_GLOBAL_CONFIG
+
+
+def _load_honcho_config() -> dict:
+    path = _honcho_config_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+
+
+def _profile_host(env: dict) -> tuple[str, bool]:
+    """Return (Honcho host key, explicitly overridden)."""
+    explicit = _runtime_value(env, "HERMES_HONCHO_HOST")
+    if explicit:
+        return explicit, True
+    if HERMES_DIR.parent.name == "profiles" and HERMES_DIR.name not in ("default", "custom"):
+        profile = "".join(c if c.isalnum() or c in "_-" else "_"
+                          for c in HERMES_DIR.name).strip("_")
+        return f"hermes_{profile or 'profile'}", False
+    return "hermes", False
+
+
+def _honcho_host_block(raw: dict, host: str) -> dict:
+    hosts = raw.get("hosts") or {}
+    if not isinstance(hosts, dict):
+        return {}
+    block = hosts.get(host)
+    if isinstance(block, dict) and block:
+        return block
+    if host.startswith("hermes_"):
+        legacy = hosts.get("hermes." + host[len("hermes_"):])
+        if isinstance(legacy, dict):
+            return legacy
+    return block if isinstance(block, dict) else {}
+
+
+def _honcho_target(env: dict) -> tuple[str | None, str | None, str]:
+    """Resolve the same host/root/env target shape current upstream Honcho uses."""
+    raw = _load_honcho_config()
+    host, explicit_host = _profile_host(env)
+    if not explicit_host and host == "hermes":
+        default_host = str(raw.get("defaultHost") or "").strip()
+        if default_host:
+            host = default_host
+    block = _honcho_host_block(raw, host)
+
+    workspace = str(block.get("workspace") or raw.get("workspace") or "").strip()
+    if not workspace:
+        workspace = _runtime_value(env, "HONCHO_WORKSPACE_ID") or host
+    endpoint = raw.get("endpoint") or {}
+    native_base = endpoint.get("baseUrl") if isinstance(endpoint, dict) else None
+    base_raw = (block.get("baseUrl") or block.get("base_url") or native_base
+                or raw.get("baseUrl") or raw.get("base_url")
+                or _runtime_value(env, "HONCHO_BASE_URL")
+                or _runtime_value(env, "HONCHO_URL")
+                or "https://api.honcho.dev")
+    base = _safe_base_url(str(base_raw))
+    if not base:
+        return None, None, "invalid Honcho base URL"
+    if "/" in workspace or "\\" in workspace or workspace in (".", ".."):
+        return None, None, "Honcho workspace contains a path separator"
+    return base, workspace, ""
+
+
+def _honcho_route_url(template: str, env: dict) -> tuple[str | None, str]:
+    """Resolve a profile-aware Honcho workspace route without path injection."""
+    base, workspace, error = _honcho_target(env)
+    if error:
+        return None, error
+    if base is None or workspace is None:
+        return None, "invalid Honcho target"
+    workspace_path = quote(workspace, safe="")
+    try:
+        return template.format(base=base, workspace=workspace_path), ""
+    except (KeyError, ValueError):
+        return None, "invalid Honcho route template"
+
+
+def resolve_check_url(c: dict, env: dict) -> tuple[str | None, str]:
+    """Resolve registry URL templates; fixed URLs pass through unchanged."""
+    template = c.get("check_url", "")
+    if c.get("check_context") == "honcho":
+        return _honcho_route_url(template, env)
+    return template, "" if template else "check URL is empty"
 
 
 def check_tcp(host: str, port: int) -> tuple[bool, str]:
@@ -253,13 +466,12 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
                            "required": False})
         elif etype == "envkey":
             # discover v2 layer 2: registry key set in .env = configured integration
+            key = ent.get("name", "")
             checks.append({"id": eid, "entity": eid, "primitive": "env",
-                           "key_env": ent.get("name", ""),
-                           "label": ent.get("name", ""),
+                           "key_env": key,
+                           "label": key,
                            "category": ent.get("category", "setting"),
-                           "check_url": ent.get("check_url", ""),
-                           "check_auth": ent.get("check_auth", ""),
-                           "check_mode": ent.get("check_mode", ""),
+                           "registry_key": key,
                            "required": False})
         elif etype == "activemodel":
             # informational: rendered by /integrations from report["active_models"]
@@ -284,7 +496,9 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
             if c.get("primitive") == "env" and e.get("check_url"):
                 c["check_url"] = e["check_url"]
                 c["check_auth"] = e.get("check_auth", "none")
+                c["check_context"] = e.get("check_context", "")
                 c["check_mode"] = e.get("check_mode", "200")
+                c["check_json_int_keys"] = e.get("check_json_int_keys", [])
     return checks
 
 
@@ -308,7 +522,21 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
         if c_url:
             tok = env.get(c["key_env"], "").strip().strip('"\'') \
                 if c.get("check_auth") == "bearer" else ""
-            ok2, d2 = check_http(c_url, retries=2, token=tok)
+            resolved_url, resolve_error = resolve_check_url(c, env)
+            if not resolved_url:
+                return "fail", f"key set; endpoint unavailable ({resolve_error})"
+            if c.get("check_mode") == "200-json":
+                ok2, d2 = check_http_json(
+                    resolved_url,
+                    retries=HTTP_RETRIES,
+                    token=tok,
+                    required_int_keys=c.get("check_json_int_keys", []),
+                )
+            else:
+                ok2, d2 = check_http(
+                    resolved_url, retries=HTTP_RETRIES, token=tok,
+                    mode=c.get("check_mode", "200"),
+                )
             return ("ok" if ok2 else "fail"), f"key set; endpoint {d2}"
         return "ok", f"key_env {c.get('key_env')}: set"
     if prim == "api-catalog":

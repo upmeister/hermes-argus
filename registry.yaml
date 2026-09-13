@@ -722,9 +722,15 @@ entries:
     tools: ["honcho_context"]
     password: true
     free: false
-    check_url: "https://api.honcho.dev/"
-    check_auth: "none"
-    check_mode: "alive"
+    check_url: "{base}/v3/workspaces/{workspace}/queue/status"
+    check_context: "honcho"
+    check_auth: "bearer"
+    check_mode: "200-json"
+    check_json_int_keys:
+      - "total_work_units"
+      - "completed_work_units"
+      - "in_progress_work_units"
+      - "pending_work_units"
   - key: "HONCHO_BASE_URL"
     description: "Base URL for self-hosted Honcho instances (no API key needed)"
     prompt: "Honcho base URL (e.g. http://localhost:8000)"
