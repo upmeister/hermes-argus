@@ -609,9 +609,9 @@ def probe_wrapper_crash_no_stale(hp, tmp: Path):
     write(hermes / "state" / "health-check-v2-state.json",
           json.dumps({"provider:dummy": 2}))
     write(hermes / "logs" / ".keep", "")
-    env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp))
     r = subprocess.run(["bash", str(REPO / "scripts" / "health-check-v2-wrapper.sh")],
-                       capture_output=True, text=True, timeout=30, env=env)
+                       capture_output=True, text=True, timeout=30,
+                       env=_probe_subprocess_env(home))
     state = json.loads((hermes / "state" / "health-check-v2-state.json").read_text())
     log = (hermes / "logs" / "health-check-v2.log").read_text()
     check("wrapper_crash_no_stale", r.returncode == 0
@@ -641,9 +641,9 @@ def probe_wrapper_unconfigured_not_recovery(hp, tmp: Path):
     write(hermes / "state" / "health-check-v2-state.json",
           json.dumps({"provider:dummy": 2}))
     write(hermes / "logs" / ".keep", "")
-    env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp))
     r = subprocess.run(["bash", str(REPO / "scripts" / "health-check-v2-wrapper.sh")],
-                       capture_output=True, text=True, timeout=30, env=env)
+                       capture_output=True, text=True, timeout=30,
+                       env=_probe_subprocess_env(home))
     state = json.loads((hermes / "state" / "health-check-v2-state.json").read_text())
     check("wrapper_unconfigured_not_recovery", r.returncode == 0
           and state.get("provider:dummy") == 2,
@@ -804,6 +804,44 @@ def probe_deploy_cron_profile(tmp: Path):
 
 # ── Пробы: D0a schema v2 (envelope, projection, dual-read) ──────────────────
 
+# Explicit environment allowlist for wrapper subprocesses (review pass):
+# notification tokens, proxies and credentials are deliberately NOT inherited,
+# so a probe run can never reach real Telegram endpoints.
+_WRAPPER_ENV_ALLOWLIST = (
+    "PATH", "TEMP", "TMP", "SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC",
+    "PATHEXT", "WINDIR", "MSYSTEM", "LC_ALL", "LANG",
+)
+
+
+def _probe_subprocess_env(home: Path, extra: dict | None = None) -> dict:
+    env = {k: v for k, v in os.environ.items()
+           if k in _WRAPPER_ENV_ALLOWLIST}
+    env["HOME"] = str(home)
+    env["XDG_RUNTIME_DIR"] = str(home)
+    # Pin child stdout to UTF-8: on Windows the locale codec (cp1251) cannot
+    # encode the alert emoji and the alerting python would die mid-print.
+    env["PYTHONIOENCODING"] = "utf-8"
+    if extra:
+        env.update(extra)
+    return env
+
+
+@contextmanager
+def override_environ(**updates):
+    """Temporarily set/replace environment keys (restores prior values)."""
+    saved = {k: os.environ.get(k) for k in updates}
+    for k, v in updates.items():
+        os.environ[k] = v
+    try:
+        yield
+    finally:
+        for k, old in saved.items():
+            if old is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = old
+
+
 D0A_REGISTRY = """\
 kit_entries:
   - key: "DUMMY_REQUIRED_KEY"
@@ -909,26 +947,32 @@ def _run_wrapper_with_report(tmp: Path, name: str, report_text: str,
     write(hermes / "state" / "health-check-v2-report.json", report_text)
     write(hermes / "state" / "health-check-v2-state.json", json.dumps(state_obj))
     write(hermes / "logs" / ".keep", "")
-    env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(tmp))
     r = subprocess.run(["bash", str(REPO / "scripts" / "health-check-v2-wrapper.sh")],
-                       capture_output=True, text=True, timeout=30, env=env)
+                       capture_output=True, text=True, timeout=30,
+                       env=_probe_subprocess_env(home))
     state = json.loads((hermes / "state" / "health-check-v2-state.json").read_text())
-    log = (hermes / "logs" / "health-check-v2.log").read_text()
+    log = (hermes / "logs" / "health-check-v2.log").read_text(encoding="utf-8")
     return r.returncode, state, log
 
 
-def _v2_report(verdict: str, status: str = "ok") -> dict:
+# Legacy status that honestly mirrors each canonical verdict; unknown has no
+# legacy producer, so the fixture carries its old-consumer projection
+# (unknown -> skipped) in the v1 fields.
+_STATUS_FOR_VERDICT = {"healthy": "ok", "failed": "fail",
+                       "unconfigured": "unconfigured",
+                       "skipped": "skipped", "unknown": "skipped"}
+
+
+def _v2_report(verdict: str) -> dict:
+    status = _STATUS_FOR_VERDICT[verdict]
+    n = {v: (1 if v == verdict else 0) for v in
+         ("healthy", "failed", "unknown", "unconfigured", "skipped")}
     return {
         "schema": 2,
         "updated": "2026-09-13T00:00:00+00:00",
         "source": {"engine": "health-check-v2",
                    "registry": {"schema": 1, "hermes_version": "0.21.0"}},
-        "summary": {"total": 1,
-                    "healthy": 1 if verdict == "healthy" else 0,
-                    "failed": 1 if verdict == "failed" else 0,
-                    "unknown": 1 if verdict == "unknown" else 0,
-                    "unconfigured": 1 if verdict == "unconfigured" else 0,
-                    "skipped": 1 if verdict == "skipped" else 0},
+        "summary": {"total": 1, **n},
         "inventory": {"active_models": [], "plugin_providers": [],
                       "free_models": {}},
         "checks": [{"id": "kit:DUMMY_KEY", "entity_id": "kit:DUMMY_KEY",
@@ -937,8 +981,10 @@ def _v2_report(verdict: str, status: str = "ok") -> dict:
                     "detail": "fixture", "status": status,
                     "legacy_status": status,
                     "claims": {}, "effects": {}, "evidence": {}}],
-        "total": 1, "ok": 1 if verdict == "healthy" else 0, "fail": 0,
-        "unconfigured": 0, "skipped": 0,
+        # coherent v1 aliases (unknown exists only via its skipped projection)
+        "total": 1, "ok": n["healthy"], "fail": n["failed"],
+        "unconfigured": n["unconfigured"],
+        "skipped": n["skipped"] or n["unknown"],
         "active_models": [], "plugin_providers": [], "free_models": {},
     }
 
@@ -986,11 +1032,16 @@ def probe_wrapper_v2_unconfigured_preserves(tmp: Path):
 
 
 def probe_wrapper_v2_healthy_recover_reset(tmp: Path):
-    """failed -> healthy emits recovery and resets the counter."""
+    """failed -> healthy emits a non-empty recovery item and resets the counter.
+
+    The assertion checks the actual alert line (the `recovered` key alone is
+    serialized even for an empty list, so key presence proves nothing).
+    """
     rc, state, log = _run_wrapper_with_report(
         tmp, "d0a-v2-healthy", json.dumps(_v2_report("healthy")), {"kit:DUMMY_KEY": 2})
     check("wrapper_v2_healthy_recover_reset",
-          rc == 0 and state.get("kit:DUMMY_KEY") == 0 and '"recovered"' in log,
+          rc == 0 and state.get("kit:DUMMY_KEY") == 0
+          and "🟢 dummy (fixture)" in log,
           f"rc={rc} state={state}")
 
 
@@ -1007,7 +1058,8 @@ def probe_wrapper_v2_malformed_rejected(tmp: Path):
 
 def probe_wrapper_v2_bad_verdict_rejected(tmp: Path):
     """A v2 check with a non-canonical verdict rejects the whole report."""
-    report = _v2_report("excellent")
+    report = _v2_report("healthy")
+    report["checks"][0]["verdict"] = "excellent"
     rc, state, log = _run_wrapper_with_report(
         tmp, "d0a-v2-bad-verdict", json.dumps(report), {"kit:DUMMY_KEY": 2})
     check("wrapper_v2_bad_verdict_rejected",
@@ -1016,15 +1068,35 @@ def probe_wrapper_v2_bad_verdict_rejected(tmp: Path):
 
 
 def probe_wrapper_v1_garbage_status_preserves(tmp: Path):
-    """An unreadable legacy status preserves the counter (never recovery)."""
+    """An unreadable legacy status preserves the counter (never recovery).
+
+    The fixture stays count-consistent: v1 semantics bucket a garbage status
+    into `skipped`, so the wrapper accepts the report and the legacy projection
+    maps the unreadable status to `unknown` -> preserve.
+    """
     report = {"updated": "2026-09-13T00:00:00+00:00", "total": 1, "ok": 0,
-              "fail": 0, "unconfigured": 0, "skipped": 0,
+              "fail": 0, "unconfigured": 0, "skipped": 1,
               "checks": [{"id": "kit:DUMMY_KEY", "label": "dummy",
                           "status": "weird", "detail": "d"}]}
     rc, state, _ = _run_wrapper_with_report(
         tmp, "d0a-v1-garbage", json.dumps(report), {"kit:DUMMY_KEY": 2})
     check("wrapper_v1_garbage_status_preserves",
           rc == 0 and state.get("kit:DUMMY_KEY") == 2, f"rc={rc} state={state}")
+
+
+def probe_wrapper_v2_duplicate_id_rejected(tmp: Path):
+    """Two records sharing one id must not double the failure counter."""
+    report = _v2_report("failed")
+    report["summary"] = {"total": 2, "healthy": 0, "failed": 2, "unknown": 0,
+                         "unconfigured": 0, "skipped": 0}
+    report["checks"] = [dict(report["checks"][0]),
+                        dict(report["checks"][0])]
+    rc, state, log = _run_wrapper_with_report(
+        tmp, "d0a-v2-dup-id", json.dumps(report), {"kit:DUMMY_KEY": 2})
+    check("wrapper_v2_duplicate_id_rejected",
+          rc == 0 and state.get("kit:DUMMY_KEY") == 2
+          and "report invalid" in log,
+          f"rc={rc} state={state}")
 
 
 def probe_wrapper_invalid_json_preserves(tmp: Path):
@@ -1036,6 +1108,144 @@ def probe_wrapper_invalid_json_preserves(tmp: Path):
           f"rc={rc} state={state}")
 
 
+# ── Пробы: webhook-потребители отчёта (fail-closed) ─────────────────────────
+
+def _fresh_ts() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _webhook_report_home(tmp: Path, name: str, report_obj: dict) -> Path:
+    home = tmp / name
+    write(home / ".hermes" / "state" / "health-check-v2-report.json",
+          json.dumps(report_obj))
+    return home
+
+
+def _webhook_home_env(home: Path) -> dict:
+    # webhook.py resolves ~ via os.path.expanduser: USERPROFILE on Windows,
+    # HOME on posix — set both so the handlers read the fixture home.
+    return {"HOME": str(home), "USERPROFILE": str(home)}
+
+
+def probe_webhook_quick_v1_accepted(wh, tmp: Path):
+    """v1 quick view: fail renders non-green, all-ok renders green (unchanged)."""
+    fail_report = {"updated": _fresh_ts(), "total": 1, "ok": 0,
+                   "fail": 1, "unconfigured": 0, "skipped": 0,
+                   "checks": [{"id": "kit:DUMMY_KEY", "label": "dummy",
+                               "status": "fail", "detail": "down"}]}
+    home = _webhook_report_home(tmp, "wh-v1-fail", fail_report)
+    with override_environ(**_webhook_home_env(home)):
+        out = wh.handle_integrations_check()
+    ok_fail = "❌ dummy: down" in out and "всё в порядке" not in out
+    ok_report = dict(fail_report, ok=1, fail=0,
+                     checks=[{"id": "kit:DUMMY_KEY", "label": "dummy",
+                              "status": "ok", "detail": "up"}])
+    home2 = _webhook_report_home(tmp, "wh-v1-ok", ok_report)
+    with override_environ(**_webhook_home_env(home2)):
+        out2 = wh.handle_integrations_check()
+    check("webhook_quick_v1_accepted",
+          ok_fail and "✅ Argus:" in out2 and "всё в порядке" in out2,
+          f"fail_out={out[:60]!r} ok_out={out2[:60]!r}")
+
+
+def probe_webhook_quick_v2_mixed(wh, tmp: Path):
+    """v2 quick view: head from canonical summary, failed/unknown rendered."""
+    report = {
+        "schema": 2, "updated": _fresh_ts(), "source": {},
+        "summary": {"total": 3, "healthy": 1, "failed": 1, "unknown": 1,
+                    "unconfigured": 0, "skipped": 0},
+        "inventory": {"active_models": [], "plugin_providers": [],
+                      "free_models": {}},
+        "checks": [
+            {"id": "kit:A", "label": "alpha", "verdict": "healthy", "detail": "d1"},
+            {"id": "kit:B", "label": "beta", "verdict": "failed", "detail": "down"},
+            {"id": "kit:C", "label": "gamma", "verdict": "unknown",
+             "detail": "inconclusive"},
+        ],
+        "total": 3, "ok": 1, "fail": 1, "unconfigured": 0, "skipped": 1,
+    }
+    home = _webhook_report_home(tmp, "wh-v2-mixed", report)
+    with override_environ(**_webhook_home_env(home)):
+        out = wh.handle_integrations_check()
+    ok = ("1/3 ok" in out and "❌ beta: down" in out
+          and "⚠️ gamma: inconclusive" in out and "всё в порядке" not in out)
+    check("webhook_quick_v2_mixed", ok, f"out={out[:100]!r}")
+
+
+def probe_webhook_quick_skipped_not_green(wh, tmp: Path):
+    """A skipped-only v2 report is never rendered green by the quick view."""
+    report = {
+        "schema": 2, "updated": _fresh_ts(), "source": {},
+        "summary": {"total": 1, "healthy": 0, "failed": 0, "unknown": 0,
+                    "unconfigured": 0, "skipped": 1},
+        "inventory": {"active_models": [], "plugin_providers": [],
+                      "free_models": {}},
+        "checks": [{"id": "kit:S", "label": "skipped-one", "verdict": "skipped",
+                    "detail": "policy"}],
+        "total": 1, "ok": 0, "fail": 0, "unconfigured": 0, "skipped": 1,
+    }
+    home = _webhook_report_home(tmp, "wh-v2-skipped", report)
+    with override_environ(**_webhook_home_env(home)):
+        out = wh.handle_integrations_check()
+    check("webhook_quick_skipped_not_green",
+          "всё в порядке" not in out and "⏸" in out,
+          f"out={out[:100]!r}")
+
+
+def probe_webhook_quick_malformed_rejected(wh, tmp: Path):
+    """A v2 report without summary is rejected, never rendered as healthy."""
+    report = _v2_report("healthy")
+    del report["summary"]
+    home = _webhook_report_home(tmp, "wh-v2-malformed", report)
+    with override_environ(**_webhook_home_env(home)):
+        out = wh.handle_integrations_check()
+    check("webhook_quick_malformed_rejected",
+          "отклонён" in out and "всё в порядке" not in out,
+          f"out={out[:100]!r}")
+
+
+def probe_webhook_schema_future_rejected(wh, tmp: Path):
+    """An unknown future schema is rejected by both consumers, never legacy."""
+    report = _v2_report("healthy")
+    report["schema"] = 3
+    home = _webhook_report_home(tmp, "wh-schema3", report)
+    with override_environ(**_webhook_home_env(home)):
+        quick = wh.handle_integrations_check()
+        full = wh.handle_integrations_all()
+    ok = ("отклонён" in quick and "✅ Argus:" not in quick
+          and "всё в порядке" not in quick
+          and "отклонён" in full and "✅" not in full.split("\n")[0])
+    check("webhook_schema_future_rejected", ok,
+          f"quick={quick[:60]!r} full={full[:60]!r}")
+
+
+def probe_webhook_full_v2_unknown_skipped(wh, tmp: Path):
+    """Full view renders unknown as ⚠️ and skipped as ⏸ with honest counts."""
+    report = {
+        "schema": 2, "updated": _fresh_ts(), "source": {},
+        "summary": {"total": 4, "healthy": 1, "failed": 0, "unknown": 1,
+                    "unconfigured": 1, "skipped": 1},
+        "inventory": {"active_models": [], "plugin_providers": [],
+                      "free_models": {}},
+        "checks": [
+            {"id": "kit:A", "label": "alpha", "verdict": "healthy", "detail": "d"},
+            {"id": "kit:B", "label": "beta", "verdict": "unknown", "detail": "unclear"},
+            {"id": "kit:C", "label": "gamma", "verdict": "unconfigured",
+             "detail": "n/a"},
+            {"id": "kit:D", "label": "delta", "verdict": "skipped",
+             "detail": "policy"},
+        ],
+        "total": 4, "ok": 1, "fail": 0, "unconfigured": 1, "skipped": 1,
+    }
+    home = _webhook_report_home(tmp, "wh-v2-full", report)
+    with override_environ(**_webhook_home_env(home)):
+        out = wh.handle_integrations_all()
+    ok = ("⚠️ beta — unclear" in out and "⏸ delta — пропущено" in out
+          and "⚪ gamma" in out and "⚠️ 1" in out and "⏸ 1" in out)
+    check("webhook_full_v2_unknown_skipped", ok, f"out={out[:120]!r}")
+
+
 # ── runner ──────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -1045,6 +1255,7 @@ def main() -> int:
     ft = load_module("fallback-tracker-v2")
     hp = load_module("health_patterns")
     disc = load_module("integration-discover")
+    wh = load_module("webhook")
 
     probe_catalog_429(hc)
     probe_catalog_401_then_public200(hc)
@@ -1080,6 +1291,15 @@ def main() -> int:
     probe_wrapper_v2_bad_verdict_rejected(tmp)
     probe_wrapper_v1_garbage_status_preserves(tmp)
     probe_wrapper_invalid_json_preserves(tmp)
+    probe_wrapper_v2_duplicate_id_rejected(tmp)
+
+    # D0a review pass: webhook consumers are fail-closed
+    probe_webhook_quick_v1_accepted(wh, tmp)
+    probe_webhook_quick_v2_mixed(wh, tmp)
+    probe_webhook_quick_skipped_not_green(wh, tmp)
+    probe_webhook_quick_malformed_rejected(wh, tmp)
+    probe_webhook_schema_future_rejected(wh, tmp)
+    probe_webhook_full_v2_unknown_skipped(wh, tmp)
 
     probe_deep_skipped_counted_ok(dc)
     probe_deep_html200_green(dc)

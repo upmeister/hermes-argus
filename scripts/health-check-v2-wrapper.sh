@@ -46,26 +46,72 @@ if ! python3 - "$REPORT" <<'PYEOF'
 import json, sys
 from pathlib import Path
 
-VERDICTS = {"healthy", "failed", "unknown", "unconfigured", "skipped"}
+VERDICTS = ("healthy", "failed", "unknown", "unconfigured", "skipped")
+
+
+def reject(reason):
+    print(f"reject: {reason}", file=sys.stderr)
+    raise SystemExit(1)
+
+
 try:
     report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 except Exception:
-    raise SystemExit(1)
-if not isinstance(report, dict) or not isinstance(report.get("checks"), list):
-    raise SystemExit(1)
+    reject("unreadable json")
+
+# Fail-closed whole-report validation (ADR 0001, D0a review pass): an
+# untrusted report must never touch the hysteresis state.
+if not isinstance(report, dict):
+    reject("report is not an object")
 schema = report.get("schema", 1)
 if schema not in (1, 2):
-    raise SystemExit(1)  # unknown future schema: reject the whole report
+    reject(f"unsupported schema {schema!r}")
+if not isinstance(report.get("updated"), str) or not report["updated"]:
+    reject("missing updated")
+checks = report.get("checks")
+if not isinstance(checks, list):
+    reject("checks is not a list")
+vk = "verdict" if schema == 2 else "status"
+seen, counts = set(), {}
+for c in checks:
+    if not isinstance(c, dict):
+        reject("check record is not an object")
+    cid = c.get("id")
+    if not isinstance(cid, str) or not cid:
+        reject("check record without a string id")
+    if cid in seen:
+        reject(f"duplicate check id {cid!r}")
+    seen.add(cid)
+    v = c.get(vk)
+    if schema == 2 and v not in VERDICTS:
+        reject(f"check {cid!r}: verdict {v!r} is not canonical")
+    if schema == 1 and (not isinstance(v, str) or not v):
+        reject(f"check {cid!r}: status must be a non-empty string")
+    if not isinstance(c.get("label"), str) or not isinstance(c.get("detail"), str):
+        reject(f"check {cid!r}: label and detail must be strings")
+    counts[v] = counts.get(v, 0) + 1
 if schema == 2:
-    # ADR 0001: a malformed v2 report is rejected entirely — state is
-    # preserved and a stale report is never treated as recovery.
-    if not isinstance(report.get("summary"), dict) \
-            or not isinstance(report.get("inventory"), dict):
-        raise SystemExit(1)
-    for c in report["checks"]:
-        if not isinstance(c, dict) or not isinstance(c.get("id"), str) \
-                or c.get("verdict") not in VERDICTS:
-            raise SystemExit(1)
+    summary = report.get("summary")
+    if not isinstance(summary, dict):
+        reject("missing summary")
+    for k in VERDICTS:
+        if summary.get(k) != counts.get(k, 0):
+            reject(f"summary.{k} is inconsistent with checks")
+    if summary.get("total") != len(checks):
+        reject("summary.total is inconsistent with checks")
+    if not isinstance(report.get("inventory"), dict):
+        reject("missing inventory")
+else:
+    ok = counts.get("ok", 0)
+    fail = counts.get("fail", 0)
+    unconf = counts.get("unconfigured", 0)
+    # v1 semantics: skipped is everything not ok/fail/unconfigured
+    expected = {"total": len(checks), "ok": ok, "fail": fail,
+                "unconfigured": unconf,
+                "skipped": len(checks) - ok - fail - unconf}
+    for k, want in expected.items():
+        if report.get(k, 0) != want:
+            reject(f"{k} count is inconsistent with checks")
 PYEOF
 then
     echo "[$(date -Is)] report invalid, skip alerting and preserve state" >> "$LOG"

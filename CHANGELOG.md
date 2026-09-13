@@ -38,5 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   containers, plus temporary v1 top-level aliases. The alert wrapper and
   `/integrations` read canonical verdicts: `unknown` and `skipped` no longer
   reset failure counters, and `/integrations` renders them as ⚠️/⏸.
+- Health reports are validated fail-closed by all consumers: a report with an
+  unknown future schema, malformed records, duplicate ids, or counts that
+  disagree with `checks[]` is rejected whole — it is never rendered as legacy
+  or green, and hysteresis state is preserved untouched.
 
 [Unreleased]: https://github.com/upmeister/hermes-argus/compare/main...HEAD

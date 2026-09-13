@@ -412,46 +412,147 @@ def handle_watchdog_status() -> str:
     return NL.join(lines)
 
 
+_V2_VERDICTS = ("healthy", "failed", "unknown", "unconfigured", "skipped")
+_REPORT_PATH = "~/.hermes/state/health-check-v2-report.json"
+
+
+def _validate_health_report(report: object) -> str:
+    """Fail-closed structural validation of a health-check-v2 report (ADR 0001).
+
+    Returns "" when the report is structurally trustworthy, otherwise a short
+    reject reason. Consumers must never render an untrusted report as healthy:
+    unsupported future schemas, malformed records and summary counts that
+    disagree with checks[] reject the report whole.
+    """
+    if not isinstance(report, dict):
+        return "report is not an object"
+    schema = report.get("schema", 1)
+    if schema not in (1, 2):
+        return f"unsupported report schema {schema!r}"
+    if not isinstance(report.get("updated"), str) or not report["updated"]:
+        return "missing updated"
+    checks = report.get("checks")
+    if not isinstance(checks, list):
+        return "checks is not a list"
+    verdict_key = "verdict" if schema == 2 else "status"
+    seen_ids = set()
+    counts: dict[str, int] = {}
+    for c in checks:
+        if not isinstance(c, dict):
+            return "check record is not an object"
+        cid = c.get("id")
+        if not isinstance(cid, str) or not cid:
+            return "check record without a string id"
+        if cid in seen_ids:
+            return f"duplicate check id {cid!r}"
+        seen_ids.add(cid)
+        v = c.get(verdict_key)
+        if schema == 2:
+            if v not in _V2_VERDICTS:
+                return f"check {cid!r}: verdict {v!r} is not canonical"
+        elif not isinstance(v, str) or not v:
+            return f"check {cid!r}: status must be a non-empty string"
+        if not isinstance(c.get("label"), str) or not isinstance(c.get("detail"), str):
+            return f"check {cid!r}: label and detail must be strings"
+        counts[v] = counts.get(v, 0) + 1
+    if schema == 2:
+        summary = report.get("summary")
+        if not isinstance(summary, dict):
+            return "missing summary"
+        for k in _V2_VERDICTS:
+            if summary.get(k) != counts.get(k, 0):
+                return f"summary.{k} is inconsistent with checks"
+        if summary.get("total") != len(checks):
+            return "summary.total is inconsistent with checks"
+        if not isinstance(report.get("inventory"), dict):
+            return "missing inventory"
+    else:
+        ok = counts.get("ok", 0)
+        fail = counts.get("fail", 0)
+        unconf = counts.get("unconfigured", 0)
+        # v1 semantics: skipped is everything not ok/fail/unconfigured
+        expected = {"total": len(checks), "ok": ok, "fail": fail,
+                    "unconfigured": unconf,
+                    "skipped": len(checks) - ok - fail - unconf}
+        for k, want in expected.items():
+            if report.get(k, 0) != want:
+                return f"{k} count is inconsistent with checks"
+    return ""
+
+
+def _load_integrations_report() -> tuple[dict, str]:
+    """Read + validate the cached report. Returns (report, "") on success or
+    ({}, reason). Reason "unavailable" means missing/unreadable file so callers
+    can keep their existing fallback behavior; any other reason is a
+    fail-closed rejection of the report content."""
+    try:
+        with open(os.path.expanduser(_REPORT_PATH), encoding="utf-8") as f:
+            report = json.load(f)
+    except FileNotFoundError:
+        return {}, "unavailable"
+    except Exception:
+        return {}, "report is unreadable"
+    reason = _validate_health_report(report)
+    if reason:
+        return {}, reason
+    return report, ""
+
+
+def _render_integrations_quick(report: dict) -> str:
+    """Quick /integrations view of a validated report (v1 or v2).
+
+    D0a dual-read: schema-2 reports are judged by the canonical ADR 0001
+    verdict; legacy reports keep the v1 status field. A skipped-only report is
+    never rendered green: skipped means policy did not check, not health.
+    """
+    is_v2 = report.get("schema") == 2
+    st_key = "verdict" if is_v2 else "status"
+    fail_val = "failed" if is_v2 else "fail"
+    checks = report.get("checks", [])
+    fails = [c for c in checks if c.get(st_key) == fail_val]
+    unknowns = [c for c in checks if c.get(st_key) == "unknown"] if is_v2 else []
+    skipped_n = sum(1 for c in checks if c.get(st_key) == "skipped") if is_v2 else 0
+    summary = report.get("summary") or {}
+    ok_count = summary.get("healthy", report.get("ok", 0)) if is_v2 \
+        else report.get("ok", 0)
+    age = datetime.fromisoformat(report["updated"]).astimezone().strftime("%H:%M")
+    head = (f"🩺 Интеграции (отчёт {age}): "
+            f"{ok_count}/{report.get('total', 0)} ok")
+    if not fails and not unknowns and not skipped_n:
+        return f"✅ Argus: {head} — всё в порядке"
+    probs = [f"❌ {c.get('label')}: {c.get('detail')}" for c in fails[:8]]
+    room = 8 - len(probs)
+    if room > 0 and unknowns:
+        probs.extend(f"⚠️ {c.get('label')}: {c.get('detail')}"
+                     for c in unknowns[:room])
+        room -= min(len(unknowns), room)
+    if room > 0 and skipped_n:
+        probs.append(f"⏸ {skipped_n} проверок пропущены политикой")
+    extra = len(fails) + len(unknowns) - 8
+    if extra > 0:
+        probs.append(f"…и ещё {extra}")
+    return head + "\n" + "\n".join(probs)
+
+
 def handle_integrations_check() -> str:
     """Quick status from the cached health-check-v2 report (fresh < 26h) —
-    covers MCP and everything else the v2 engine sees. Falls back to the
-    legacy --quick script when the report is missing or stale. The legacy
-    --quick itself stays the watchdog L1 contract (untouched)."""
+    covers MCP and everything else the v2 engine sees. The report is validated
+    fail-closed first (ADR 0001): an untrusted report — including an unknown
+    future schema — is rejected, never rendered as legacy or green. Falls back
+    to the legacy --quick script only when the report is missing or stale.
+    The legacy --quick itself stays the watchdog L1 contract (untouched)."""
     now = _time.time()
-    try:
-        with open(os.path.expanduser("~/.hermes/state/health-check-v2-report.json"),
-                  encoding="utf-8") as f:
-            report = json.load(f)
-        updated = datetime.fromisoformat(report.get("updated", "")).timestamp()
-        if now - updated < 26 * 3600:
-            # D0a dual-read: schema-2 reports are judged by the canonical ADR
-            # 0001 verdict; legacy reports keep the v1 status field.
-            is_v2 = report.get("schema") == 2
-            st_key = "verdict" if is_v2 else "status"
-            fail_val = "failed" if is_v2 else "fail"
-            checks = report.get("checks", [])
-            fails = [c for c in checks if c.get(st_key) == fail_val]
-            unknowns = [c for c in checks if c.get(st_key) == "unknown"] \
-                if is_v2 else []
-            summary = report.get("summary") or {}
-            ok_count = summary.get("healthy", report.get("ok", 0)) if is_v2 \
-                else report.get("ok", 0)
-            age = datetime.fromisoformat(report["updated"]).astimezone().strftime("%H:%M")
-            head = (f"🩺 Интеграции (отчёт {age}): "
-                    f"{ok_count}/{report.get('total', 0)} ok")
-            if not fails and not unknowns:
-                return f"✅ Argus: {head} — всё в порядке"
-            probs = [f"❌ {c.get('label')}: {c.get('detail')}" for c in fails[:8]]
-            room = 8 - len(probs)
-            if room > 0 and unknowns:
-                probs.extend(f"⚠️ {c.get('label')}: {c.get('detail')}"
-                             for c in unknowns[:room])
-            extra = len(fails) + len(unknowns) - 8
-            if extra > 0:
-                probs.append(f"…и ещё {extra}")
-            return head + "\n" + "\n".join(probs)
-    except Exception:
-        pass
+    report, reason = _load_integrations_report()
+    if not reason:
+        try:
+            fresh = now - datetime.fromisoformat(report["updated"]).timestamp() \
+                < 26 * 3600
+        except (ValueError, TypeError, OSError):
+            return f"{_WARN} Отчёт health-check-v2 отклонён: invalid updated timestamp."
+        if fresh:
+            return _render_integrations_quick(report)
+    elif reason != "unavailable":
+        return f"{_WARN} Отчёт health-check-v2 отклонён ({reason}) — fail-closed."
     # Legacy fallback (report missing or stale)
     try:
         r = subprocess.run(
@@ -473,18 +574,19 @@ def handle_integrations_all() -> str:
     """Full grouped integration view from the health-check-v2 report + registry.
 
     Reads the cached hourly report (cron :20) instead of re-running checks:
-    a live re-run is C2 (deep check) territory. Falls back to a hint when the
-    report has not been generated yet. Plain text only — the poller's
-    send_message sends without parse_mode.
+    a live re-run is C2 (deep check) territory. The report is validated
+    fail-closed first (ADR 0001): an untrusted report is rejected whole, never
+    rendered. Missing report falls back to a hint. Plain text only — the
+    poller's send_message sends without parse_mode.
     """
-    try:
-        with open(os.path.expanduser("~/.hermes/state/health-check-v2-report.json"),
-                  encoding="utf-8") as f:
-            report = json.load(f)
-    except Exception:
+    report, reason = _load_integrations_report()
+    if reason == "unavailable":
         return (f"{_WARN} Отчёт health-check-v2 недоступен.\n"
                 "Он создаётся cron-обёрткой (ежечасно :20) или вручную:\n"
                 "~/scripts/health-check-v2-wrapper.sh")
+    if reason:
+        return (f"{_WARN} Отчёт health-check-v2 отклонён ({reason}) — "
+                "fail-closed, см. ADR 0001.")
 
     try:
         import yaml
