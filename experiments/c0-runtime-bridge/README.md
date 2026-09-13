@@ -34,6 +34,37 @@ python3 experiments/c0-runtime-bridge/probes.py
 Works on POSIX and Windows. The same probes are re-run on `peetna-aws` before
 any Hermes-backed facet is attempted.
 
+## Status — step 2 (identity + config_health under containment)
+
+Server setup (dedicated, production untouched): Hermes clone at the production
+revision `b6b53c69` in `~/c0-spike/hermes-src`, own venv; the only non-stdlib
+dependency the config seam needed was `pyyaml` (compatibility-surface fact).
+
+`bridge.py` now installs a Python audit hook before any Hermes import and
+records `socket.connect` / `subprocess.Popen` / write-mode file opens inside
+the child; the envelope carries them as `effects` (bounded to 50 entries).
+
+Hermes-backed probe results (server, `probes_hermes.py`, 7 pass / 0 fail):
+
+- `mustpass_hermes_identity_facet` — version from the Hermes manifest
+  (`0.21.2`), recorded source revision, no home paths serialized;
+- `mustpass_profile_isolation_ab_sequential` — profiles A/B report their own
+  primary model, no cross-profile bleed (gate 1);
+- `mustpass_explicit_home_respected` — the child sees only the requested
+  HERMES_HOME under the allowlisted environment (gate 7);
+- `mustpass_malformed_config_not_ok` — broken config.yaml surfaces as
+  `partial / config_parse_fallback` (raw parse raised ScannerError) instead of
+  the loader's silent last-known-good/defaults fallback — facet B works;
+- `mustpass_secret_nondisclosure_canary` — .env canary and the declared
+  `${ENV}` value never reach stdout/stderr/envelope (gate 2);
+- `mustpass_import_drift_fail_closed` — a missing Hermes module yields
+  `compatibility_degraded / hermes_import_failed`, envelope stays valid
+  (gate 5);
+- `observation_config_load_write_effects_bounded` — in the observed scenario
+  (fresh fixture home, first load) `load_config_readonly()` performed no
+  writes at all (audit + filesystem snapshot); facts recorded for the
+  effect-budget decision.
+
 ## Status — step 1 (harness containment)
 
 Implemented and probed locally (no Hermes involved):

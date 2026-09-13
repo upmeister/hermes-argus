@@ -72,6 +72,15 @@ def _terminate(proc: subprocess.Popen) -> None:
         pass
 
 
+def build_hermes_env(hermes_home, hermes_src, extra: dict | None = None) -> dict:
+    """Child environment for Hermes-backed runs: the allowlisted base plus the
+    declared Hermes source selection (PYTHONPATH + C0_HERMES_SRC)."""
+    env = build_child_env(hermes_home, extra=extra)
+    env["PYTHONPATH"] = str(hermes_src)
+    env["C0_HERMES_SRC"] = str(hermes_src)
+    return env
+
+
 def _read_capped(stream, cap: int) -> tuple[str, bool]:
     """Read at most cap+1 bytes; return (text, truncated)."""
     stream.seek(0)
@@ -83,12 +92,14 @@ def _read_capped(stream, cap: int) -> tuple[str, bool]:
 def run_child(bridge_entrypoint, argv: list[str] | None = None, env: dict | None = None,
               timeout_s: int = DEFAULT_TIMEOUT_S,
               output_cap: int = DEFAULT_OUTPUT_CAP,
-              workdir=None) -> dict:
+              workdir=None, python_executable=None) -> dict:
     """Run one bridge child; never raise for child failures.
 
-    stdout/stderr are captured to temporary files and read back under the
-    byte cap, so an oversized dump cannot blow up the harness. The capture
-    files are removed after reading; only the capped text survives.
+    `python_executable` selects the interpreter for the child (the dedicated
+    Hermes venv python for Hermes-backed runs); defaults to the harness's own
+    interpreter. stdout/stderr are captured to temporary files and read back
+    under the byte cap, so an oversized dump cannot blow up the harness. The
+    capture files are removed after reading; only the capped text survives.
     """
     argv = [str(a) for a in (argv or [])]
     stdout_f = tempfile.TemporaryFile()
@@ -97,7 +108,7 @@ def run_child(bridge_entrypoint, argv: list[str] | None = None, env: dict | None
     status, exit_code, error_kind = "ok", None, None
     try:
         proc = subprocess.Popen(
-            [sys.executable, str(bridge_entrypoint), *argv],
+            [python_executable or sys.executable, str(bridge_entrypoint), *argv],
             stdout=stdout_f, stderr=stderr_f, env=env,
             cwd=str(workdir) if workdir else None,
             start_new_session=(os.name == "posix"),
@@ -180,6 +191,15 @@ def parse_envelope(run_result: dict) -> tuple[dict | None, str]:
         data = facet.get("data", {})
         if not isinstance(data, dict):
             return None, f"facet {name!r}: data must be an object"
+    effects = envelope.get("effects")
+    if effects is not None:
+        if not isinstance(effects, dict):
+            return None, "effects must be an object"
+        for key in ("network", "process_spawn", "writes"):
+            if not isinstance(effects.get(key), list):
+                return None, f"effects.{key} must be a list"
+        if not isinstance(effects.get("truncated"), bool):
+            return None, "effects.truncated must be a boolean"
     return envelope, ""
 
 
