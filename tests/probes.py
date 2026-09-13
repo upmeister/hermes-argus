@@ -989,6 +989,36 @@ def _v2_report(verdict: str) -> dict:
     }
 
 
+def _v2_check(cid: str, label: str, verdict: str, detail: str) -> dict:
+    """A single fully contract-compliant v2 check record."""
+    status = _STATUS_FOR_VERDICT[verdict]
+    return {"id": cid, "entity_id": cid, "label": label, "primitive": "env",
+            "verdict": verdict, "reason_code": "unclassified_failure",
+            "detail": detail, "status": status, "legacy_status": status,
+            "claims": {}, "effects": {}, "evidence": {}}
+
+
+def _v2_report_multi(checks: list) -> dict:
+    """A contract-compliant v2 envelope for an arbitrary check list."""
+    counts = {v: 0 for v in ("healthy", "failed", "unknown",
+                             "unconfigured", "skipped")}
+    for c in checks:
+        counts[c["verdict"]] += 1
+    return {
+        "schema": 2, "updated": _fresh_ts(),
+        "source": {"engine": "health-check-v2",
+                   "registry": {"schema": 1, "hermes_version": "0.21.0"}},
+        "summary": {"total": len(checks), **counts},
+        "inventory": {"active_models": [], "plugin_providers": [],
+                      "free_models": {}},
+        "checks": checks,
+        "total": len(checks), "ok": counts["healthy"],
+        "fail": counts["failed"], "unconfigured": counts["unconfigured"],
+        "skipped": counts["skipped"] + counts["unknown"],
+        "active_models": [], "plugin_providers": [], "free_models": {},
+    }
+
+
 def probe_wrapper_v1_report_accepted(tmp: Path):
     """A v1 report (no schema key) still drives the failure counter."""
     report = {"updated": "2026-09-13T00:00:00+00:00", "total": 1, "ok": 0,
@@ -1151,20 +1181,11 @@ def probe_webhook_quick_v1_accepted(wh, tmp: Path):
 
 def probe_webhook_quick_v2_mixed(wh, tmp: Path):
     """v2 quick view: head from canonical summary, failed/unknown rendered."""
-    report = {
-        "schema": 2, "updated": _fresh_ts(), "source": {},
-        "summary": {"total": 3, "healthy": 1, "failed": 1, "unknown": 1,
-                    "unconfigured": 0, "skipped": 0},
-        "inventory": {"active_models": [], "plugin_providers": [],
-                      "free_models": {}},
-        "checks": [
-            {"id": "kit:A", "label": "alpha", "verdict": "healthy", "detail": "d1"},
-            {"id": "kit:B", "label": "beta", "verdict": "failed", "detail": "down"},
-            {"id": "kit:C", "label": "gamma", "verdict": "unknown",
-             "detail": "inconclusive"},
-        ],
-        "total": 3, "ok": 1, "fail": 1, "unconfigured": 0, "skipped": 1,
-    }
+    report = _v2_report_multi([
+        _v2_check("kit:A", "alpha", "healthy", "d1"),
+        _v2_check("kit:B", "beta", "failed", "down"),
+        _v2_check("kit:C", "gamma", "unknown", "inconclusive"),
+    ])
     home = _webhook_report_home(tmp, "wh-v2-mixed", report)
     with override_environ(**_webhook_home_env(home)):
         out = wh.handle_integrations_check()
@@ -1175,16 +1196,8 @@ def probe_webhook_quick_v2_mixed(wh, tmp: Path):
 
 def probe_webhook_quick_skipped_not_green(wh, tmp: Path):
     """A skipped-only v2 report is never rendered green by the quick view."""
-    report = {
-        "schema": 2, "updated": _fresh_ts(), "source": {},
-        "summary": {"total": 1, "healthy": 0, "failed": 0, "unknown": 0,
-                    "unconfigured": 0, "skipped": 1},
-        "inventory": {"active_models": [], "plugin_providers": [],
-                      "free_models": {}},
-        "checks": [{"id": "kit:S", "label": "skipped-one", "verdict": "skipped",
-                    "detail": "policy"}],
-        "total": 1, "ok": 0, "fail": 0, "unconfigured": 0, "skipped": 1,
-    }
+    report = _v2_report_multi([
+        _v2_check("kit:S", "skipped-one", "skipped", "policy")])
     home = _webhook_report_home(tmp, "wh-v2-skipped", report)
     with override_environ(**_webhook_home_env(home)):
         out = wh.handle_integrations_check()
@@ -1222,28 +1235,145 @@ def probe_webhook_schema_future_rejected(wh, tmp: Path):
 
 def probe_webhook_full_v2_unknown_skipped(wh, tmp: Path):
     """Full view renders unknown as ⚠️ and skipped as ⏸ with honest counts."""
-    report = {
-        "schema": 2, "updated": _fresh_ts(), "source": {},
-        "summary": {"total": 4, "healthy": 1, "failed": 0, "unknown": 1,
-                    "unconfigured": 1, "skipped": 1},
-        "inventory": {"active_models": [], "plugin_providers": [],
-                      "free_models": {}},
-        "checks": [
-            {"id": "kit:A", "label": "alpha", "verdict": "healthy", "detail": "d"},
-            {"id": "kit:B", "label": "beta", "verdict": "unknown", "detail": "unclear"},
-            {"id": "kit:C", "label": "gamma", "verdict": "unconfigured",
-             "detail": "n/a"},
-            {"id": "kit:D", "label": "delta", "verdict": "skipped",
-             "detail": "policy"},
-        ],
-        "total": 4, "ok": 1, "fail": 0, "unconfigured": 1, "skipped": 1,
-    }
+    report = _v2_report_multi([
+        _v2_check("kit:A", "alpha", "healthy", "d"),
+        _v2_check("kit:B", "beta", "unknown", "unclear"),
+        _v2_check("kit:C", "gamma", "unconfigured", "n/a"),
+        _v2_check("kit:D", "delta", "skipped", "policy"),
+    ])
     home = _webhook_report_home(tmp, "wh-v2-full", report)
     with override_environ(**_webhook_home_env(home)):
         out = wh.handle_integrations_all()
     ok = ("⚠️ beta — unclear" in out and "⏸ delta — пропущено" in out
           and "⚪ gamma" in out and "⚠️ 1" in out and "⏸ 1" in out)
     check("webhook_full_v2_unknown_skipped", ok, f"out={out[:120]!r}")
+
+
+# ── Пробы: review pass 2 — mutation matrix на контракт отчёта ───────────────
+
+def probe_webhook_v2_contract_fields_enforced(wh, tmp: Path):
+    """Every D0a contract field is required in the v2 envelope and checks."""
+    base = _v2_report("healthy")
+    envelope_fields = ("source", "inventory", "active_models",
+                       "plugin_providers", "free_models", "ok", "total",
+                       "fail", "unconfigured", "skipped")
+    check_fields = ("entity_id", "primitive", "reason_code",
+                    "legacy_status", "claims", "effects", "evidence")
+    for field in envelope_fields + check_fields:
+        report = json.loads(json.dumps(base))
+        if field in check_fields:
+            del report["checks"][0][field]
+        else:
+            del report[field]
+        if not wh._validate_health_report(report):
+            check("webhook_v2_contract_fields_enforced", False,
+                  f"missing {field} accepted")
+            return
+    check("webhook_v2_contract_fields_enforced", True,
+          f"{len(envelope_fields) + len(check_fields)} deletions all rejected")
+
+
+def probe_webhook_v2_wrong_types_rejected(wh, tmp: Path):
+    """Wrong-typed contract fields are rejected, never coerced."""
+    base = _v2_report("healthy")
+    mutations = [
+        ("schema", "2"), ("schema", 2.0),
+        ("entity_id", 42), ("primitive", ""), ("reason_code", None),
+        ("legacy_status", "skipped"),  # wrong projection for healthy
+        ("claims", []), ("effects", "none"), ("evidence", 0),
+        ("active_models", ["not-an-object"]),
+        ("plugin_providers", [{"name": 1, "description": None}]),
+        ("free_models", {"openrouter": "minimax"}),
+    ]
+    for field, value in mutations:
+        report = json.loads(json.dumps(base))
+        if field in ("schema", "active_models", "plugin_providers",
+                     "free_models"):
+            report[field] = value
+        else:
+            report["checks"][0][field] = value
+        if not wh._validate_health_report(report):
+            check("webhook_v2_wrong_types_rejected", False,
+                  f"{field}={value!r} accepted")
+            return
+    check("webhook_v2_wrong_types_rejected", True, "all wrong types rejected")
+
+
+def probe_webhook_v2_bool_counts_rejected(wh, tmp: Path):
+    """True == 1 must not smuggle booleans through schema or counts."""
+    base = _v2_report("healthy")
+    report = json.loads(json.dumps(base))
+    report["summary"]["healthy"] = True
+    summary_ok = bool(wh._validate_health_report(report))
+    report2 = json.loads(json.dumps(base))
+    report2["schema"] = True
+    schema_ok = bool(wh._validate_health_report(report2))
+    report3 = json.loads(json.dumps(base))
+    report3["ok"] = True
+    alias_ok = bool(wh._validate_health_report(report3))
+    check("webhook_v2_bool_counts_rejected",
+          summary_ok and schema_ok and alias_ok,
+          f"summary={summary_ok} schema={schema_ok} alias={alias_ok}")
+
+
+def probe_webhook_v2_inconsistent_aliases_rejected(wh, tmp: Path):
+    """Aliases must match canonical summary and the unknown->skipped rule."""
+    base = _v2_report("unknown")  # alias skipped must carry the unknown count
+    report = json.loads(json.dumps(base))
+    report["skipped"] = 0
+    projection_ok = bool(wh._validate_health_report(report))
+    report2 = json.loads(json.dumps(base))
+    report2["fail"] = 1
+    counts_ok = bool(wh._validate_health_report(report2))
+    report3 = json.loads(json.dumps(base))
+    report3["active_models"] = [{"role": "primary"}]
+    inventory_ok = bool(wh._validate_health_report(report3))
+    check("webhook_v2_inconsistent_aliases_rejected",
+          projection_ok and counts_ok and inventory_ok,
+          f"projection={projection_ok} counts={counts_ok} inventory={inventory_ok}")
+
+
+def probe_webhook_full_bad_timestamp_not_green(wh, tmp: Path):
+    """A non-ISO updated is rejected by BOTH views (full no longer swallows)."""
+    report = _v2_report("healthy")
+    report["updated"] = "not-a-timestamp"
+    home = _webhook_report_home(tmp, "wh-bad-ts", report)
+    with override_environ(**_webhook_home_env(home)):
+        quick = wh.handle_integrations_check()
+        full = wh.handle_integrations_all()
+    ok = ("отклонён" in quick and "✅ Argus:" not in quick
+          and "отклонён" in full and "Argus наблюдает" not in full)
+    check("webhook_full_bad_timestamp_not_green", ok,
+          f"quick={quick[:60]!r} full={full[:60]!r}")
+
+
+def probe_engine_report_passes_contract_validation(wh, hc, tmp: Path):
+    """The engine's own schema-2 output satisfies the consumer contract."""
+    registry = write(tmp / "d0a-registry3.yaml", D0A_REGISTRY)
+    env = write(tmp / "d0a3.env", "DUMMY_SET_KEY=DUMMY_SECRET_TOKEN\n")
+    snap = write(tmp / "d0a-snap3.json", '{"entities": {}}')
+    out = tmp / "d0a-report-3.json"
+    hc.run(["--registry", str(registry), "--snapshot", str(snap),
+            "--env", str(env), "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    reason = wh._validate_health_report(report)
+    check("engine_report_passes_contract_validation", reason == "", reason)
+
+
+def probe_wrapper_v2_contract_enforced(tmp: Path):
+    """The wrapper rejects missing contract fields and bool schema pre-state."""
+    report = _v2_report("failed")
+    del report["checks"][0]["claims"]
+    rc1, state1, log1 = _run_wrapper_with_report(
+        tmp, "rp2-missing", json.dumps(report), {"kit:DUMMY_KEY": 2})
+    report2 = _v2_report("failed")
+    report2["schema"] = True
+    rc2, state2, log2 = _run_wrapper_with_report(
+        tmp, "rp2-bool", json.dumps(report2), {"kit:DUMMY_KEY": 2})
+    check("wrapper_v2_contract_enforced",
+          rc1 == 0 and state1.get("kit:DUMMY_KEY") == 2 and "report invalid" in log1
+          and rc2 == 0 and state2.get("kit:DUMMY_KEY") == 2 and "report invalid" in log2,
+          f"missing={state1.get('kit:DUMMY_KEY')} bool={state2.get('kit:DUMMY_KEY')}")
 
 
 # ── runner ──────────────────────────────────────────────────────────────────
@@ -1300,6 +1430,15 @@ def main() -> int:
     probe_webhook_quick_malformed_rejected(wh, tmp)
     probe_webhook_schema_future_rejected(wh, tmp)
     probe_webhook_full_v2_unknown_skipped(wh, tmp)
+
+    # D0a review pass 2: full schema-contract mutation matrix
+    probe_webhook_v2_contract_fields_enforced(wh, tmp)
+    probe_webhook_v2_wrong_types_rejected(wh, tmp)
+    probe_webhook_v2_bool_counts_rejected(wh, tmp)
+    probe_webhook_v2_inconsistent_aliases_rejected(wh, tmp)
+    probe_webhook_full_bad_timestamp_not_green(wh, tmp)
+    probe_engine_report_passes_contract_validation(wh, hc, tmp)
+    probe_wrapper_v2_contract_enforced(tmp)
 
     probe_deep_skipped_counted_ok(dc)
     probe_deep_html200_green(dc)

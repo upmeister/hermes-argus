@@ -413,7 +413,45 @@ def handle_watchdog_status() -> str:
 
 
 _V2_VERDICTS = ("healthy", "failed", "unknown", "unconfigured", "skipped")
+# ADR 0001: the only honest v1 projection of each canonical verdict
+# (unknown -> skipped is the old-consumer compatibility projection).
+_V1_STATUS_FOR_VERDICT = {"healthy": "ok", "failed": "fail",
+                          "unconfigured": "unconfigured",
+                          "skipped": "skipped", "unknown": "skipped"}
 _REPORT_PATH = "~/.hermes/state/health-check-v2-report.json"
+
+
+def _is_count(value: object) -> bool:
+    """Exact integer check: bool is an int in Python but not a valid count."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_inventory_shape(active_models: object, plugin_providers: object,
+                              free_models: object) -> str:
+    """Nested inventory shapes must be renderable without exceptions."""
+    if not isinstance(active_models, list):
+        return "active_models is not a list"
+    for m in active_models:
+        if not isinstance(m, dict):
+            return "active_models item is not an object"
+        for k in ("role", "provider", "model"):
+            if k not in m or not isinstance(m[k], (str, type(None))):
+                return f"active_models item field {k} must be a string or null"
+    if not isinstance(plugin_providers, list):
+        return "plugin_providers is not a list"
+    for p in plugin_providers:
+        if not isinstance(p, dict):
+            return "plugin_providers item is not an object"
+        for k in ("name", "description"):
+            if k not in p or not isinstance(p[k], (str, type(None))):
+                return f"plugin_providers item field {k} must be a string or null"
+    if not isinstance(free_models, dict):
+        return "free_models is not an object"
+    for provider, models in free_models.items():
+        if not isinstance(models, list) \
+                or not all(isinstance(x, str) for x in models):
+            return f"free_models[{provider!r}] must be a list of strings"
+    return ""
 
 
 def _validate_health_report(report: object) -> str:
@@ -421,16 +459,23 @@ def _validate_health_report(report: object) -> str:
 
     Returns "" when the report is structurally trustworthy, otherwise a short
     reject reason. Consumers must never render an untrusted report as healthy:
-    unsupported future schemas, malformed records and summary counts that
-    disagree with checks[] reject the report whole.
+    unsupported future schemas, malformed records, non-integer counts, and any
+    inconsistency between summary, v1 aliases and checks[] reject the report
+    whole. Every field the renderers touch is type-checked here, so neither
+    view can crash on or partially render report content.
     """
     if not isinstance(report, dict):
         return "report is not an object"
     schema = report.get("schema", 1)
-    if schema not in (1, 2):
+    if not _is_count(schema) or schema not in (1, 2):
         return f"unsupported report schema {schema!r}"
-    if not isinstance(report.get("updated"), str) or not report["updated"]:
+    updated = report.get("updated")
+    if not isinstance(updated, str) or not updated:
         return "missing updated"
+    try:
+        datetime.fromisoformat(updated)
+    except ValueError:
+        return "updated is not an ISO timestamp"
     checks = report.get("checks")
     if not isinstance(checks, list):
         return "checks is not a list"
@@ -450,6 +495,18 @@ def _validate_health_report(report: object) -> str:
         if schema == 2:
             if v not in _V2_VERDICTS:
                 return f"check {cid!r}: verdict {v!r} is not canonical"
+            # Full D0a contract fields: stable identifiers, primitive,
+            # machine-readable reason, the explicit legacy projection, and
+            # the three evidence containers.
+            for field in ("entity_id", "primitive", "reason_code"):
+                if not isinstance(c.get(field), str) or not c[field]:
+                    return f"check {cid!r}: {field} must be a non-empty string"
+            if c.get("legacy_status") != _V1_STATUS_FOR_VERDICT[v]:
+                return (f"check {cid!r}: legacy_status {c.get('legacy_status')!r} "
+                        f"does not match the documented projection of {v!r}")
+            for field in ("claims", "effects", "evidence"):
+                if not isinstance(c.get(field), dict):
+                    return f"check {cid!r}: {field} must be an object"
         elif not isinstance(v, str) or not v:
             return f"check {cid!r}: status must be a non-empty string"
         if not isinstance(c.get("label"), str) or not isinstance(c.get("detail"), str):
@@ -459,13 +516,34 @@ def _validate_health_report(report: object) -> str:
         summary = report.get("summary")
         if not isinstance(summary, dict):
             return "missing summary"
+        expected = {"total": len(checks)}
         for k in _V2_VERDICTS:
-            if summary.get(k) != counts.get(k, 0):
-                return f"summary.{k} is inconsistent with checks"
-        if summary.get("total") != len(checks):
-            return "summary.total is inconsistent with checks"
-        if not isinstance(report.get("inventory"), dict):
+            expected[k] = counts.get(k, 0)
+        for k, want in expected.items():
+            if not _is_count(summary.get(k)) or summary[k] != want:
+                return f"summary.{k} is missing, not an integer, or inconsistent"
+        inventory = report.get("inventory")
+        if not isinstance(inventory, dict):
             return "missing inventory"
+        if not isinstance(report.get("source"), dict):
+            return "missing source"
+        reason = _validate_inventory_shape(
+            inventory.get("active_models"), inventory.get("plugin_providers"),
+            inventory.get("free_models"))
+        if reason:
+            return reason
+        # v1 aliases are a projection of the canonical data, so they must be
+        # present, integer-typed, and consistent (unknown -> skipped).
+        alias_counts = {"total": summary["total"], "ok": summary["healthy"],
+                        "fail": summary["failed"],
+                        "unconfigured": summary["unconfigured"],
+                        "skipped": summary["skipped"] + summary["unknown"]}
+        for k, want in alias_counts.items():
+            if not _is_count(report.get(k)) or report[k] != want:
+                return f"v1 alias {k} is missing, not an integer, or inconsistent"
+        for k in ("active_models", "plugin_providers", "free_models"):
+            if k not in report or report[k] != inventory[k]:
+                return f"v1 alias {k} does not match inventory.{k}"
     else:
         ok = counts.get("ok", 0)
         fail = counts.get("fail", 0)
@@ -475,8 +553,16 @@ def _validate_health_report(report: object) -> str:
                     "unconfigured": unconf,
                     "skipped": len(checks) - ok - fail - unconf}
         for k, want in expected.items():
-            if report.get(k, 0) != want:
-                return f"{k} count is inconsistent with checks"
+            if not _is_count(report.get(k, 0)) or report.get(k, 0) != want:
+                return f"{k} count is missing, not an integer, or inconsistent"
+        if "active_models" in report or "plugin_providers" in report \
+                or "free_models" in report:
+            reason = _validate_inventory_shape(
+                report.get("active_models", []),
+                report.get("plugin_providers", []),
+                report.get("free_models", {}))
+            if reason:
+                return reason
     return ""
 
 
