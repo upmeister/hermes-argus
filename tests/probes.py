@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""probes.py — регрессионный суит по 38 пробам ревью Питны (2026-09-10).
+"""probes.py — регрессионный суит по 43 пробам ревью Питны (2026-09-10).
 
 Каждый дефект из engine-tests/REVIEW.md = тест-кейс. Прогон:
   python3 tests/probes.py            # все пробы
@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -45,6 +46,17 @@ def write(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="\n")
     return path
+
+
+@contextmanager
+def override_attr(obj, name: str, value):
+    """Temporarily replace mutable module state for one isolated probe."""
+    old = getattr(obj, name)
+    setattr(obj, name, value)
+    try:
+        yield
+    finally:
+        setattr(obj, name, old)
 
 
 # ── Фикстуры ────────────────────────────────────────────────────────────────
@@ -78,10 +90,11 @@ SNAP_PROVIDERS = {
 def probe_catalog_429(hc):
     """429 не доказывает accepted key — fail, а не ok."""
     codes = iter(["429"])
-    hc.curl_code = lambda url, timeout, token="": next(codes, "429")
-    status, detail = hc.run_check(
-        {"id": "p", "primitive": "api-catalog", "base": "https://dummy.invalid/v1",
-         "key_env": "DUMMY_KEY", "label": "p"}, "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
+    fake_curl = lambda url, timeout, token="": next(codes, "429")
+    with override_attr(hc, "curl_code", fake_curl):
+        status, detail = hc.run_check(
+            {"id": "p", "primitive": "api-catalog", "base": "https://dummy.invalid/v1",
+             "key_env": "DUMMY_KEY", "label": "p"}, "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
     check("catalog_429", status == "fail", detail)
 
 
@@ -93,10 +106,10 @@ def probe_catalog_401_then_public200(hc):
         calls.append(url)
         return "401" if url.endswith("/v1/models") else "200"
 
-    hc.curl_code = fake_curl
-    status, detail = hc.run_check(
-        {"id": "p", "primitive": "api-catalog", "base": "https://dummy.invalid",
-         "key_env": "DUMMY_KEY", "label": "p"}, "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
+    with override_attr(hc, "curl_code", fake_curl):
+        status, detail = hc.run_check(
+            {"id": "p", "primitive": "api-catalog", "base": "https://dummy.invalid",
+             "key_env": "DUMMY_KEY", "label": "p"}, "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
     check("catalog_401_then_public200", status == "fail" and calls == [
         "https://dummy.invalid/v1/models"], detail)
 
@@ -109,10 +122,10 @@ def probe_catalog_429_then_public200(hc):
         calls.append(url)
         return "429" if url.endswith("/v1/models") else "200"
 
-    hc.curl_code = fake_curl
-    status, detail = hc.run_check(
-        {"id": "p", "primitive": "api-catalog", "base": "https://dummy.invalid",
-         "key_env": "DUMMY_KEY", "label": "p"}, "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
+    with override_attr(hc, "curl_code", fake_curl):
+        status, detail = hc.run_check(
+            {"id": "p", "primitive": "api-catalog", "base": "https://dummy.invalid",
+             "key_env": "DUMMY_KEY", "label": "p"}, "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
     check("catalog_429_then_public200", status == "fail" and calls == [
         "https://dummy.invalid/v1/models"], detail)
 
@@ -120,10 +133,11 @@ def probe_catalog_429_then_public200(hc):
 def probe_honcho_503_green(hc):
     """alive-режим удалён: 503 = fail, а не 'auth wall, service alive'."""
     codes = iter(["503"])
-    hc.curl_code = lambda url, timeout, token="": next(codes, "503")
-    status, detail = hc.run_check(
-        {"id": "p", "primitive": "http", "url": "https://api.honcho.dev/",
-         "label": "p"}, "hermes", {})
+    fake_curl = lambda url, timeout, token="": next(codes, "503")
+    with override_attr(hc, "curl_code", fake_curl):
+        status, detail = hc.run_check(
+            {"id": "p", "primitive": "http", "url": "https://api.honcho.dev/",
+             "label": "p"}, "hermes", {})
     check("honcho_503_green", status == "fail", detail)
 
 
@@ -142,30 +156,27 @@ def probe_generator_honcho_contract():
 
 def probe_honcho_queue_json_200(hc, tmp: Path):
     """Honcho workspace queue route returns 200 and the stable counter schema."""
-    old_home = hc.HERMES_DIR
-    hc.HERMES_DIR = tmp
     write(tmp / "honcho.json", '{"workspace": "hermes"}\n')
     seen = []
 
     def fake_curl_json(url, timeout, token=""):
         seen.append((url, token))
-        return "200", {
+        return "200", "application/json", {
             "total_work_units": 0,
             "completed_work_units": 0,
             "in_progress_work_units": 0,
             "pending_work_units": 0,
         }
 
-    hc.curl_json = fake_curl_json
-    status, detail = hc.run_check(
-        {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
-         "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
-         "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
-         "check_json_int_keys": ["total_work_units", "completed_work_units",
-                                 "in_progress_work_units", "pending_work_units"],
-         "label": "Honcho", "required": False},
-        "hermes", {"DUMMY_KEY": DUMMY_TOKEN, "HONCHO_BASE_URL": "https://honcho.invalid"})
-    hc.HERMES_DIR = old_home
+    with override_attr(hc, "HERMES_DIR", tmp), override_attr(hc, "curl_json", fake_curl_json):
+        status, detail = hc.run_check(
+            {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
+             "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
+             "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
+             "check_json_int_keys": ["total_work_units", "completed_work_units",
+                                     "in_progress_work_units", "pending_work_units"],
+             "label": "Honcho", "required": False},
+            "hermes", {"DUMMY_KEY": DUMMY_TOKEN, "HONCHO_BASE_URL": "https://honcho.invalid"})
     expected_url = "https://honcho.invalid/v3/workspaces/hermes/queue/status"
     check("honcho_queue_json_200", status == "ok"
           and seen == [(expected_url, DUMMY_TOKEN)]
@@ -174,41 +185,37 @@ def probe_honcho_queue_json_200(hc, tmp: Path):
 
 def probe_honcho_queue_json_401(hc, tmp: Path):
     """Invalid/missing Honcho credentials remain a hard failure."""
-    old_home = hc.HERMES_DIR
-    hc.HERMES_DIR = tmp
     write(tmp / "honcho.json", '{"workspace": "hermes"}\n')
     seen = []
 
     def fake_curl_json(url, timeout, token=""):
         seen.append((url, token))
-        return "401", {"error": "invalid"}
+        return "401", "application/json", {"error": "invalid"}
 
-    hc.curl_json = fake_curl_json
-    status, detail = hc.run_check(
-        {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
-         "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
-         "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
-         "check_json_int_keys": ["total_work_units"], "label": "Honcho", "required": False},
-        "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
-    hc.HERMES_DIR = old_home
+    with override_attr(hc, "HERMES_DIR", tmp), override_attr(hc, "curl_json", fake_curl_json):
+        status, detail = hc.run_check(
+            {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
+             "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
+             "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
+             "check_json_int_keys": ["total_work_units"], "label": "Honcho", "required": False},
+            "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
     check("honcho_queue_json_401", status == "fail" and seen
           and seen[0][1] == DUMMY_TOKEN and "key rejected" in detail, detail)
 
 
 def probe_honcho_queue_json_schema(hc, tmp: Path):
     """HTTP 200 without the declared queue counters is not semantic success."""
-    old_home = hc.HERMES_DIR
-    hc.HERMES_DIR = tmp
     write(tmp / "honcho.json", '{"workspace": "hermes"}\n')
-    hc.curl_json = lambda url, timeout, token="": ("200", {"total_work_units": 0})
-    status, detail = hc.run_check(
-        {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
-         "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
-         "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
-         "check_json_int_keys": ["total_work_units", "pending_work_units"],
-         "label": "Honcho", "required": False},
-        "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
-    hc.HERMES_DIR = old_home
+    fake_curl_json = lambda url, timeout, token="": (
+        "200", "application/json", {"total_work_units": 0})
+    with override_attr(hc, "HERMES_DIR", tmp), override_attr(hc, "curl_json", fake_curl_json):
+        status, detail = hc.run_check(
+            {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
+             "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
+             "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
+             "check_json_int_keys": ["total_work_units", "pending_work_units"],
+             "label": "Honcho", "required": False},
+            "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
     check("honcho_queue_json_schema", status == "fail"
           and "pending_work_units" in detail, detail)
 
@@ -219,7 +226,7 @@ def probe_honcho_token_not_in_argv(hc):
     captured = {}
 
     class Result:
-        stdout = '{"total_work_units": 0}\n200'
+        stdout = '{"total_work_units": 0}\napplication/json\n200'
 
     def fake_run(cmd, **kwargs):
         captured["argv"] = list(cmd)
@@ -228,12 +235,14 @@ def probe_honcho_token_not_in_argv(hc):
 
     hc.subprocess.run = fake_run
     try:
-        code, payload = hc.curl_json("https://honcho.invalid/queue/status", 5, DUMMY_TOKEN)
+        code, content_type, payload = hc.curl_json(
+            "https://honcho.invalid/queue/status", 5, DUMMY_TOKEN)
     finally:
         hc.subprocess.run = real_run
     argv = " ".join(captured.get("argv", []))
     piped = captured.get("input") or ""
     check("honcho_token_not_in_argv", code == "200"
+          and content_type == "application/json"
           and isinstance(payload, dict)
           and DUMMY_TOKEN not in argv
           and DUMMY_TOKEN in piped
@@ -243,20 +252,122 @@ def probe_honcho_token_not_in_argv(hc):
 
 def probe_honcho_workspace_path_injection(hc, tmp: Path):
     """A workspace identifier cannot escape the intended URL path."""
-    old_home = hc.HERMES_DIR
-    hc.HERMES_DIR = tmp
     write(tmp / "honcho.json", '{"workspace": "hermes/other"}\n')
     called = []
-    hc.curl_json = lambda url, timeout, token="": (called.append(url) or ("200", {}))
-    status, detail = hc.run_check(
-        {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
-         "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
-         "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
-         "check_json_int_keys": [], "label": "Honcho", "required": False},
-        "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
-    hc.HERMES_DIR = old_home
+    fake_curl_json = lambda url, timeout, token="": (
+        called.append(url) or ("200", "application/json", {}))
+    with override_attr(hc, "HERMES_DIR", tmp), override_attr(hc, "curl_json", fake_curl_json):
+        status, detail = hc.run_check(
+            {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
+             "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
+             "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
+             "check_json_int_keys": [], "label": "Honcho", "required": False},
+            "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
     check("honcho_workspace_path_injection", status == "fail" and not called
           and "path separator" in detail, detail)
+
+
+def probe_honcho_json_content_type(hc, tmp: Path):
+    """HTTP 200 with a non-JSON media type is not semantic success."""
+    write(tmp / "honcho.json", '{"workspace": "hermes"}\n')
+    fake_curl_json = lambda url, timeout, token="": (
+        "200", "text/html", {"total_work_units": 0})
+    with override_attr(hc, "HERMES_DIR", tmp), override_attr(hc, "curl_json", fake_curl_json):
+        status, detail = hc.run_check(
+            {"id": "envkey:HONCHO_API_KEY", "primitive": "env", "key_env": "DUMMY_KEY",
+             "check_url": "{base}/v3/workspaces/{workspace}/queue/status",
+             "check_context": "honcho", "check_auth": "bearer", "check_mode": "200-json",
+             "check_json_int_keys": ["total_work_units"], "label": "Honcho", "required": False},
+            "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
+    check("honcho_json_content_type", status == "fail" and "application/json" in detail, detail)
+
+
+def probe_honcho_profile_host_block(hc, tmp: Path):
+    """Named profiles use profile-local, then default-file host configuration."""
+    profile_home = tmp / ".hermes" / "profiles" / "coder"
+    default_home = tmp / ".hermes"
+    global_config = tmp / ".honcho" / "config.json"
+    default_config = {
+        "workspace": "root-space", "baseUrl": "https://root.invalid",
+        "hosts": {"hermes_coder": {"workspace": "coder-space",
+                                     "baseUrl": "https://profile.invalid"}},
+    }
+    write(default_home / "honcho.json", json.dumps(default_config))
+    with override_attr(hc, "HERMES_DIR", profile_home), override_attr(
+            hc, "HONCHO_GLOBAL_CONFIG", global_config):
+        default_url, default_error = hc._honcho_route_url(
+            "{base}/v3/workspaces/{workspace}/queue/status",
+            {"HONCHO_WORKSPACE_ID": "legacy-space"})
+        write(profile_home / "honcho.json", json.dumps({
+            "workspace": "local-space", "baseUrl": "https://local.invalid"}))
+        local_url, local_error = hc._honcho_route_url(
+            "{base}/v3/workspaces/{workspace}/queue/status",
+            {"HONCHO_WORKSPACE_ID": "legacy-space"})
+    expected_default = "https://profile.invalid/v3/workspaces/coder-space/queue/status"
+    expected_local = "https://local.invalid/v3/workspaces/local-space/queue/status"
+    check("honcho_profile_host_block",
+          not default_error and default_url == expected_default
+          and not local_error and local_url == expected_local,
+          f"default_url={default_url} default_error={default_error} "
+          f"local_url={local_url} local_error={local_error}")
+
+
+def probe_honcho_default_host(hc, tmp: Path):
+    """Default profile honors Honcho's configured defaultHost."""
+    home = tmp / "default-home"
+    global_config = tmp / ".honcho" / "config.json"
+    write(home / "honcho.json", json.dumps({
+        "defaultHost": "team",
+        "hosts": {"team": {"workspace": "team-space", "baseUrl": "https://team.invalid"}},
+    }))
+    with override_attr(hc, "HERMES_DIR", home), override_attr(
+            hc, "HONCHO_GLOBAL_CONFIG", global_config):
+        url, error = hc._honcho_route_url(
+            "{base}/v3/workspaces/{workspace}/queue/status", {})
+    check("honcho_default_host",
+          not error and url == "https://team.invalid/v3/workspaces/team-space/queue/status",
+          f"url={url} error={error}")
+
+
+def probe_honcho_default_profile_fallback(hc, tmp: Path):
+    """A named profile falls back to the default profile config file."""
+    profile_home = tmp / "fallback" / ".hermes" / "profiles" / "coder"
+    global_config = tmp / ".honcho" / "config.json"
+    write(tmp / "fallback" / ".hermes" / "honcho.json", json.dumps({
+        "hosts": {"hermes_coder": {"workspace": "shared-config",
+                                     "baseUrl": "https://fallback.invalid"}},
+    }))
+    with override_attr(hc, "HERMES_DIR", profile_home), override_attr(
+            hc, "HONCHO_GLOBAL_CONFIG", global_config):
+        url, error = hc._honcho_route_url(
+            "{base}/v3/workspaces/{workspace}/queue/status", {})
+    check("honcho_default_profile_fallback",
+          not error and url == "https://fallback.invalid/v3/workspaces/shared-config/queue/status",
+          f"url={url} error={error}")
+
+
+def probe_honcho_global_config_fallback(hc, tmp: Path):
+    """Global Honcho config is used when Hermes-local files are absent."""
+    home = tmp / "no-honcho-here"
+    global_config = tmp / ".honcho" / "config.json"
+    write(global_config, json.dumps({
+        "workspace": "global-space", "baseUrl": "https://global.invalid"}))
+    with override_attr(hc, "HERMES_DIR", home), override_attr(
+            hc, "HONCHO_GLOBAL_CONFIG", global_config):
+        config_url, config_error = hc._honcho_route_url(
+            "{base}/v3/workspaces/{workspace}/queue/status",
+            {"HONCHO_WORKSPACE_ID": "legacy-space"})
+        global_config.unlink()
+        fallback_url, fallback_error = hc._honcho_route_url(
+            "{base}/v3/workspaces/{workspace}/queue/status",
+            {"HONCHO_WORKSPACE_ID": "legacy-space"})
+    check("honcho_global_config_fallback",
+          not config_error
+          and config_url == "https://global.invalid/v3/workspaces/global-space/queue/status"
+          and not fallback_error
+          and fallback_url == "https://api.honcho.dev/v3/workspaces/legacy-space/queue/status",
+          f"config_url={config_url} config_error={config_error} "
+          f"fallback_url={fallback_url} fallback_error={fallback_error}")
 
 
 def probe_missing_required_provider_key(hc):
@@ -392,15 +503,15 @@ def probe_envkey_enrichment(hc):
     checks = hc.build_checks(reg, snap, {"DUMMY_KEY": DUMMY_TOKEN})
     c = next(c for c in checks if c["id"] == "envkey:DUMMY_KEY")
     seen = []
-    hc.HERMES_DIR = Path(tempfile.mkdtemp(prefix="argus-honcho-enrichment-"))
-    write(hc.HERMES_DIR / "honcho.json", '{"workspace": "hermes"}\n')
+    home = Path(tempfile.mkdtemp(prefix="argus-honcho-enrichment-"))
+    write(home / "honcho.json", '{"workspace": "hermes"}\n')
 
     def fake_curl_json(url, timeout, token=""):
         seen.append((url, token))
-        return "200", {"total_work_units": 0}
+        return "200", "application/json", {"total_work_units": 0}
 
-    hc.curl_json = fake_curl_json
-    status, detail = hc.run_check(c, "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
+    with override_attr(hc, "HERMES_DIR", home), override_attr(hc, "curl_json", fake_curl_json):
+        status, detail = hc.run_check(c, "hermes", {"DUMMY_KEY": DUMMY_TOKEN})
     expected_url = "https://api.honcho.dev/v3/workspaces/hermes/queue/status"
     ok = (c.get("registry_key") == "DUMMY_KEY"
           and c.get("check_url") == "{base}/v3/workspaces/{workspace}/queue/status"
@@ -708,6 +819,11 @@ def main() -> int:
     probe_honcho_queue_json_401(hc, tmp)
     probe_honcho_queue_json_schema(hc, tmp)
     probe_honcho_workspace_path_injection(hc, tmp)
+    probe_honcho_json_content_type(hc, tmp)
+    probe_honcho_profile_host_block(hc, tmp)
+    probe_honcho_default_host(hc, tmp)
+    probe_honcho_default_profile_fallback(hc, tmp)
+    probe_honcho_global_config_fallback(hc, tmp)
     probe_missing_required_provider_key(hc)
     probe_quoted_empty_provider_key(hc, tmp)
     probe_snapshot_missing_green(hc, tmp)

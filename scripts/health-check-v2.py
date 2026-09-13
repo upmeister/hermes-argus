@@ -38,6 +38,7 @@ DEFAULT_SNAPSHOT = HERMES_DIR / "state" / "integration-snapshot.json"
 DEFAULT_ENV = HERMES_DIR / ".env"
 DEFAULT_OUT = HERMES_DIR / "state" / "health-check-v2-report.json"
 DEFAULT_HERMES_BIN = HERMES_DIR / "hermes-agent" / "venv" / "bin" / "hermes"
+HONCHO_GLOBAL_CONFIG = Path.home() / ".honcho" / "config.json"
 
 HTTP_RETRIES = 3
 HTTP_RETRY_DELAY = 10  # seconds; conventions: 3 attempts / 10s pause
@@ -118,7 +119,7 @@ def curl_code(url: str, timeout: int, token: str = "") -> str:
         if token:
             # Read Authorization from stdin so it never appears in argv/ps.
             cmd += ["-H", "@-"]
-            header_input = f"Authorization: Bearer {token}\n"
+            header_input = "Authorization: " + "Bearer " + token + "\n"
         cmd.append(url)
         r = subprocess.run(cmd, input=header_input, capture_output=True,
                            text=True, timeout=timeout + 5)
@@ -127,7 +128,7 @@ def curl_code(url: str, timeout: int, token: str = "") -> str:
         return "000"
 
 
-def curl_json(url: str, timeout: int, token: str = "") -> tuple[str, object | None]:
+def curl_json(url: str, timeout: int, token: str = "") -> tuple[str, str, object | None]:
     """GET JSON without exposing the response body to logs or reports.
 
     The body remains in this process only long enough for schema validation;
@@ -136,26 +137,29 @@ def curl_json(url: str, timeout: int, token: str = "") -> tuple[str, object | No
     versions may include identifiers in the response.
     """
     try:
-        cmd = ["curl", "-sS", "-w", chr(10) + "%{http_code}",
+        cmd = ["curl", "-sS", "-w",
+               chr(10) + "%{content_type}" + chr(10) + "%{http_code}",
                "--max-time", str(timeout)]
         header_input = None
         if token:
             # Keep credentials in the pipe, not in the child process argv.
             cmd += ["-H", "@-"]
-            header_input = f"Authorization: Bearer {token}\n"
+            header_input = "Authorization: " + "Bearer " + token + "\n"
         cmd.append(url)
         r = subprocess.run(cmd, input=header_input, capture_output=True,
                            text=True, timeout=timeout + 5)
-        body, _, code = r.stdout.rpartition(chr(10))
+        body_and_type, _, code = r.stdout.rpartition(chr(10))
+        body, _, content_type = body_and_type.rpartition(chr(10))
         code = code.strip() or "000"
+        content_type = content_type.strip().lower()
     except (subprocess.TimeoutExpired, OSError):
-        return "000", None
+        return "000", "", None
     if not code.isdigit():
-        return "000", None
+        return "000", content_type, None
     try:
-        return code, json.loads(body)
+        return code, content_type, json.loads(body)
     except json.JSONDecodeError:
-        return code, None
+        return code, content_type, None
 
 
 def check_http(url: str, retries: int, token: str = "", mode: str = "200") -> tuple[bool, str]:
@@ -195,10 +199,15 @@ def check_http_json(url: str, retries: int, token: str = "",
     required_int_keys = required_int_keys or []
     code = "000"
     for attempt in range(retries):
-        code, payload = curl_json(url, HTTP_TIMEOUT, token=token)
+        code, content_type, payload = curl_json(url, HTTP_TIMEOUT, token=token)
         if code == "200":
+            media_type = content_type.split(";", 1)[0].strip()
+            if media_type != "application/json":
+                return False, (
+                    f"HTTP 200; expected application/json, got "
+                    f"{media_type or 'missing content-type'}")
             ok, detail = _validate_json_object(payload, required_int_keys)
-            return ok, f"HTTP 200; {detail}"
+            return ok, f"HTTP 200; application/json; {detail}"
         if code in ("401", "403"):
             return False, f"key rejected (HTTP {code})"
         if code == "429":
@@ -241,25 +250,92 @@ def _safe_base_url(raw: str) -> str | None:
     return urlunsplit((parts.scheme, netloc, parts.path.rstrip("/"), "", ""))
 
 
-def _honcho_route_url(template: str, env: dict) -> tuple[str | None, str]:
-    """Resolve a Honcho workspace route without allowing path injection."""
-    base = _safe_base_url(_runtime_value(env, "HONCHO_BASE_URL")
-                          or _runtime_value(env, "HONCHO_URL")
-                          or "https://api.honcho.dev")
+def _default_hermes_home() -> Path:
+    """Default-profile home for the current HERMES_DIR layout."""
+    return HERMES_DIR.parent.parent if HERMES_DIR.parent.name == "profiles" else HERMES_DIR
+
+
+def _honcho_config_path() -> Path:
+    """Mirror upstream Honcho config-path precedence without importing Hermes internals."""
+    local = HERMES_DIR / "honcho.json"
+    if local.exists():
+        return local
+    default = _default_hermes_home() / "honcho.json"
+    if default != local and default.exists():
+        return default
+    return HONCHO_GLOBAL_CONFIG
+
+
+def _load_honcho_config() -> dict:
+    path = _honcho_config_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+
+
+def _profile_host(env: dict) -> tuple[str, bool]:
+    """Return (Honcho host key, explicitly overridden)."""
+    explicit = _runtime_value(env, "HERMES_HONCHO_HOST")
+    if explicit:
+        return explicit, True
+    if HERMES_DIR.parent.name == "profiles" and HERMES_DIR.name not in ("default", "custom"):
+        profile = "".join(c if c.isalnum() or c in "_-" else "_"
+                          for c in HERMES_DIR.name).strip("_")
+        return f"hermes_{profile or 'profile'}", False
+    return "hermes", False
+
+
+def _honcho_host_block(raw: dict, host: str) -> dict:
+    hosts = raw.get("hosts") or {}
+    if not isinstance(hosts, dict):
+        return {}
+    block = hosts.get(host)
+    if isinstance(block, dict) and block:
+        return block
+    if host.startswith("hermes_"):
+        legacy = hosts.get("hermes." + host[len("hermes_"):])
+        if isinstance(legacy, dict):
+            return legacy
+    return block if isinstance(block, dict) else {}
+
+
+def _honcho_target(env: dict) -> tuple[str | None, str | None, str]:
+    """Resolve the same host/root/env target shape current upstream Honcho uses."""
+    raw = _load_honcho_config()
+    host, explicit_host = _profile_host(env)
+    if not explicit_host and host == "hermes":
+        default_host = str(raw.get("defaultHost") or "").strip()
+        if default_host:
+            host = default_host
+    block = _honcho_host_block(raw, host)
+
+    workspace = str(block.get("workspace") or raw.get("workspace") or "").strip()
+    if not workspace:
+        workspace = _runtime_value(env, "HONCHO_WORKSPACE_ID") or host
+    endpoint = raw.get("endpoint") or {}
+    native_base = endpoint.get("baseUrl") if isinstance(endpoint, dict) else None
+    base_raw = (block.get("baseUrl") or block.get("base_url") or native_base
+                or raw.get("baseUrl") or raw.get("base_url")
+                or _runtime_value(env, "HONCHO_BASE_URL")
+                or _runtime_value(env, "HONCHO_URL")
+                or "https://api.honcho.dev")
+    base = _safe_base_url(str(base_raw))
     if not base:
-        return None, "invalid Honcho base URL"
-    workspace = _runtime_value(env, "HONCHO_WORKSPACE_ID")
-    config_path = HERMES_DIR / "honcho.json"
-    if not workspace:
-        try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-            workspace = str(config.get("workspace") or "").strip()
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            workspace = ""
-    if not workspace:
-        return None, "Honcho workspace is empty or not configured"
+        return None, None, "invalid Honcho base URL"
     if "/" in workspace or "\\" in workspace or workspace in (".", ".."):
-        return None, "Honcho workspace contains a path separator"
+        return None, None, "Honcho workspace contains a path separator"
+    return base, workspace, ""
+
+
+def _honcho_route_url(template: str, env: dict) -> tuple[str | None, str]:
+    """Resolve a profile-aware Honcho workspace route without path injection."""
+    base, workspace, error = _honcho_target(env)
+    if error:
+        return None, error
+    if base is None or workspace is None:
+        return None, "invalid Honcho target"
     workspace_path = quote(workspace, safe="")
     try:
         return template.format(base=base, workspace=workspace_path), ""
