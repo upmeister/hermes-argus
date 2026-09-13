@@ -83,7 +83,10 @@ Semantics:
 
 - `healthy` — every claim required by this check's contract is `pass` or
   explicitly `not_applicable`;
-- `failed` — at least one required claim is `fail`;
+- `failed` — at least one required claim is `fail`, **or** the failure matrix
+  (Decision 6) assigns `failed` to the observed evidence class (transport
+  error, credential rejection, rate limiting, service error, wrong route,
+  schema mismatch);
 - `unknown` — the target is configured, but required evidence is unavailable or
   inconclusive;
 - `unconfigured` — an optional target is absent;
@@ -95,12 +98,27 @@ A check cannot become `healthy` merely because *some* claim passed.
 
 ### 4. The check contract declares what it proves
 
-A check definition declares which claims are required for `healthy` and what
-capability the semantic claim covers, for example:
+A check definition declares, at minimum, which claims are required for
+`healthy`, what capability the semantic claim covers, and the full request/
+response contract plus its side-effect budget — mirroring the AGENTS.md
+invariant that authenticated semantic checks declare their method, expected
+status, content type/schema, and safe side-effect boundary:
 
 ```yaml
 required_claims: [presence, authenticated, semantic]
 semantic_capability: queue_status
+method: GET
+expected_status: 200
+expected_content_type: application/json
+expected_schema: honcho_queue_status_v1
+effects_budget:
+  network: metadata
+  process_spawn: false
+  token_refresh: none
+  quota: metadata
+  llm: false
+  write: none
+  code_execution: none
 ```
 
 In the current engine this contract may live in code next to the primitive; the
@@ -142,18 +160,42 @@ their causes precisely.
 
 ### 6. HTTP evidence matrix
 
-The status code itself is not the verdict.
+The status code itself is not the verdict. Claim states distinguish positive
+evidence (`fail`) from inconclusive evidence (`unknown`): a response that never
+delivered semantic content cannot positively disprove the semantic claim.
 
 | Observation | transport | authenticated | semantic | Default verdict note |
 |---|---|---|---|---|
-| timeout / connection error | fail | not_tested | not_tested | failed |
-| 401 / 403 with configured credential | pass | fail | not_tested | failed; no retry |
-| 404 on a required semantic route | pass | unknown | fail | failed; only an explicit check contract may treat 404 differently |
-| 429 | pass | unknown | fail/unknown by capability | failed; never proof of valid auth |
-| 5xx | pass | unknown | fail | failed; bounded retry allowed |
-| 2xx wrong content type | pass | contract-dependent | fail | failed |
-| 2xx invalid JSON/schema | pass | contract-dependent | fail | failed |
+| timeout / connection error | fail | not_tested | not_tested | failed (transport) |
+| 401 with configured credential | pass | fail | not_tested | failed; the credential was positively rejected; fail fast |
+| 403 with configured credential | pass | unknown | not_tested | failed; a 403 does not by itself prove the credential invalid (it may be a permission denial) — `authenticated: fail` only when the check contract states that a valid credential cannot receive 403 on this route |
+| 404 on a required semantic route | pass | unknown | fail | failed; positive evidence the expected capability/route is absent; only an explicit check contract may treat 404 differently |
+| 429 | pass | unknown | unknown | failed (degradation); no semantic content was received, so neither authentication nor semantic health is proven or disproven; never proof of valid auth; fail fast by default |
+| 5xx | pass | unknown | unknown | failed (service error); no semantic content was received; bounded retry allowed |
+| 2xx wrong content type | pass | contract-dependent | fail | failed; positive schema evidence |
+| 2xx invalid JSON/schema | pass | contract-dependent | fail | failed; positive schema evidence |
 | 3xx | pass | unknown | not_tested | not semantic success unless the check contract explicitly accepts redirect behavior |
+
+### 6a. Failure classes without HTTP evidence
+
+Not every failure arrives as an HTTP response. These classes are fixed as:
+
+```text
+missing_required_config / credential_missing
+  presence: fail; transport/authenticated/semantic: not_tested
+  -> verdict failed (no probe executed; nothing else is proven)
+
+probe_crashed (the check itself crashed or timed out)
+  all claims: unknown
+  -> verdict unknown; failure counter preserved; never recovery
+
+compatibility_degraded (discovery or a runtime bridge is unavailable)
+  affected checks: unknown with reason_code compatibility_degraded
+  -> verdict unknown; failure counter preserved; never recovery
+```
+
+A crashed or degraded check must degrade to `unknown`, not to `failed` and not
+to `healthy`: "we could not observe" is neither "it is broken" nor "it recovered".
 
 Authentication may be marked `pass` from a successful semantic response only
 when the route's contract guarantees that anonymous access cannot produce that
@@ -201,14 +243,29 @@ Notes:
 - **Regular** — scheduled automatically. Default budget:
   `network <= metadata`, `process_spawn` only when bounded and declared,
   `token_refresh = none`, `quota <= metadata`, `llm = false`, `write = none`,
-  `code_execution <= explicit_configured`. No automatic OAuth refresh,
-  generation, memory write or remote write.
+  `code_execution = none`. No automatic OAuth refresh, generation, memory
+  write or remote write.
+
+  A regular check may run `explicit_configured` code only when its contract
+  explicitly declares and bounds it: a fixed allowlisted entrypoint (never
+  arbitrary or plugin-supplied code), a bounded timeout, an output-size cap,
+  an explicit environment allowlist that does not inherit secrets beyond the
+  declared set, no network beyond the declared budget, and no writes. Plugin
+  discovery — importing bundled/user/pip plugin Python code — is never part of
+  the regular budget: it requires a live/deep tier assignment and explicit
+  maintainer acceptance backed by C0 evidence.
+
 - **Live** — explicit or less frequent real connectivity checks. May permit more
   network/process activity, but still no model generation or remote writes by
   default. Token-refresh-capable checks must be explicitly declared.
+
 - **Deep** — manual/explicit. May perform provider-native generation or other
   expensive verification where that is the only meaningful semantic evidence.
-  Paid generation requires explicit policy.
+  Paid generation requires explicit policy. Deep checks still never perform
+  remote writes or token refresh unless the specific check contract explicitly
+  declares them and the maintainer has approved that contract; any observed
+  token refresh is recorded in the check's effect contract
+  (`token_refresh: observed`). Deep checks never run from regular schedules.
 
 ### 10. Redaction
 
@@ -251,7 +308,9 @@ schema identifier, tool counts, exit classes, and similar bounded facts.
    trusted adapters/resolvers (the Honcho workspace queue route is the first
    concrete case).
 5. **Arbitrary plugin-provided probe code.** Probe behavior must be declared and
-   bounded, not supplied by probed plugins.
+   bounded, not supplied by probed plugins. Plugin-code execution inside
+   regular scheduled checks is likewise rejected: plugin discovery imports
+   executable Python and stays out of the regular budget (Decision 9).
 6. **Probe output text as the contract.** Structured claims and reason codes are
    the contract; human text is presentation only.
 
