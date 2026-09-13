@@ -7,6 +7,12 @@ Agent integrations. It owns discovery, integration health checks, fallback
 tracking, watchdog modules, and their deployment manifests. Hermes Agent source
 and user secrets are outside this repository.
 
+Ownership split: Hermes owns interpretation of its runtime configuration —
+provider routing, profile selection, credential resolution, and
+protocol-specific runtime semantics. Argus owns discovery orchestration,
+independent external verification policy, watchdog state, hysteresis/alerts,
+and reporting.
+
 ## Source of truth and deployment
 
 - Repository scripts, module manifests, `registry.yaml`, and `deploy.sh` are
@@ -23,7 +29,13 @@ and user secrets are outside this repository.
   print, or persist credential values, Authorization headers, or provider
   response bodies.
 - Integration statuses remain distinct: `ok`, `fail`, `unconfigured`, and
-  `skipped`. Presence of a key is not proof that an external API works.
+  `skipped` (legacy projection), with canonical verdicts `healthy`, `failed`,
+  `unknown`, `unconfigured`, `skipped` per ADR 0001. Presence of a key is not
+  proof that an external API works. A passing check must state which evidence
+  claims it proved; transport, key presence, anonymous responses, `404`s, or
+  rate limits are never promoted into authentication or semantic success
+  without an explicit contract. `unknown`, `unconfigured`, and `skipped` never
+  reset a failure counter.
 - Authenticated semantic checks must declare their method, expected status,
   content type/schema, and safe side-effect boundary. Regular checks are
   read-only; deep/active checks are separate.
@@ -64,6 +76,8 @@ maintainer authorization and read-back verification.
 
 ## References
 
+- `docs/adr/0001-integration-evidence-policy.md` — evidence claims, canonical
+  verdicts, and side-effect policy.
 - `README.md` — user-facing product and module overview.
 - `CHANGELOG.md` — user-facing changes in Keep a Changelog format.
 - `scripts/gen-registry.py` — registry generation contract.
