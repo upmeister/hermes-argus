@@ -178,9 +178,204 @@ def facet_config_health(profile_id: str) -> dict:
 
 
 def facet_effective_config(profile_id: str) -> dict:
-    """Allowlisted effective-config fields for the coverage comparison
-    (step 3). Never broad serialization; never secret values."""
-    return _facet_unsupported("hermes_import_not_enabled_in_step1", "argus")
+    """Allowlisted effective-config fields for the coverage comparison.
+
+    api: hermes_cli.config.load_config_readonly + read_user_config_raw.
+    The safety boundary is allowlist extraction (contract section 5): no broad
+    serialization, and a value that was a ${VAR} template in the raw file is
+    emitted as a ref descriptor (var name + expansion fact) — the materialized
+    value never leaves the child even when expansion succeeded.
+    """
+    api = "hermes_cli.config.load_config_readonly + read_user_config_raw"
+    try:
+        from hermes_cli import config as hc
+    except Exception as exc:
+        return {"state": "compatibility_degraded", "authority": "hermes",
+                "api": api, "reason_code": "hermes_import_failed",
+                "data": {"exception_class": type(exc).__name__}}
+    try:
+        loaded = hc.load_config_readonly()
+    except Exception as exc:
+        return {"state": "error", "authority": "hermes", "api": api,
+                "reason_code": "load_config_raised",
+                "data": {"exception_class": type(exc).__name__}}
+    if not isinstance(loaded, dict):
+        return {"state": "error", "authority": "hermes", "api": api,
+                "reason_code": "load_failed", "data": {}}
+    try:
+        raw = hc.read_user_config_raw()
+    except Exception:
+        raw = None  # broken raw file: everything loaded came from fallback
+    if not isinstance(raw, dict):
+        raw = {}
+
+    data = {
+        "model_primary": _emit_field(raw, loaded, ("model", "default"),
+                                     ("model", "model")),
+        "fallback_providers": _emit_fallback(loaded.get("fallback_providers")),
+        "providers": _emit_providers(loaded.get("providers")),
+        "mcp_servers": _emit_mcp_servers(loaded.get("mcp_servers")),
+        "auxiliary": _emit_auxiliary(raw, loaded),
+    }
+    return {"state": "ok", "authority": "hermes", "api": api,
+            "reason_code": "allowlist_extracted", "data": data}
+
+
+MAX_COLLECTION_ITEMS = 50
+
+
+def _template_var(value) -> str | None:
+    """Variable name when the value is a ${VAR} template, else None."""
+    if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+        return value[2:-1]
+    return None
+
+
+def _emit_field(raw: dict, loaded: dict, *paths) -> dict:
+    """Emit one allowlisted field, comparing the raw template with the loaded
+    value so materialized env expansion never crosses the boundary."""
+    raw_val, loaded_val = None, None
+    for path in paths:
+        node = loaded
+        for key in path:
+            node = node.get(key) if isinstance(node, dict) else None
+            if node is None:
+                break
+        if node is not None:
+            loaded_val = node
+            break
+    for path in paths:
+        node = raw
+        for key in path:
+            node = node.get(key) if isinstance(node, dict) else None
+            if node is None:
+                break
+        if node is not None:
+            raw_val = node
+            break
+    var = _template_var(raw_val)
+    if var is not None:
+        return {"ref": True, "var": var, "expanded": loaded_val != raw_val,
+                "present": bool(loaded_val)}
+    if raw_val is None:
+        return {"value": loaded_val if isinstance(loaded_val, str) else None,
+                "source": "default"}
+    if raw_val == loaded_val:
+        return {"value": loaded_val if isinstance(loaded_val, str) else None,
+                "source": "user"}
+    return {"value": loaded_val if isinstance(loaded_val, str) else None,
+            "source": "canonicalized"}
+
+
+def _sanitize_url(value) -> str | None:
+    """scheme://host[:port]/path identity — no userinfo, query or fragment."""
+    if not isinstance(value, str) or not value:
+        return None
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return "<unparseable>"
+    if not parts.scheme or not parts.hostname:
+        return "<unparseable>"
+    netloc = parts.hostname
+    if ":" in netloc and not netloc.startswith("["):
+        netloc = f"[{netloc}]"
+    if parts.port:
+        netloc += f":{parts.port}"
+    return f"{parts.scheme}://{netloc}{parts.path.rstrip('/')}"
+
+
+def _emit_fallback(fallback) -> list:
+    """Fallback provider identities: names only for strings; sanitized
+    endpoint identity for mapping entries."""
+    out = []
+    if isinstance(fallback, list):
+        for entry in fallback[:MAX_COLLECTION_ITEMS]:
+            if isinstance(entry, str):
+                out.append({"name": entry})
+            elif isinstance(entry, dict):
+                name = entry.get("name") or entry.get("provider")
+                out.append({"name": name if isinstance(name, str) else None,
+                            "base_url_identity": _sanitize_url(entry.get("base_url"))})
+    return out
+
+
+def _emit_providers(providers) -> dict:
+    """Named providers: sanitized endpoint identity + credential metadata
+    (source class and presence only — never key values)."""
+    out = {}
+    if isinstance(providers, dict):
+        for name, entry in list(providers.items())[:MAX_COLLECTION_ITEMS]:
+            if not isinstance(entry, dict):
+                out[str(name)] = {"entry_class": "non_mapping"}
+                continue
+            auth, present = "none", False
+            if entry.get("api_key"):
+                auth, present = "inline_key", True
+            elif entry.get("key_env"):
+                auth = "key_env"
+            elif entry.get("key_cmd"):
+                auth = "key_cmd"
+            out[str(name)] = {"base_url_identity": _sanitize_url(entry.get("base_url")),
+                              "auth": auth, "credential_present": present}
+    return out
+
+
+def _emit_mcp_servers(servers) -> dict:
+    """Declared MCP servers: name + transport class + bounded command
+    metadata. Command lines are reduced to the basename; env blocks and args
+    values are never emitted (they routinely carry tokens)."""
+    out = {}
+    if isinstance(servers, dict):
+        for name, entry in list(servers.items())[:MAX_COLLECTION_ITEMS]:
+            if not isinstance(entry, dict):
+                out[str(name)] = {"transport": "unknown"}
+                continue
+            record: dict = {}
+            if entry.get("url"):
+                record["transport"] = "http"
+                record["url_identity"] = _sanitize_url(entry.get("url"))
+            elif entry.get("command"):
+                command = str(entry.get("command"))
+                record["transport"] = "stdio"
+                record["command_basename"] = command.rsplit("/", 1)[-1]
+                record["args_count"] = len(entry["args"]) \
+                    if isinstance(entry.get("args"), list) else 0
+            else:
+                record["transport"] = "unknown"
+            out[str(name)] = record
+    return out
+
+
+AUXILIARY_TASKS = ("title_generation", "compression", "vision", "embedding")
+
+
+def _emit_auxiliary(raw: dict, loaded: dict) -> dict:
+    """Allowlisted auxiliary-task model fields (with ${VAR} ref handling);
+    api_key presence only, never values."""
+    out = {}
+    aux_loaded = loaded.get("auxiliary") if isinstance(loaded.get("auxiliary"), dict) else {}
+    aux_raw = raw.get("auxiliary") if isinstance(raw.get("auxiliary"), dict) else {}
+    for task in AUXILIARY_TASKS:
+        task_loaded = aux_loaded.get(task) if isinstance(aux_loaded.get(task), dict) else {}
+        task_raw = aux_raw.get(task) if isinstance(aux_raw.get(task), dict) else {}
+        if not task_loaded and not task_raw:
+            continue
+        model_loaded = task_loaded.get("model")
+        model_raw = task_raw.get("model")
+        var = _template_var(model_raw)
+        if var is not None:
+            model_record = {"ref": True, "var": var,
+                            "expanded": model_loaded != model_raw,
+                            "present": bool(model_loaded)}
+        else:
+            model_record = {"value": model_loaded if isinstance(model_loaded, str) else None,
+                            "source": "user" if model_raw == model_loaded and model_raw else
+                                      ("default" if model_raw is None else "canonicalized")}
+        out[task] = {"model": model_record,
+                     "credential_present": bool(task_loaded.get("api_key"))}
+    return out
 
 
 def facet_runtime_route(profile_id: str) -> dict:

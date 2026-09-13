@@ -32,7 +32,8 @@ import harness  # noqa: E402
 
 PASS, FAIL = [], []
 
-CANARIES = [fixtures.CANARY_SECRET, fixtures.CANARY_ENV_VALUE]
+CANARIES = [fixtures.CANARY_SECRET, "C0_DUMMY_INLINE_KEY",
+            "C0_DUMMY_QUERY_TOKEN", "C0_DUMMY_AUX_MODEL_VALUE"]
 
 
 def check(probe_id: str, ok: bool, detail: str = "") -> None:
@@ -120,21 +121,28 @@ def probe_malformed_config_not_ok(home_root: Path, hp: str, src: Path, rev: str)
 
 
 def probe_secret_nondisclosure(home_root: Path, hp: str, src: Path, rev: str):
-    """MUST-PASS gate 2: the .env canary and the declared ${ENV} value never
-    reach stdout/stderr/envelope; metadata mode does not hydrate .env."""
-    home = fixtures.profile_envref(home_root)
-    # .env canary: profile_envref has no .env — use profile A for the dotenv
-    # canary and the envref profile for ${ENV}; both scans must be clean.
-    home_dotenv = fixtures.profile_a(home_root / ".." / "profile-a-canary")
+    """MUST-PASS gate 2: canary secrets never reach stdout/stderr/envelope —
+    the .env dotenv canary (metadata mode does not load it), the inline
+    api_key, the MCP URL query token and the declared ${ENV} value."""
+    home_dotenv = fixtures.profile_a(home_root)
+    home_envref = fixtures.profile_envref(home_root)
+    home_full = fixtures.profile_full_effective(home_root)
     envelope_a, res_a, _ = _run_facets(home_dotenv, "config_health", hp, src, rev)
-    env_extra = {fixtures.CANARY_ENV_VAR: fixtures.CANARY_ENV_VALUE}
-    envelope_b, res_b, _ = _run_facets(home, "config_health", hp, src, rev,
-                                       extra=env_extra)
-    blob_a = json.dumps(envelope_a, ensure_ascii=False) if envelope_a else ""
-    blob_b = json.dumps(envelope_b, ensure_ascii=False) if envelope_b else ""
-    leaks = harness.scan_canaries(CANARIES, blob_a, res_a["stdout"], res_a["stderr"],
-                                  blob_b, res_b["stdout"], res_b["stderr"])
-    ok = (envelope_a is not None and envelope_b is not None and leaks == [])
+    envelope_b, res_b, _ = _run_facets(home_envref, "effective_config", hp, src, rev,
+                                       extra={fixtures.CANARY_ENV_VAR:
+                                              fixtures.CANARY_ENV_VALUE})
+    envelope_c, res_c, _ = _run_facets(home_full, "effective_config", hp, src, rev,
+                                       extra={"C0_AUX_MODEL_VAR":
+                                              "C0_DUMMY_AUX_MODEL_VALUE"})
+    blobs = [json.dumps(e, ensure_ascii=False) if e else "" for e in
+             (envelope_a, envelope_b, envelope_c)]
+    leaks = harness.scan_canaries(
+        CANARIES, *blobs,
+        res_a["stdout"], res_a["stderr"],
+        res_b["stdout"], res_b["stderr"],
+        res_c["stdout"], res_c["stderr"])
+    ok = (envelope_a is not None and envelope_b is not None
+          and envelope_c is not None and leaks == [])
     check("mustpass_secret_nondisclosure_canary", ok, f"leaks={leaks}")
 
 
@@ -160,6 +168,74 @@ def probe_import_drift_fail_closed(home_root: Path, hp: str, src: Path, rev: str
               and ident.get("state") == "unsupported")
         detail = f"config_health={ch.get('state')}/{ch.get('reason_code')} identity={ident.get('state')}"
     check("mustpass_import_drift_fail_closed", ok, detail)
+
+
+def probe_effective_config_allowlist(home_root: Path, hp: str, src: Path, rev: str):
+    """MUST-PASS (facet C contract): only allowlisted fields are emitted;
+    a ${VAR} value stays in the child as a ref descriptor; credential values
+    and MCP env blocks never cross; URLs are sanitized."""
+    home = fixtures.profile_full_effective(home_root)
+    extra = {fixtures.CANARY_ENV_VAR: fixtures.CANARY_ENV_VALUE,
+             "C0_AUX_MODEL_VAR": "C0_DUMMY_AUX_MODEL_VALUE"}
+    envelope, result, reason = _run_facets(home, "effective_config", hp, src,
+                                           rev, extra=extra)
+    ok, detail = False, reason
+    if envelope:
+        data = envelope["facets"]["effective_config"]["data"]
+        blob = json.dumps(envelope, ensure_ascii=False)
+        leaks = harness.scan_canaries(CANARIES, blob, result["stdout"],
+                                      result["stderr"])
+        aux = data["auxiliary"].get("title_generation", {}).get("model", {})
+        ok = (
+            data["model_primary"] == {"value": "alpha-provider/model-a",
+                                      "source": "user"}
+            and data["fallback_providers"] == [{"name": "beta-provider"}]
+            and data["providers"]["alpha"] == {"base_url_identity":
+                                               "https://alpha.invalid/v1",
+                                               "auth": "key_env",
+                                               "credential_present": False}
+            and data["providers"]["inline"]["auth"] == "inline_key"
+            and data["providers"]["inline"]["credential_present"] is True
+            and data["mcp_servers"]["time"] == {"transport": "stdio",
+                                                "command_basename": "uvx",
+                                                "args_count": 1}
+            and data["mcp_servers"]["notion"]["transport"] == "http"
+            and data["mcp_servers"]["notion"]["url_identity"] \
+                == "https://mcp.notion.invalid/mcp"
+            and aux.get("ref") is True and aux.get("var") == "C0_AUX_MODEL_VAR"
+            and aux.get("expanded") is True and aux.get("present") is True
+            and leaks == []
+        )
+        detail = f"leaks={leaks} primary={data['model_primary']} aux={aux}"
+    check("mustpass_effective_config_allowlist", ok, detail)
+
+
+def probe_env_expansion_behavior(home_root: Path, hp: str, src: Path, rev: str):
+    """OBSERVATION (contract section 6): ${ENV} behavior on an allowlisted
+    path — declared vs undeclared variable. The materialized value must stay
+    in the child in both cases; only the ref descriptor is emitted."""
+    home = fixtures.profile_envref(home_root)
+    declared, res_d, _ = _run_facets(home, "effective_config", hp, src, rev,
+                                     extra={fixtures.CANARY_ENV_VAR:
+                                            fixtures.CANARY_ENV_VALUE})
+    undeclared, res_u, _ = _run_facets(home, "effective_config", hp, src, rev)
+    ok, detail = False, ""
+    if declared and undeclared:
+        ref_d = declared["facets"]["effective_config"]["data"]["model_primary"]
+        ref_u = undeclared["facets"]["effective_config"]["data"]["model_primary"]
+        blob_d = json.dumps(declared, ensure_ascii=False)
+        blob_u = json.dumps(undeclared, ensure_ascii=False)
+        leaks = harness.scan_canaries(CANARIES, blob_d, blob_u,
+                                      res_d["stdout"], res_d["stderr"],
+                                      res_u["stdout"], res_u["stderr"])
+        ok = (ref_d.get("ref") is True and ref_d.get("expanded") is True
+              and ref_d.get("present") is True
+              and ref_u.get("ref") is True and ref_u.get("expanded") is False
+              and leaks == [])
+        detail = (f"declared={ref_d} undeclared={ref_u} leaks={leaks}")
+    else:
+        detail = f"declared={_short(res_d)} undeclared={_short(res_u)}"
+    check("observation_env_expansion_behavior", ok, detail)
 
 
 def probe_write_effects_bounded(home_root: Path, hp: str, src: Path, rev: str):
@@ -208,6 +284,8 @@ def main() -> int:
     probe_malformed_config_not_ok(home_root, hp, Path(src), rev)
     probe_secret_nondisclosure(home_root, hp, Path(src), rev)
     probe_import_drift_fail_closed(home_root, hp, Path(src), rev)
+    probe_effective_config_allowlist(home_root, hp, Path(src), rev)
+    probe_env_expansion_behavior(home_root, hp, Path(src), rev)
     probe_write_effects_bounded(home_root, hp, Path(src), rev)
     print(f"\nc0-hermes-probes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

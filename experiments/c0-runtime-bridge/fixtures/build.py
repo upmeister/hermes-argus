@@ -14,9 +14,31 @@ CANARY_ENV_VALUE = "c0-declared-env-value"
 
 PROFILE_A_YAML = 'model:\n  default: "alpha-provider/model-a"\n'
 PROFILE_B_YAML = 'model:\n  default: "beta-provider/model-b"\n'
-PROFILE_ENVREF_YAML = ('model:\n  default: "alpha-provider/model-a"\n'
-                       'report:\n  ref: "${C0_CANARY_ENV}"\n')
+PROFILE_ENVREF_YAML = 'model:\n  default: "${C0_CANARY_ENV}"\n'
 MALFORMED_YAML = 'model:\n  default: "broken\n'
+
+FULL_EFFECTIVE_YAML = (
+    'model:\n'
+    '  default: "alpha-provider/model-a"\n'
+    'fallback_providers:\n'
+    '  - "beta-provider"\n'
+    'providers:\n'
+    '  alpha:\n'
+    '    base_url: "https://alpha.invalid/v1"\n'
+    '    key_env: "ALPHA_API_KEY"\n'
+    '  inline:\n'
+    '    base_url: "https://inline.invalid/v1"\n'
+    '    api_key: "C0_DUMMY_INLINE_KEY"\n'
+    'mcp_servers:\n'
+    '  time:\n'
+    '    command: "uvx"\n'
+    '    args: ["mcp-server-time"]\n'
+    '  notion:\n'
+    '    url: "https://mcp.notion.invalid/mcp?token=C0_DUMMY_QUERY_TOKEN"\n'
+    'auxiliary:\n'
+    '  title_generation:\n'
+    '    model: "${C0_AUX_MODEL_VAR}"\n'
+)
 
 
 def _home(root: Path, name: str, config_yaml: str | None,
@@ -43,9 +65,19 @@ def profile_b(root: Path) -> Path:
 
 
 def profile_envref(root: Path) -> Path:
-    """Config referencing ${C0_CANARY_ENV}; the variable itself comes from the
-    allowlisted child environment, not from any secret store."""
+    """Config referencing ${C0_CANARY_ENV} on the allowlisted primary-model
+    path; the variable itself comes from the allowlisted child environment,
+    never from a secret store."""
     return _home(root, "profile-envref", PROFILE_ENVREF_YAML, None)
+
+
+def profile_full_effective(root: Path) -> Path:
+    """Rich allowlist fixture: primary/fallback models, named providers
+    (key_env + inline api_key), stdio and http MCP servers (the http URL
+    carries a dummy query token), an auxiliary model as a ${VAR} template,
+    and a canary .env that metadata mode never loads."""
+    return _home(root, "profile-full", FULL_EFFECTIVE_YAML,
+                 f"ALPHA_API_KEY={CANARY_SECRET}\n")
 
 
 def profile_malformed(root: Path) -> Path:

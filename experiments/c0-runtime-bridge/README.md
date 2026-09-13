@@ -34,6 +34,27 @@ python3 experiments/c0-runtime-bridge/probes.py
 Works on POSIX and Windows. The same probes are re-run on `peetna-aws` before
 any Hermes-backed facet is attempted.
 
+## Status — step 3 (effective_config allowlist)
+
+`facet_effective_config` emits only allowlisted fields for the coverage
+comparison — primary model, fallback provider names, named providers
+(sanitized `scheme://host/path` endpoint identity + credential source class
+and presence, never key values), declared MCP servers (transport class,
+command basename, args count; URL sanitized), auxiliary task models. Values
+that are `${VAR}` templates in the raw file are emitted as ref descriptors
+(`var` name + `expanded`/`present` booleans) — the materialized value never
+leaves the child even when expansion succeeded.
+
+Server results (9 pass / 0 fail, `probes_hermes.py`):
+
+- `mustpass_effective_config_allowlist` — exact allowlist emission; the
+  inline `api_key`, the MCP URL query token, the aux ${VAR} value and the
+  dotenv canary are all absent from every channel; URLs sanitized;
+- `observation_env_expansion_behavior` — declared variable:
+  `expanded=true, present=true`; undeclared: `expanded=false` (Hermes
+  preserves the `${VAR}` template); value stays in the child in both cases;
+- all step-2 probes remain green (no regressions).
+
 ## Status — step 2 (identity + config_health under containment)
 
 Server setup (dedicated, production untouched): Hermes clone at the production
