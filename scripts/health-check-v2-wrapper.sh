@@ -12,6 +12,9 @@
 # Architecture mirrors integration-discover.py / -wrapper.sh: stateless engine
 # + stateful alerting shell. Registry missing (engine exit 2) = config problem,
 # logged without alerting.
+# D0a dual-read: schema-2 reports are judged by the canonical ADR 0001 verdict,
+# legacy reports by the v1 status. unknown/unconfigured/skipped preserve the
+# failure counter — never a recovery; a malformed v2 report is rejected whole.
 
 set -u
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
@@ -42,12 +45,27 @@ fi
 if ! python3 - "$REPORT" <<'PYEOF'
 import json, sys
 from pathlib import Path
+
+VERDICTS = {"healthy", "failed", "unknown", "unconfigured", "skipped"}
 try:
     report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 except Exception:
     raise SystemExit(1)
 if not isinstance(report, dict) or not isinstance(report.get("checks"), list):
     raise SystemExit(1)
+schema = report.get("schema", 1)
+if schema not in (1, 2):
+    raise SystemExit(1)  # unknown future schema: reject the whole report
+if schema == 2:
+    # ADR 0001: a malformed v2 report is rejected entirely — state is
+    # preserved and a stale report is never treated as recovery.
+    if not isinstance(report.get("summary"), dict) \
+            or not isinstance(report.get("inventory"), dict):
+        raise SystemExit(1)
+    for c in report["checks"]:
+        if not isinstance(c, dict) or not isinstance(c.get("id"), str) \
+                or c.get("verdict") not in VERDICTS:
+            raise SystemExit(1)
 PYEOF
 then
     echo "[$(date -Is)] report invalid, skip alerting and preserve state" >> "$LOG"
@@ -71,13 +89,24 @@ except Exception:
 
 groups = {"degraded": [], "recovered": [], "watching": []}
 live = set()
+# Dual-read (D0a): schema-2 reports are judged by the canonical ADR 0001
+# verdict; legacy reports are projected conservatively. `unknown` — and any
+# unreadable legacy status — preserves the failure counter: it is never a
+# recovery.
+legacy_verdict = {"ok": "healthy", "fail": "failed",
+                  "unconfigured": "unconfigured", "skipped": "skipped"}
+is_v2 = report.get("schema") == 2
 for c in report.get("checks", []):
     cid = c["id"]
     live.add(cid)
     prev = state.get(cid, 0)
     label = html.escape(str(c.get("label", cid)))
     detail = html.escape(str(c.get("detail", "")))
-    if c["status"] == "fail":
+    if is_v2:
+        verdict = c.get("verdict")
+    else:
+        verdict = legacy_verdict.get(c.get("status"), "unknown")
+    if verdict == "failed":
         state[cid] = prev + 1
         if state[cid] == 2:
             # hysteresis: alert exactly once on the 2nd consecutive fail
@@ -85,14 +114,15 @@ for c in report.get("checks", []):
         elif state[cid] > 2 and state[cid] % 12 == 0:
             groups["watching"].append(
                 f"⏳ {label}: still failing ({state[cid]} runs): {detail}")
-    elif c["status"] in ("unconfigured", "skipped"):
-        # config drift or an intentionally skipped check is NOT recovery:
-        # preserve the previous failure counter.
+    elif verdict in ("unknown", "unconfigured", "skipped"):
+        # config drift, an intentionally skipped check, or an unknown state is
+        # NOT recovery: preserve the previous failure counter.
         pass
-    else:
+    elif verdict == "healthy":
         if prev >= 2:
             groups["recovered"].append(f"🟢 {label} ({detail})")
         state[cid] = 0
+    # validated reports cannot carry any other verdict value
 
 # prune checks that disappeared from the snapshot
 state = {k: v for k, v in state.items() if k in live}

@@ -424,14 +424,29 @@ def handle_integrations_check() -> str:
             report = json.load(f)
         updated = datetime.fromisoformat(report.get("updated", "")).timestamp()
         if now - updated < 26 * 3600:
-            fails = [c for c in report.get("checks", []) if c.get("status") == "fail"]
+            # D0a dual-read: schema-2 reports are judged by the canonical ADR
+            # 0001 verdict; legacy reports keep the v1 status field.
+            is_v2 = report.get("schema") == 2
+            st_key = "verdict" if is_v2 else "status"
+            fail_val = "failed" if is_v2 else "fail"
+            checks = report.get("checks", [])
+            fails = [c for c in checks if c.get(st_key) == fail_val]
+            unknowns = [c for c in checks if c.get(st_key) == "unknown"] \
+                if is_v2 else []
+            summary = report.get("summary") or {}
+            ok_count = summary.get("healthy", report.get("ok", 0)) if is_v2 \
+                else report.get("ok", 0)
             age = datetime.fromisoformat(report["updated"]).astimezone().strftime("%H:%M")
             head = (f"🩺 Интеграции (отчёт {age}): "
-                    f"{report.get('ok', 0)}/{report.get('total', 0)} ok")
-            if not fails:
+                    f"{ok_count}/{report.get('total', 0)} ok")
+            if not fails and not unknowns:
                 return f"✅ Argus: {head} — всё в порядке"
             probs = [f"❌ {c.get('label')}: {c.get('detail')}" for c in fails[:8]]
-            extra = len(fails) - 8
+            room = 8 - len(probs)
+            if room > 0 and unknowns:
+                probs.extend(f"⚠️ {c.get('label')}: {c.get('detail')}"
+                             for c in unknowns[:room])
+            extra = len(fails) + len(unknowns) - 8
             if extra > 0:
                 probs.append(f"…и ещё {extra}")
             return head + "\n" + "\n".join(probs)
@@ -480,26 +495,36 @@ def handle_integrations_all() -> str:
         registry = {}
     kit_group = {k.get("key"): k.get("group", "watchdog")
                  for k in registry.get("kit_entries", []) if isinstance(k, dict)}
-    free_models = report.get("free_models", {})
+    inventory = report.get("inventory") or {}
+    free_models = inventory.get("free_models", report.get("free_models", {}))
 
     marks = {"ok": "✅", "fail": "❌", "unconfigured": "⚪"}
     checks = report.get("checks", [])
+    # D0a dual-read: schema-2 reports use the canonical ADR 0001 verdict;
+    # legacy reports keep v1 statuses. Unknown renders ⚠️, skipped ⏸.
+    is_v2 = report.get("schema") == 2
+    st_key = "verdict" if is_v2 else "status"
+    ok_val, fail_val = ("healthy", "failed") if is_v2 else ("ok", "fail")
     # Merge provider env + root http-alive checks into one line when healthy
     # (fix 2026-09-07: "provider X" + "provider X root" read as duplicates)
     ids = {c.get("id") for c in checks}
     root_ok = {c["id"][:-5]: c.get("detail", "") for c in checks
-               if c.get("id", "").endswith("#http") and c.get("status") == "ok"}
+               if c.get("id", "").endswith("#http") and c.get(st_key) == ok_val}
     buckets: dict[str, list[str]] = {}
     for c in checks:
-        cid, st = c.get("id", ""), c.get("status", "?")
+        cid, st = c.get("id", ""), c.get(st_key, "?")
         if cid.endswith("#http"):
             base = cid[:-5]
-            if base in ids and c.get("status") == "ok":
+            if base in ids and st == ok_val:
                 continue  # healthy root merged into the provider line below
         label = c.get("label", cid)
         detail = c.get("detail", "")
-        if st == "fail":
+        if st == fail_val:
             line = f"❌ {label} — {detail}"
+        elif is_v2 and st == "unknown":
+            line = f"⚠️ {label} — {detail}"
+        elif is_v2 and st == "skipped":
+            line = f"⏸ {label} — пропущено"
         elif st == "unconfigured":
             line = f"⚪ {label} — не настроено (опционально)"
         else:
@@ -537,9 +562,23 @@ def handle_integrations_all() -> str:
     except Exception:
         pass
 
+    if is_v2:
+        summary = report.get("summary") or {}
+        ok_n = summary.get("healthy", 0)
+        fail_n = summary.get("failed", 0)
+        unconf_n = summary.get("unconfigured", 0)
+        unknown_n = summary.get("unknown", 0)
+        skipped_n = summary.get("skipped", 0)
+    else:
+        ok_n, fail_n, unconf_n = (report.get("ok", 0), report.get("fail", 0),
+                                  report.get("unconfigured", 0))
+        unknown_n = skipped_n = 0
+    counts = (f"✅ {ok_n} · ❌ {fail_n} · ⚪ {unconf_n}"
+              + (f" · ⚠️ {unknown_n}" if unknown_n else "")
+              + (f" · ⏸ {skipped_n}" if skipped_n else "")
+              + f" из {report.get('total', 0)}")
     lines = [f"👁 Argus наблюдает — интеграции (отчёт {age})" if age else "👁 Argus наблюдает — интеграции",
-             f"✅ {report.get('ok', 0)} · ❌ {report.get('fail', 0)} · "
-             f"⚪ {report.get('unconfigured', 0)} из {report.get('total', 0)}"]
+             counts]
     ams = report.get("active_models") or []
     if ams:
         lines.append("")
