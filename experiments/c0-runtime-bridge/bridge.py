@@ -223,6 +223,21 @@ def facet_effective_config(profile_id: str) -> dict:
 
 MAX_COLLECTION_ITEMS = 50
 
+# Upstream placeholder: the resolver reports "no key found" as the literal
+# "no-key-required" (hermes_cli/model_switch.py, config_migrations.py at the
+# tested revision). Known placeholders are classified as such, not counted
+# as materialized credentials. The credential value is inspected in the
+# child for this classification only and is never serialized.
+NO_KEY_PLACEHOLDERS = {"no-key-required", "no-key"}
+
+
+def _credential_tri_state(api_key) -> str:
+    if not (isinstance(api_key, str) and api_key.strip()):
+        return "no"
+    if api_key in NO_KEY_PLACEHOLDERS:
+        return "placeholder"
+    return "yes"
+
 
 def _template_var(value) -> str | None:
     """Variable name when the value is a ${VAR} template, else None."""
@@ -379,9 +394,85 @@ def _emit_auxiliary(raw: dict, loaded: dict) -> dict:
 
 
 def facet_runtime_route(profile_id: str) -> dict:
-    """Canonical route resolution metadata (step 4); regular-safe only if the
-    resolver provably stays inside the regular-mode effect budget."""
-    return _facet_unsupported("hermes_import_not_enabled_in_step1", "argus")
+    """Experimental canonical route resolution (contract section 5, facet D).
+
+    api: hermes_cli.runtime_provider.resolve_runtime_provider. Called only
+    with an explicit requested provider name from the effective config — a
+    blind "auto" resolution could walk the OAuth/credential ladder and is out
+    of the regular experiment budget. Emits only the allowlisted non-secret
+    fields; the resolver's returned credential value is inspected in the
+    child solely to record the materialization fact and is then discarded —
+    it never crosses the boundary. Resolver effects are captured by the child
+    audit hook and recorded in the envelope.
+    """
+    api = "hermes_cli.runtime_provider.resolve_runtime_provider"
+    try:
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+    except Exception as exc:
+        return {"state": "compatibility_degraded", "authority": "hermes",
+                "api": api, "reason_code": "hermes_import_failed",
+                "data": {"exception_class": type(exc).__name__}}
+    try:
+        from hermes_cli import config as hc
+        loaded = hc.load_config_readonly()
+    except Exception as exc:
+        return {"state": "error", "authority": "hermes", "api": api,
+                "reason_code": "effective_config_unavailable",
+                "data": {"exception_class": type(exc).__name__}}
+    if not isinstance(loaded, dict):
+        return {"state": "error", "authority": "hermes", "api": api,
+                "reason_code": "load_failed", "data": {}}
+    model_cfg = loaded.get("model") if isinstance(loaded.get("model"), dict) else {}
+    target_model = str(model_cfg.get("default") or model_cfg.get("model") or "") or None
+    providers = loaded.get("providers") if isinstance(loaded.get("providers"), dict) else {}
+    if not providers:
+        return {"state": "unsupported", "authority": "hermes", "api": api,
+                "reason_code": "no_named_providers", "data": {}}
+
+    def _s(value) -> str | None:
+        return value if isinstance(value, str) else None
+
+    routes: dict = {}
+    ok_count = 0
+    error_count = 0
+    for name in list(providers)[:MAX_COLLECTION_ITEMS]:
+        try:
+            runtime = resolve_runtime_provider(requested=str(name),
+                                               target_model=target_model)
+        except Exception as exc:
+            routes[str(name)] = {"state": "error",
+                                 "exception_class": type(exc).__name__}
+            error_count += 1
+            continue
+        if not isinstance(runtime, dict):
+            routes[str(name)] = {"state": "error",
+                                 "exception_class": "NonDictRuntime"}
+            error_count += 1
+            continue
+        # The resolver result may carry a credential value or an upstream
+        # no-key placeholder. Classification happens in the child; the value
+        # itself is discarded and never serialized.
+        credential_present = _credential_tri_state(runtime.get("api_key"))
+        routes[str(name)] = {
+            "state": "ok",
+            "provider": _s(runtime.get("provider")),
+            "requested_provider": _s(runtime.get("requested_provider")),
+            "model": target_model,
+            "api_mode": _s(runtime.get("api_mode")),
+            "base_url_identity": _sanitize_url(runtime.get("base_url")),
+            "credential_present": credential_present,
+            "credential_source": _s(runtime.get("source")),
+        }
+        ok_count += 1
+    if ok_count and error_count:
+        state = "partial"
+    elif error_count:
+        state = "error"
+    else:
+        state = "ok"
+    return {"state": state, "authority": "hermes", "api": api,
+            "reason_code": "resolver_called",
+            "data": {"routes": routes}}
 
 
 def facet_provider_registry(profile_id: str) -> dict:

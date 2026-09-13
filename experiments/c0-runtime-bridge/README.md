@@ -34,6 +34,40 @@ python3 experiments/c0-runtime-bridge/probes.py
 Works on POSIX and Windows. The same probes are re-run on `peetna-aws` before
 any Hermes-backed facet is attempted.
 
+## Status — step 4 (runtime_route under containment)
+
+`facet_runtime_route` calls the canonical resolver
+(`resolve_runtime_provider`) only with explicit requested provider names from
+the effective config (a blind "auto" resolution could walk the OAuth ladder
+and is out of the regular experiment budget). Emits allowlisted metadata per
+named provider: `provider` class, `requested_provider`, model, `api_mode`,
+sanitized endpoint identity, and a **tri-state** `credential_present`
+(`no` / `placeholder` / `yes`) — the resolver's returned credential value is
+classified in the child and discarded, never serialized.
+
+Findings (server, Hermes `b6b53c69`):
+
+- the resolver returns the upstream **`no-key-required` placeholder** when a
+  named custom provider has no key — a naive `bool(api_key)` misreads it as a
+  materialized credential (caught and fixed in this step; upstream itself
+  normalizes it in `model_switch.py` / `config_migrations.py`);
+- an inline `api_key` provider materializes to `credential_present: "yes"`
+  with `credential_source: pool:custom:inline`; the value never leaves the
+  child (canary scans clean);
+- in an earlier run (before the HOME fix below) resolver execution wrote
+  `SOUL.md`, `backups/config/...`, `auth.lock` and `auth.json.tmp.*` into the
+  fixture home; in the final run no writes were observed — both facts are
+  recorded for the effect-budget decision;
+- **isolation hardening**: without `HOME` in the child environment,
+  `Path.home()` falls back to the passwd entry (the real maintainer home) —
+  any Hermes code resolving `~` could escape the fixture. `build_child_env`
+  now sets `HOME` to the fixture home;
+- no network and no additional process spawns were observed for the named
+  custom provider path (`network=[]`, `spawn=[]`).
+
+Server results: `probes_hermes.py` — **11 pass / 0 fail**; containment
+`probes.py` 9/9 on both platforms.
+
 ## Status — step 3 (effective_config allowlist)
 
 `facet_effective_config` emits only allowlisted fields for the coverage

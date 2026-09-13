@@ -238,6 +238,65 @@ def probe_env_expansion_behavior(home_root: Path, hp: str, src: Path, rev: str):
     check("observation_env_expansion_behavior", ok, detail)
 
 
+def probe_runtime_route_metadata_allowlist(home_root: Path, hp: str, src: Path,
+                                           rev: str):
+    """MUST-PASS (facet D contract): the canonical resolver runs under
+    containment; only allowlisted non-secret metadata is emitted; the
+    materialized credential value never crosses the boundary."""
+    home = fixtures.profile_full_effective(home_root)
+    envelope, result, reason = _run_facets(home, "runtime_route", hp, src, rev)
+    ok, detail = False, reason
+    if envelope:
+        facet = envelope["facets"]["runtime_route"]
+        routes = facet.get("data", {}).get("routes", {})
+        blob = json.dumps(envelope, ensure_ascii=False)
+        leaks = harness.scan_canaries(CANARIES, blob, result["stdout"],
+                                      result["stderr"])
+        inline = routes.get("inline", {})
+        alpha = routes.get("alpha", {})
+        ok = (
+            facet.get("state") in ("ok", "partial")
+            and inline.get("state") == "ok"
+            and inline.get("provider") == "custom"
+            and inline.get("requested_provider") == "inline"
+            and inline.get("credential_present") == "yes"
+            and inline.get("credential_source") == "pool:custom:inline"
+            and inline.get("base_url_identity") == "https://inline.invalid/v1"
+            and isinstance(inline.get("api_mode"), str)
+            and bool(inline["api_mode"])
+            and alpha.get("credential_present") == "placeholder"
+            and leaks == []
+        )
+        detail = (f"state={facet.get('state')} inline={inline} "
+                  f"alpha_cred={alpha.get('credential_present')} leaks={leaks}")
+    check("mustpass_runtime_route_metadata_allowlist", ok, detail)
+
+
+def probe_runtime_route_effects_observed(home_root: Path, hp: str, src: Path,
+                                         rev: str):
+    """OBSERVATION (handoff step 4): the facts the facet decision needs —
+    did resolver execution spawn processes, touch the network, write state?
+    Effects are captured by the child audit hook; a RED here is the correct
+    result for regular-safety and narrows the facet, not the rules."""
+    home = fixtures.profile_full_effective(home_root)
+    envelope, result, reason = _run_facets(home, "runtime_route", hp, src, rev)
+    ok, detail = False, reason
+    if envelope:
+        effects = envelope.get("effects", {})
+        facet = envelope["facets"]["runtime_route"]
+        routes = facet.get("data", {}).get("routes", {})
+        ok = (isinstance(effects.get("network"), list)
+              and isinstance(effects.get("process_spawn"), list)
+              and isinstance(effects.get("writes"), list)
+              and isinstance(routes, dict) and bool(routes))
+        detail = (f"network={effects.get('network')} "
+                  f"spawn={effects.get('process_spawn')} "
+                  f"writes={effects.get('writes')} "
+                  f"routes={sorted(routes)} "
+                  f"alpha_cred={routes.get('alpha', {}).get('credential_present')}")
+    check("observation_runtime_route_effects_observed", ok, detail)
+
+
 def probe_write_effects_bounded(home_root: Path, hp: str, src: Path, rev: str):
     """Gate 9 evidence + OBSERVATION: record exactly what a config load
     persists. Writes must stay inside the fixture home (bounded); the fact
@@ -286,6 +345,8 @@ def main() -> int:
     probe_import_drift_fail_closed(home_root, hp, Path(src), rev)
     probe_effective_config_allowlist(home_root, hp, Path(src), rev)
     probe_env_expansion_behavior(home_root, hp, Path(src), rev)
+    probe_runtime_route_metadata_allowlist(home_root, hp, Path(src), rev)
+    probe_runtime_route_effects_observed(home_root, hp, Path(src), rev)
     probe_write_effects_bounded(home_root, hp, Path(src), rev)
     print(f"\nc0-hermes-probes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

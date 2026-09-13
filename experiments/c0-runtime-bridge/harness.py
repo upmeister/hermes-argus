@@ -47,12 +47,17 @@ def build_child_env(hermes_home, extra: dict | None = None) -> dict:
     """Build the child environment from the allowlist + declared variables.
 
     `hermes_home` is always explicit: the child must never infer a profile
-    from ambient state. `extra` carries declared fixture variables (for
-    example C0_CANARY_ENV); it cannot remove HERMES_HOME or the bridge flags.
+    from ambient state. HOME is pointed at the fixture home deliberately:
+    without HOME, posix Path.home()/expanduser fall back to the passwd entry
+    (the real maintainer home), which would defeat profile isolation for any
+    Hermes code that resolves "~" (observed in step 4). `extra` carries
+    declared fixture variables (for example C0_CANARY_ENV); it cannot remove
+    HERMES_HOME, HOME or the bridge flags.
     """
     env = {k: v for k, v in os.environ.items() if k in BASE_ENV_ALLOWLIST}
     env.update(BRIDGE_ENV)
     env["HERMES_HOME"] = str(hermes_home)
+    env["HOME"] = str(hermes_home)
     for key, value in (extra or {}).items():
         env[str(key)] = str(value)
     return env
