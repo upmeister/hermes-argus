@@ -34,6 +34,43 @@ python3 experiments/c0-runtime-bridge/probes.py
 Works on POSIX and Windows. The same probes are re-run on `peetna-aws` before
 any Hermes-backed facet is attempted.
 
+## Status — step 6 (coverage comparison)
+
+`coverage.py` runs static Argus discovery (`integration-discover.py` @ the
+recorded Argus revision, pointed at the fixture via `HERMES_DIR`) and the
+bridge facets against the same fixtures, comparing with hand-coded expected
+facts. Server result: **7/7 scenarios executed — parity 3, bridge_gain 3,
+static_gain 1** (full JSON: `~/c0-spike/coverage-results.json` on
+peetna-aws).
+
+- parity: providers_named, mcp_declarations, env_ref (+ the canonical
+  expansion fact on the bridge side);
+- bridge_gain: model_refs (static misses `fallback_providers` and
+  `auxiliary.title_generation`), malformed_config (canonical
+  `partial/config_parse_fallback` vs an unstructured static-discover crash),
+  user_plugin (runtime-registered provider visible only to the bridge —
+  with the facet-E code-execution RED caveat);
+- static_gain: oauth_metadata (out of C0 scope for the bridge, honestly
+  recorded).
+
+## Status — step 5 (provider_registry negative control)
+
+`facet_provider_registry` calls `providers.list_providers()` (lazy
+`_discover_providers`: entry points → bundled → `$HERMES_HOME/plugins/
+model-providers/<name>/` exec_module → legacy files) and emits bounded
+catalog metadata (count, name sample, sentinel registration fact).
+
+Sentinel probes (user plugins in the fixture home):
+
+- **code execution proven**: a marker-writing user plugin is imported by
+  discovery (marker written, sentinel registered into the 49-provider
+  registry) — the expected RED for the regular-mode decision;
+- a raising user plugin is **silently swallowed** by discovery
+  (`state=ok / discovery_executed`) — the degradation is not visible in the
+  facet, envelope stays valid;
+- a hanging user plugin is killed by the bounded timeout deterministically —
+  gate 3 holds on the real plugin path.
+
 ## Status — step 4 (runtime_route under containment)
 
 `facet_runtime_route` calls the canonical resolver
