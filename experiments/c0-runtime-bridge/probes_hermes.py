@@ -58,7 +58,7 @@ def _run_facets(home: Path, facets: str, hermes_python: str, hermes_src: Path,
 def probe_identity_facet(home_root: Path, hp: str, src: Path, rev: str):
     """MUST-PASS: identity facet reports the Hermes manifest version and the
     recorded source revision; no absolute home paths are serialized."""
-    home = fixtures.profile_a(home_root)
+    home = fixtures.profile_a(home_root / "identity")
     envelope, result, reason = _run_facets(home, "identity", hp, src, rev)
     blob = json.dumps(envelope, ensure_ascii=False) if envelope else ""
     ok = (envelope is not None
@@ -76,8 +76,8 @@ def probe_profile_isolation_ab_sequential(home_root: Path, hp: str, src: Path,
                                           rev: str):
     """MUST-PASS gate 1: sequential children for profiles A and B see only
     their own explicit home; no cross-profile bleed."""
-    home_a = fixtures.profile_a(home_root)
-    home_b = fixtures.profile_b(home_root)
+    home_a = fixtures.profile_a(home_root / "ab")
+    home_b = fixtures.profile_b(home_root / "ab")
     env_a, res_a, _ = _run_facets(home_a, "config_health", hp, src, rev)
     env_b, res_b, _ = _run_facets(home_b, "config_health", hp, src, rev)
     ok = False
@@ -95,7 +95,7 @@ def probe_profile_isolation_ab_sequential(home_root: Path, hp: str, src: Path,
 def probe_explicit_home_respected(home_root: Path, hp: str, src: Path, rev: str):
     """MUST-PASS gate 7: the child sees only the requested HERMES_HOME —
     the allowlisted environment strips any ambient configuration source."""
-    home = fixtures.profile_a(home_root)
+    home = fixtures.profile_a(home_root / "explicit")
     envelope, result, reason = _run_facets(home, "config_health", hp, src, rev)
     ok = (envelope is not None
           and envelope["facets"]["config_health"]["state"] == "ok"
@@ -108,7 +108,7 @@ def probe_explicit_home_respected(home_root: Path, hp: str, src: Path, rev: str)
 def probe_malformed_config_not_ok(home_root: Path, hp: str, src: Path, rev: str):
     """MUST-PASS (facet B contract): a broken config.yaml must NOT surface as
     a false canonical ok — the loader's silent fallback becomes visible."""
-    home = fixtures.profile_malformed(home_root)
+    home = fixtures.profile_malformed(home_root / "malformed")
     envelope, result, reason = _run_facets(home, "config_health", hp, src, rev)
     facet = envelope["facets"]["config_health"] if envelope else {}
     ok = (envelope is not None
@@ -124,9 +124,9 @@ def probe_secret_nondisclosure(home_root: Path, hp: str, src: Path, rev: str):
     """MUST-PASS gate 2: canary secrets never reach stdout/stderr/envelope —
     the .env dotenv canary (metadata mode does not load it), the inline
     api_key, the MCP URL query token and the declared ${ENV} value."""
-    home_dotenv = fixtures.profile_a(home_root)
-    home_envref = fixtures.profile_envref(home_root)
-    home_full = fixtures.profile_full_effective(home_root)
+    home_dotenv = fixtures.profile_a(home_root / "secrets")
+    home_envref = fixtures.profile_envref(home_root / "secrets")
+    home_full = fixtures.profile_full_effective(home_root / "secrets")
     envelope_a, res_a, _ = _run_facets(home_dotenv, "config_health", hp, src, rev)
     envelope_b, res_b, _ = _run_facets(home_envref, "effective_config", hp, src, rev,
                                        extra={fixtures.CANARY_ENV_VAR:
@@ -149,7 +149,7 @@ def probe_secret_nondisclosure(home_root: Path, hp: str, src: Path, rev: str):
 def probe_import_drift_fail_closed(home_root: Path, hp: str, src: Path, rev: str):
     """MUST-PASS gate 5 + OBSERVATION (imports): a missing Hermes module must
     yield an explicit compatibility_degraded facet, never a crash."""
-    home = fixtures.profile_a(home_root)
+    home = fixtures.profile_a(home_root / "drift")
     env = harness.build_child_env(home, extra={"C0_HERMES_REV": rev})
     env["PYTHONPATH"] = str(home_root / "empty-src")
     env["C0_HERMES_SRC"] = str(home_root / "empty-src")
@@ -174,7 +174,7 @@ def probe_effective_config_allowlist(home_root: Path, hp: str, src: Path, rev: s
     """MUST-PASS (facet C contract): only allowlisted fields are emitted;
     a ${VAR} value stays in the child as a ref descriptor; credential values
     and MCP env blocks never cross; URLs are sanitized."""
-    home = fixtures.profile_full_effective(home_root)
+    home = fixtures.profile_full_effective(home_root / "effcfg")
     extra = {fixtures.CANARY_ENV_VAR: fixtures.CANARY_ENV_VALUE,
              "C0_AUX_MODEL_VAR": "C0_DUMMY_AUX_MODEL_VALUE"}
     envelope, result, reason = _run_facets(home, "effective_config", hp, src,
@@ -214,7 +214,7 @@ def probe_env_expansion_behavior(home_root: Path, hp: str, src: Path, rev: str):
     """OBSERVATION (contract section 6): ${ENV} behavior on an allowlisted
     path — declared vs undeclared variable. The materialized value must stay
     in the child in both cases; only the ref descriptor is emitted."""
-    home = fixtures.profile_envref(home_root)
+    home = fixtures.profile_envref(home_root / "envexp")
     declared, res_d, _ = _run_facets(home, "effective_config", hp, src, rev,
                                      extra={fixtures.CANARY_ENV_VAR:
                                             fixtures.CANARY_ENV_VALUE})
@@ -243,7 +243,7 @@ def probe_runtime_route_metadata_allowlist(home_root: Path, hp: str, src: Path,
     """MUST-PASS (facet D contract): the canonical resolver runs under
     containment; only allowlisted non-secret metadata is emitted; the
     materialized credential value never crosses the boundary."""
-    home = fixtures.profile_full_effective(home_root)
+    home = fixtures.profile_full_effective(home_root / "route-meta")
     envelope, result, reason = _run_facets(home, "runtime_route", hp, src, rev)
     ok, detail = False, reason
     if envelope:
@@ -278,7 +278,7 @@ def probe_runtime_route_effects_observed(home_root: Path, hp: str, src: Path,
     did resolver execution spawn processes, touch the network, write state?
     Effects are captured by the child audit hook; a RED here is the correct
     result for regular-safety and narrows the facet, not the rules."""
-    home = fixtures.profile_full_effective(home_root)
+    home = fixtures.profile_full_effective(home_root / "route-fx")
     envelope, result, reason = _run_facets(home, "runtime_route", hp, src, rev)
     ok, detail = False, reason
     if envelope:
@@ -297,11 +297,90 @@ def probe_runtime_route_effects_observed(home_root: Path, hp: str, src: Path,
     check("observation_runtime_route_effects_observed", ok, detail)
 
 
+def _write_sentinel(home: Path, name: str, body: str) -> None:
+    plugin_dir = home / "plugins" / "model-providers" / name
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "__init__.py").write_text(body, encoding="utf-8", newline="\n")
+
+
+def probe_provider_registry_code_executes(home_root: Path, hp: str, src: Path,
+                                          rev: str):
+    """OBSERVATION (facet E negative control, contract section 7): does
+    provider discovery import user plugin code? A marker-writing sentinel
+    answers it. RED is the correct outcome for the regular-mode decision."""
+    home = fixtures.profile_a(home_root / "pr-marker")
+    _write_sentinel(home, "c0-sentinel",
+                    "import os\n"
+                    "with open(os.path.join(os.environ['HERMES_HOME'],\n"
+                    "                       'c0-plugin-marker.txt'), 'w') as f:\n"
+                    "    f.write('C0_PLUGIN_CODE_EXECUTED\\n')\n"
+                    "from providers import register_provider\n"
+                    "from providers.base import ProviderProfile\n"
+                    "register_provider(ProviderProfile(name='c0-sentinel'))\n")
+    envelope, result, reason = _run_facets(home, "provider_registry", hp, src,
+                                           rev, timeout_s=180)
+    marker = home / "c0-plugin-marker.txt"
+    facet = envelope["facets"]["provider_registry"] if envelope else {}
+    code_executed = marker.exists()
+    ok = (envelope is not None and facet.get("state") == "ok"
+          and code_executed is True)
+    check("observation_provider_registry_code_executes", ok,
+          f"code_executed={code_executed} state={facet.get('state')} "
+          f"sentinel_registered={facet.get('data', {}).get('sentinel_registered')} "
+          f"count={facet.get('data', {}).get('provider_count')}")
+
+
+def probe_provider_registry_hang_containment(home_root: Path, hp: str,
+                                             src: Path, rev: str):
+    """OBSERVATION (gate 3 on the real plugin path): a hanging user plugin
+    must be killed by the bounded timeout without crashing the harness."""
+    home = fixtures.profile_a(home_root / "pr-hang")
+    _write_sentinel(home, "c0-hang",
+                    "import os, time\n"
+                    "with open(os.path.join(os.environ['HERMES_HOME'],\n"
+                    "                       'c0-plugin-marker.txt'), 'w') as f:\n"
+                    "    f.write('started\\n')\n"
+                    "time.sleep(600)\n")
+    import time as _time
+    start = _time.monotonic()
+    envelope, result, reason = _run_facets(home, "provider_registry", hp, src,
+                                           rev, timeout_s=20)
+    elapsed = _time.monotonic() - start
+    marker = home / "c0-plugin-marker.txt"
+    ok = (result["status"] == "timeout" and result.get("error_kind") is None
+          and elapsed < 60 and marker.exists())
+    check("observation_provider_registry_hang_containment", ok,
+          f"status={result['status']} elapsed={elapsed:.1f}s marker={marker.exists()}")
+
+
+def probe_provider_registry_raise_degrades(home_root: Path, hp: str,
+                                           src: Path, rev: str):
+    """OBSERVATION: a raising user plugin must degrade explicitly (facet
+    error or documented discovery continuation), never crash before JSON."""
+    home = fixtures.profile_a(home_root / "pr-raise")
+    _write_sentinel(home, "c0-raiser",
+                    "import os\n"
+                    "with open(os.path.join(os.environ['HERMES_HOME'],\n"
+                    "                       'c0-plugin-marker.txt'), 'w') as f:\n"
+                    "    f.write('started\\n')\n"
+                    "raise RuntimeError('C0 sentinel plugin failure')\n")
+    envelope, result, reason = _run_facets(home, "provider_registry", hp, src,
+                                           rev, timeout_s=180)
+    marker = home / "c0-plugin-marker.txt"
+    facet = envelope["facets"]["provider_registry"] if envelope else {}
+    ok = (envelope is not None
+          and facet.get("state") in ("ok", "partial", "error")
+          and marker.exists())
+    check("observation_provider_registry_raise_degrades", ok,
+          f"state={facet.get('state')} reason={facet.get('reason_code')} "
+          f"marker={marker.exists()} envelope_valid={envelope is not None}")
+
+
 def probe_write_effects_bounded(home_root: Path, hp: str, src: Path, rev: str):
     """Gate 9 evidence + OBSERVATION: record exactly what a config load
     persists. Writes must stay inside the fixture home (bounded); the fact
     list itself feeds the effect budget decision."""
-    home = fixtures.profile_a(home_root)
+    home = fixtures.profile_a(home_root / "we")
     before = _snapshot(home)
     envelope, result, reason = _run_facets(home, "config_health", hp, src, rev)
     after = _snapshot(home)
@@ -312,6 +391,7 @@ def probe_write_effects_bounded(home_root: Path, hp: str, src: Path, rev: str):
                and not w.startswith(str(home_root))]
     ok = (envelope is not None and outside == [])
     check("observation_config_load_write_effects_bounded", ok,
+          f"reason={reason} status={result.get('status')} rc={result.get('exit_code')} "
           f"created={created[:5]} audit_writes={writes[:5]} outside={outside}")
 
 
@@ -347,6 +427,9 @@ def main() -> int:
     probe_env_expansion_behavior(home_root, hp, Path(src), rev)
     probe_runtime_route_metadata_allowlist(home_root, hp, Path(src), rev)
     probe_runtime_route_effects_observed(home_root, hp, Path(src), rev)
+    probe_provider_registry_code_executes(home_root, hp, Path(src), rev)
+    probe_provider_registry_raise_degrades(home_root, hp, Path(src), rev)
+    probe_provider_registry_hang_containment(home_root, hp, Path(src), rev)
     probe_write_effects_bounded(home_root, hp, Path(src), rev)
     print(f"\nc0-hermes-probes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

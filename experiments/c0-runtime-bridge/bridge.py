@@ -476,9 +476,35 @@ def facet_runtime_route(profile_id: str) -> dict:
 
 
 def facet_provider_registry(profile_id: str) -> dict:
-    """Negative control (step 5): plugin discovery is NOT presumed safe;
-    a RED observation here is the correct outcome for regular mode."""
-    return _facet_unsupported("hermes_import_not_enabled_in_step1", "argus")
+    """Negative control (contract section 5, facet E): provider discovery is
+    NOT presumed safe for regular mode. First registry access imports
+    bundled/user/pip provider plugin code — `providers._discover_providers`
+    documents the import steps. The call itself is the experiment: effects
+    are captured by the child audit hook, fixture sentinels prove code
+    execution. A RED here is the correct outcome for the regular-mode
+    decision and narrows the facet, not the rules.
+    """
+    api = "providers.list_providers"
+    try:
+        from providers import list_providers
+    except Exception as exc:
+        return {"state": "compatibility_degraded", "authority": "hermes",
+                "api": api, "reason_code": "hermes_import_failed",
+                "data": {"exception_class": type(exc).__name__}}
+    try:
+        profiles = list_providers()
+    except Exception as exc:
+        return {"state": "error", "authority": "hermes", "api": api,
+                "reason_code": "discovery_raised",
+                "data": {"exception_class": type(exc).__name__}}
+    names = sorted({p.name for p in profiles
+                    if isinstance(getattr(p, "name", None), str)})
+    return {"state": "ok", "authority": "hermes", "api": api,
+            "reason_code": "discovery_executed",
+            "data": {"provider_count": len(profiles),
+                     "names_sample": names[:20],
+                     "truncated": len(names) > 20,
+                     "sentinel_registered": "c0-sentinel" in names}}
 
 
 FACET_LOADERS.update({
