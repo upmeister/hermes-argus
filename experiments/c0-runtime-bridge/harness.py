@@ -219,15 +219,26 @@ def parse_envelope(run_result: dict) -> tuple[dict | None, str]:
         return None, f"child did not finish cleanly ({run_result.get('status')})"
     if run_result.get("exit_code") != 0:
         return None, f"child exit code {run_result.get('exit_code')!r}"
-    if run_result.get("stdout_truncated") or run_result.get("output_limited"):
+    if (run_result.get("stdout_truncated")
+            or run_result.get("stderr_truncated")
+            or run_result.get("output_limited")):
         return None, "child output truncated beyond the cap - untrusted"
     text = (run_result.get("stdout") or "").strip()
     if not text:
         return None, "empty child stdout"
+    def reject_duplicate_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
     try:
-        envelope = json.loads(text)
+        envelope = json.loads(text, object_pairs_hook=reject_duplicate_keys)
     except json.JSONDecodeError as exc:
         return None, f"stdout is not JSON ({exc.msg} at {exc.lineno}:{exc.colno})"
+    except ValueError:
+        return None, "stdout contains duplicate JSON object keys"
     if not isinstance(envelope, dict):
         return None, "envelope is not an object"
     schema = envelope.get("schema")
@@ -258,14 +269,13 @@ def parse_envelope(run_result: dict) -> tuple[dict | None, str]:
         if not isinstance(data, dict):
             return None, f"facet {name!r}: data must be an object"
     effects = envelope.get("effects")
-    if effects is not None:
-        if not isinstance(effects, dict):
-            return None, "effects must be an object"
-        for key in ("network", "process_spawn", "writes"):
-            if not isinstance(effects.get(key), list):
-                return None, f"effects.{key} must be a list"
-        if not isinstance(effects.get("truncated"), bool):
-            return None, "effects.truncated must be a boolean"
+    if not isinstance(effects, dict):
+        return None, "effects must be an object"
+    for key in ("network", "process_spawn", "writes"):
+        if not isinstance(effects.get(key), list):
+            return None, f"effects.{key} must be a list"
+    if not isinstance(effects.get("truncated"), bool):
+        return None, "effects.truncated must be a boolean"
     return envelope, ""
 
 

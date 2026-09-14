@@ -34,7 +34,7 @@ python3 experiments/c0-runtime-bridge/probes.py
 Works on POSIX and Windows. The same probes are re-run on `peetna-aws` before
 any Hermes-backed facet is attempted.
 
-## Status — review remediation 2 (Питна adversarial loop)
+## Status — review remediation 2+3 (Питна adversarial loop)
 
 Two review loops complete. Loop 1 (boundary defects, fixes by the reviewer,
 transferred and verified): model-identity ref descriptors, fail-closed
@@ -56,6 +56,11 @@ P1s, fixes by ZCode):
   spawn=0) — recorded facts;
 - isolation B→A order automated; canary sweep is full-channel (stdout,
   stderr, envelope, argv, fixture files minus declared carriers).
+
+Loop 3 (reviewer follow-up, applied): `parse_envelope` rejects
+stderr-truncated, duplicate-key, and missing-effects envelopes; the caller
+profile label rejects path/control-unsafe values (`invalid_profile_id`); the
+canary sweep excludes only `backups/config/*`, not arbitrary `backups/*`.
 
 Effect budget (honest statement): config/effective/runtime facets are NOT
 `write: none` — Hermes bootstraps `SOUL.md`, `audio_cache`, `backups/config`
@@ -99,9 +104,9 @@ Sentinel probes (user plugins in the fixture home):
 - **code execution proven**: a marker-writing user plugin is imported by
   discovery (marker written, sentinel registered into the 49-provider
   registry) — the expected RED for the regular-mode decision;
-- a raising user plugin is **silently swallowed** by discovery
-  (`state=ok / discovery_executed`) — the degradation is not visible in the
-  facet, envelope stays valid;
+- a raising user plugin is reported as `partial /
+  discovery_swallows_plugin_errors`; an earlier intermediate run showed
+  `state=ok / discovery_executed`, but that result is superseded;
 - a hanging user plugin is killed by the bounded timeout deterministically —
   gate 3 holds on the real plugin path.
 
@@ -125,10 +130,10 @@ Findings (server, Hermes `b6b53c69`):
 - an inline `api_key` provider materializes to `credential_present: "yes"`
   with `credential_source: pool:custom:inline`; the value never leaves the
   child (canary scans clean);
-- in an earlier run (before the HOME fix below) resolver execution wrote
-  `SOUL.md`, `backups/config/...`, `auth.lock` and `auth.json.tmp.*` into the
-  fixture home; in the final run no writes were observed — both facts are
-  recorded for the effect-budget decision;
+- resolver execution wrote `SOUL.md`, `backups/config/...`, `auth.lock` and
+  `auth.json.tmp.*` into the fixture home; an earlier intermediate run
+  reported no writes before the later effect tracing, and is superseded by
+  the current effect-budget statement above;
 - **isolation hardening**: without `HOME` in the child environment,
   `Path.home()` falls back to the passwd entry (the real maintainer home) —
   any Hermes code resolving `~` could escape the fixture. `build_child_env`
@@ -136,8 +141,9 @@ Findings (server, Hermes `b6b53c69`):
 - no network and no additional process spawns were observed for the named
   custom provider path (`network=[]`, `spawn=[]`).
 
-Server results: `probes_hermes.py` — **11 pass / 0 fail**; containment
-`probes.py` 9/9 on both platforms.
+Historical intermediate step-4 results: `probes_hermes.py` — **11 pass / 0
+fail**; containment `probes.py` 9/9 on both platforms. Current counts are
+listed in the remediation status above.
 
 ## Status — step 3 (effective_config allowlist)
 
@@ -186,10 +192,9 @@ Hermes-backed probe results (server, `probes_hermes.py`, 7 pass / 0 fail):
 - `mustpass_import_drift_fail_closed` — a missing Hermes module yields
   `compatibility_degraded / hermes_import_failed`, envelope stays valid
   (gate 5);
-- `observation_config_load_write_effects_bounded` — in the observed scenario
-  (fresh fixture home, first load) `load_config_readonly()` performed no
-  writes at all (audit + filesystem snapshot); facts recorded for the
-  effect-budget decision.
+- `observation_config_load_write_effects_bounded` — this was an earlier
+  intermediate observation before later exact runs showed bounded writes;
+  the current effect-budget facts are listed above.
 
 ## Status — step 1 (harness containment)
 

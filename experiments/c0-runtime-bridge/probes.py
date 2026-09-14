@@ -114,9 +114,33 @@ def probe_malformed_output_fail_closed(tmp: Path):
     envelope, reason = harness.parse_envelope(
         harness.run_child(empty, env=env, timeout_s=15))
     ok_empty = envelope is None and "empty child stdout" in reason
+    valid = {"schema": 1,
+             "source": {"hermes_revision": "r", "bridge_revision": "b",
+                         "profile_id": "p"},
+             "facets": {"x": {"state": "ok", "authority": "argus", "data": {}}},
+             "effects": {"network": [], "process_spawn": [], "writes": [],
+                         "truncated": False}}
+    marked_truncated = harness.parse_envelope({
+        "status": "ok", "exit_code": 0, "stdout": json.dumps(valid),
+        "stdout_truncated": False, "stderr": "", "stderr_truncated": True,
+        "output_limited": False})[0] is None
+    duplicate = json.dumps(valid).replace('"schema": 1', '"schema": 1, "schema": 1')
+    duplicate_rejected = harness.parse_envelope({
+        "status": "ok", "exit_code": 0, "stdout": duplicate,
+        "stdout_truncated": False, "stderr": "", "stderr_truncated": False,
+        "output_limited": False})[0] is None
+    partial_rejected = harness.parse_envelope({
+        "status": "ok", "exit_code": 0,
+        "stdout": json.dumps({"schema": 1, "source": valid["source"],
+                               "facets": valid["facets"]}),
+        "stdout_truncated": False, "stderr": "", "stderr_truncated": False,
+        "output_limited": False})[0] is None
     check("mustpass_malformed_output_fail_closed",
-          ok_garbage and ok_two and ok_empty,
-          f"garbage={ok_garbage} two={ok_two} empty={ok_empty}")
+          ok_garbage and ok_two and ok_empty and marked_truncated
+          and duplicate_rejected and partial_rejected,
+          f"garbage={ok_garbage} two={ok_two} empty={ok_empty} "
+          f"stderr_truncated={marked_truncated} duplicate={duplicate_rejected} "
+          f"partial={partial_rejected}")
 
 
 def probe_child_crash_containment(tmp: Path):
@@ -275,8 +299,19 @@ def probe_bridge_envelope_contract(tmp: Path):
                   and envelope["facets"]["nonexistent_facet"]["state"] == "error"
                   and envelope["facets"]["nonexistent_facet"]["reason_code"]
                   == "unknown_facet")
-    check("mustpass_bridge_envelope_contract", ok_identity and ok_unknown,
-          f"identity={ok_identity} unknown={ok_unknown} reason={reason}")
+    unsafe_profile = "fixture/../" + CANARY_SECRET
+    result = harness.run_child(HERE / "bridge.py",
+                               ["--facets", "identity",
+                                "--profile-id", unsafe_profile], env=env,
+                               timeout_s=30)
+    envelope, reason = harness.parse_envelope(result)
+    canary_label_rejected = (envelope is not None
+                             and envelope["source"]["profile_id"] == "unspecified"
+                             and CANARY_SECRET not in result["stdout"])
+    check("mustpass_bridge_envelope_contract",
+          ok_identity and ok_unknown and canary_label_rejected,
+          f"identity={ok_identity} unknown={ok_unknown} "
+          f"invalid_profile={canary_label_rejected} reason={reason}")
 
 
 def main() -> int:

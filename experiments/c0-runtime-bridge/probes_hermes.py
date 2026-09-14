@@ -78,7 +78,7 @@ def _scan_all(canaries, envelope, result, home: Path) -> list[str]:
     for path in sorted(home.rglob("*")):
         if not path.is_file() or path.name in CANARY_SOURCE_FILES:
             continue
-        if "backups" in path.parts:
+        if path.relative_to(home).parts[:2] == ("backups", "config"):
             continue
         try:
             texts.append(path.read_text(encoding="utf-8", errors="replace"))
@@ -247,7 +247,7 @@ def probe_keycmd_sentinel(home_root: Path, hp: str, src: Path, rev: str):
         + _scan_all(CANARIES, envelope_rr, res_rr, home)))
     ok = (envelope_ch is not None and envelope_eff is not None
           and no_helper_config and leaks == []
-          and envelope_rr is not None)
+          and envelope_rr is not None and not helper_spawned_route)
     check("mustpass_keycmd_helper_not_executed_in_config_facets", ok,
           f"no_helper_config={no_helper_config} "
           f"route_helper_spawned={helper_spawned_route} leaks={leaks} "

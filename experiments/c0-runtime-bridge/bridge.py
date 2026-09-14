@@ -595,6 +595,17 @@ def build_envelope(facets: dict, profile_id: str, hermes_revision: str,
     }
 
 
+def _safe_profile_id(value) -> str | None:
+    """Accept only a short, non-sensitive caller label."""
+    if not isinstance(value, str) or not value or len(value) > 64:
+        return None
+    try:
+        value.encode("ascii")
+    except UnicodeEncodeError:
+        return None
+    return value if all(c.isalnum() or c in ".-_" for c in value) else None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="C0 bridge child (experiment)")
     ap.add_argument("--facets", default="",
@@ -622,7 +633,16 @@ def main(argv: list[str] | None = None) -> int:
 
     requested = [f.strip() for f in args.facets.split(",") if f.strip()]
     names = requested or list(FACET_LOADERS)
-    profile_id = args.profile_id or "unspecified"
+    profile_id = _safe_profile_id(args.profile_id)
+    if profile_id is None:
+        envelope = build_envelope(
+            {"bridge": {"state": "error", "authority": "argus",
+                        "reason_code": "invalid_profile_id", "data": {}}},
+            profile_id="unspecified", hermes_revision="unknown",
+            effects=effects)
+        json.dump(envelope, sys.stdout, ensure_ascii=False)
+        sys.stdout.write("\n")
+        return 0
 
     facets = {}
     for name in names:
