@@ -153,22 +153,37 @@ def facet_config_health(profile_id: str) -> dict:
                 "data": {"exception_class": type(exc).__name__}}
     load_ok = isinstance(loaded, dict) and bool(loaded)
     # Allowlist extraction only; `loaded` (and everything nested) is never
-    # mutated — it may be the loader's in-process cache object.
+    # mutated — it may be the loader's in-process cache object. The primary
+    # model goes through the raw-vs-loaded ref check: a ${VAR} template in
+    # the raw file must not leak its materialized value (review finding).
     model = loaded.get("model") if isinstance(loaded, dict) else None
-    primary = None
+    loaded_primary = None
     if isinstance(model, dict):
         value = model.get("default", model.get("model"))
-        primary = value if isinstance(value, str) else None
+        loaded_primary = value if isinstance(value, str) else None
+    raw_cfg = {}
+    if present and raw_parse_ok:
+        try:
+            raw_cfg = hc.read_user_config_raw()
+        except Exception:
+            raw_cfg = {}
+        raw_cfg = raw_cfg if isinstance(raw_cfg, dict) else {}
+    raw_model = raw_cfg.get("model") if isinstance(raw_cfg.get("model"), dict) else {}
+    raw_primary = raw_model.get("default", raw_model.get("model"))
     if not present:
         state, reason = "ok", "config_absent_defaults"
+        primary = None
     elif raw_parse_ok:
         state, reason = "ok", "config_parsed"
+        primary = _safe_model_identity(raw_primary, loaded_primary)
     elif raw_parse_ok is False:
         # Loader served last-known-good or defaults while the raw file is
         # broken — exactly what config_health must make visible.
         state, reason = "partial", "config_parse_fallback"
+        primary = None
     else:
         state, reason = "error", "raw_parse_unknown"
+        primary = None
     if not load_ok:
         state, reason = "error", "load_failed"
     return {"state": state, "authority": "hermes", "api": api,
@@ -202,12 +217,26 @@ def facet_effective_config(profile_id: str) -> dict:
     if not isinstance(loaded, dict):
         return {"state": "error", "authority": "hermes", "api": api,
                 "reason_code": "load_failed", "data": {}}
+    raw_parse_ok = True
+    raw_error = None
     try:
         raw = hc.read_user_config_raw()
-    except Exception:
-        raw = None  # broken raw file: everything loaded came from fallback
+    except Exception as exc:
+        # A broken raw file means the loader is serving last-known-good or
+        # defaults: never present that as a canonical ok (review finding).
+        raw = {}
+        raw_parse_ok = False
+        raw_error = type(exc).__name__
     if not isinstance(raw, dict):
         raw = {}
+        raw_parse_ok = False
+        raw_error = raw_error or "non_dict_root"
+
+    if not raw_parse_ok:
+        return {"state": "partial", "authority": "hermes", "api": api,
+                "reason_code": "config_parse_fallback",
+                "data": {"raw_parse_ok": False, "load_ok": True,
+                         "exception_class": raw_error}}
 
     data = {
         "model_primary": _emit_field(raw, loaded, ("model", "default"),
@@ -519,12 +548,28 @@ def facet_provider_registry(profile_id: str) -> dict:
                 "data": {"exception_class": type(exc).__name__}}
     names = sorted({p.name for p in profiles
                     if isinstance(getattr(p, "name", None), str)})
-    return {"state": "ok", "authority": "hermes", "api": api,
-            "reason_code": "discovery_executed",
+    # Negative-control honesty: discovery swallows user-plugin import errors
+    # (providers._import_plugin_dir), so a user plugin directory makes a
+    # plain ok an unproven claim — downgrade to partial and record the count
+    # (review finding).
+    user_plugin_count = 0
+    user_dir = Path(os.environ.get("HERMES_HOME", "")) / "plugins" / "model-providers"
+    if user_dir.is_dir():
+        user_plugin_count = sum(1 for child in user_dir.iterdir()
+                                if child.is_dir() and not child.name.startswith(("_", ".")))
+    if user_plugin_count:
+        state = "partial"
+        reason = "discovery_swallows_plugin_errors"
+    else:
+        state = "ok"
+        reason = "discovery_executed"
+    return {"state": state, "authority": "hermes", "api": api,
+            "reason_code": reason,
             "data": {"provider_count": len(profiles),
                      "names_sample": names[:20],
                      "truncated": len(names) > 20,
-                     "sentinel_registered": "c0-sentinel" in names}}
+                     "sentinel_registered": "c0-sentinel" in names,
+                     "user_plugin_count": user_plugin_count}}
 
 
 FACET_LOADERS.update({
@@ -554,6 +599,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="C0 bridge child (experiment)")
     ap.add_argument("--facets", default="",
                     help="comma-separated facet names; empty = all registered")
+    ap.add_argument("--profile-id", default="unspecified",
+                    help="caller-supplied safe profile label; never derived "
+                         "from the HERMES_HOME path (review finding: a "
+                         "fixture-home name could carry a canary)")
     args = ap.parse_args(argv)
 
     effects = install_effects_audit()
@@ -573,7 +622,7 @@ def main(argv: list[str] | None = None) -> int:
 
     requested = [f.strip() for f in args.facets.split(",") if f.strip()]
     names = requested or list(FACET_LOADERS)
-    profile_id = os.path.basename(os.path.normpath(hermes_home)) or "profile"
+    profile_id = args.profile_id or "unspecified"
 
     facets = {}
     for name in names:

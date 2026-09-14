@@ -80,6 +80,24 @@ def profile_full_effective(root: Path) -> Path:
                  f"ALPHA_API_KEY={CANARY_SECRET}\n")
 
 
+def profile_keycmd(root: Path, marker_path: Path) -> Path:
+    """External-secret-helper sentinel (contract section 7): a provider whose
+    credential is minted by a key_cmd helper. The helper writes a marker file
+    when it is actually executed, so any hydration/process spawn is visible.
+    The token it prints is a dummy."""
+    key_cmd = ("sh -c 'echo C0_DUMMY_KEYCMD_SECRET; "
+               f"touch {marker_path}'")
+    yaml_text = (
+        'model:\n'
+        '  default: "alpha-provider/model-a"\n'
+        'providers:\n'
+        '  gated:\n'
+        '    base_url: "https://gated.invalid/v1"\n'
+        f'    key_cmd: "{key_cmd}"\n'
+    )
+    return _home(root, "profile-keycmd", yaml_text, None)
+
+
 def profile_malformed(root: Path) -> Path:
     """Broken config.yaml (unterminated quote -> YAML parse error)."""
     return _home(root, "profile-malformed", MALFORMED_YAML, None)

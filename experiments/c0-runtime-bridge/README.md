@@ -34,6 +34,40 @@ python3 experiments/c0-runtime-bridge/probes.py
 Works on POSIX and Windows. The same probes are re-run on `peetna-aws` before
 any Hermes-backed facet is attempted.
 
+## Status — review remediation 2 (Питна adversarial loop)
+
+Two review loops complete. Loop 1 (boundary defects, fixes by the reviewer,
+transferred and verified): model-identity ref descriptors, fail-closed
+env=None, reserved-env-key protection, hard output cap. Loop 2 (residual
+P1s, fixes by ZCode):
+
+- config_health / effective_config: a ${VAR} primary model is emitted as a
+  ref descriptor; a broken raw config is `partial / config_parse_fallback`,
+  never a canonical ok;
+- parse_envelope: truncated/output-limited results rejected outright;
+  non-empty facets required;
+- profile_id is caller-supplied (`--profile-id`), never derived from the
+  HERMES_HOME path;
+- provider_registry with user plugins reports
+  `partial / discovery_swallows_plugin_errors` (an authoritative ok was an
+  unproven claim);
+- key_cmd external-secret-helper sentinel added: config facets and the
+  named-custom resolver path do not execute the helper (marker absent,
+  spawn=0) — recorded facts;
+- isolation B→A order automated; canary sweep is full-channel (stdout,
+  stderr, envelope, argv, fixture files minus declared carriers).
+
+Effect budget (honest statement): config/effective/runtime facets are NOT
+`write: none` — Hermes bootstraps `SOUL.md`, `audio_cache`, `backups/config`
+and (resolver) auth-state files inside the Hermes home; config backups
+contain the full config including secrets (Hermes design, documented).
+Facet proposal after remediation 2: identity GO; config_health/
+effective_config MODIFY (write budget); runtime_route MODIFY/non-regular;
+provider_registry DROP from regular; overall MODIFY.
+
+Final server counts: probes 10/10 (Windows + Linux), probes_hermes 18/18,
+coverage 7/7.
+
 ## Status — step 6 (coverage comparison)
 
 `coverage.py` runs static Argus discovery (`integration-discover.py` @ the

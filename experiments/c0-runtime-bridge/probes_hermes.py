@@ -33,7 +33,8 @@ import harness  # noqa: E402
 PASS, FAIL = [], []
 
 CANARIES = [fixtures.CANARY_SECRET, "C0_DUMMY_INLINE_KEY",
-            "C0_DUMMY_QUERY_TOKEN", "C0_DUMMY_AUX_MODEL_VALUE"]
+            "C0_DUMMY_QUERY_TOKEN", "C0_DUMMY_AUX_MODEL_VALUE",
+            "C0_DUMMY_KEYCMD_SECRET"]
 
 
 def check(probe_id: str, ok: bool, detail: str = "") -> None:
@@ -43,16 +44,47 @@ def check(probe_id: str, ok: bool, detail: str = "") -> None:
 
 def _run_facets(home: Path, facets: str, hermes_python: str, hermes_src: Path,
                 hermes_rev: str, timeout_s: int = 60,
-                extra: dict | None = None) -> tuple[dict | None, dict, str]:
+                extra: dict | None = None,
+                profile_id: str = "fixture") -> tuple[dict | None, dict, str]:
     env = harness.build_hermes_env(home, hermes_src,
                                    extra={"C0_HERMES_REV": hermes_rev,
                                           **(extra or {})})
-    result = harness.run_child(HERE / "bridge.py", ["--facets", facets],
+    result = harness.run_child(HERE / "bridge.py",
+                               ["--facets", facets,
+                                "--profile-id", profile_id],
                                env=env, timeout_s=timeout_s,
                                python_executable=hermes_python,
                                workdir=hermes_src)
     envelope, reason = harness.parse_envelope(result)
     return envelope, result, reason
+
+
+# Files that legitimately carry canaries (they ARE the fixtures); everything
+# else inside the fixture home is scanned (review finding: result files and
+# fixture artifacts must be part of the canary sweep, not just streams).
+# backups/config/* are Hermes-written copies of config.yaml and inherit its
+# canaries by design - documented as an effect (config backups inside the
+# Hermes home contain the full config, secrets included), excluded here.
+CANARY_SOURCE_FILES = {"config.yaml", ".env", "auth.json"}
+
+
+def _scan_all(canaries, envelope, result, home: Path) -> list[str]:
+    """Full-channel canary sweep: stdout, stderr, envelope JSON, child argv,
+    and every file under the fixture home except the declared canary
+    sources and their Hermes-written backups."""
+    blob = json.dumps(envelope, ensure_ascii=False) if envelope else ""
+    texts = [blob, result.get("stdout") or "", result.get("stderr") or "",
+             " ".join(result.get("argv", []))]
+    for path in sorted(home.rglob("*")):
+        if not path.is_file() or path.name in CANARY_SOURCE_FILES:
+            continue
+        if "backups" in path.parts:
+            continue
+        try:
+            texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            pass
+    return harness.scan_canaries(canaries, *texts)
 
 
 def probe_identity_facet(home_root: Path, hp: str, src: Path, rev: str):
@@ -121,9 +153,11 @@ def probe_malformed_config_not_ok(home_root: Path, hp: str, src: Path, rev: str)
 
 
 def probe_secret_nondisclosure(home_root: Path, hp: str, src: Path, rev: str):
-    """MUST-PASS gate 2: canary secrets never reach stdout/stderr/envelope —
-    the .env dotenv canary (metadata mode does not load it), the inline
-    api_key, the MCP URL query token and the declared ${ENV} value."""
+    """MUST-PASS gate 2 (full-channel sweep): canary secrets never reach
+    stdout, stderr, envelope JSON, child argv, or any file under the fixture
+    homes outside the declared canary carriers — the .env dotenv canary
+    (metadata mode does not load it), the inline api_key, the MCP URL query
+    token and the declared ${ENV} value."""
     home_dotenv = fixtures.profile_a(home_root / "secrets")
     home_envref = fixtures.profile_envref(home_root / "secrets")
     home_full = fixtures.profile_full_effective(home_root / "secrets")
@@ -134,16 +168,90 @@ def probe_secret_nondisclosure(home_root: Path, hp: str, src: Path, rev: str):
     envelope_c, res_c, _ = _run_facets(home_full, "effective_config", hp, src, rev,
                                        extra={"C0_AUX_MODEL_VAR":
                                               "C0_DUMMY_AUX_MODEL_VALUE"})
-    blobs = [json.dumps(e, ensure_ascii=False) if e else "" for e in
-             (envelope_a, envelope_b, envelope_c)]
-    leaks = harness.scan_canaries(
-        CANARIES, *blobs,
-        res_a["stdout"], res_a["stderr"],
-        res_b["stdout"], res_b["stderr"],
-        res_c["stdout"], res_c["stderr"])
+    leaks = sorted(set(
+        _scan_all(CANARIES, envelope_a, res_a, home_dotenv)
+        + _scan_all(CANARIES, envelope_b, res_b, home_envref)
+        + _scan_all(CANARIES, envelope_c, res_c, home_full)
+        + [c for c in CANARIES if c in json.dumps(res_a.get("argv", []))
+           or c in json.dumps(res_b.get("argv", []))
+           or c in json.dumps(res_c.get("argv", []))]))
     ok = (envelope_a is not None and envelope_b is not None
           and envelope_c is not None and leaks == [])
     check("mustpass_secret_nondisclosure_canary", ok, f"leaks={leaks}")
+
+
+def probe_config_health_env_ref_nondisclosure(home_root: Path, hp: str,
+                                              src: Path, rev: str):
+    """MUST-PASS gate 2 (review finding): config_health must not serialize a
+    materialized ${VAR} primary model — a ref descriptor only, and the
+    full-channel sweep stays clean."""
+    home = fixtures.profile_envref(home_root / "chealth-envref")
+    envelope, result, reason = _run_facets(home, "config_health", hp, src, rev,
+                                           extra={fixtures.CANARY_ENV_VAR:
+                                                  fixtures.CANARY_ENV_VALUE})
+    facet = (envelope or {})["facets"]["config_health"] if envelope else {}
+    leaks = _scan_all(CANARIES, envelope, result, home)
+    primary = facet.get("data", {}).get("primary_model")
+    ok = (envelope is not None
+          and facet.get("state") == "ok"
+          and isinstance(primary, dict) and primary.get("ref") is True
+          and primary.get("var") == fixtures.CANARY_ENV_VAR
+          and primary.get("expanded") is True
+          and primary.get("present") is True
+          and leaks == [])
+    check("mustpass_config_health_env_ref_nondisclosure", ok,
+          f"primary={primary} leaks={leaks}")
+
+
+def probe_profile_isolation_ba_reverse(home_root: Path, hp: str, src: Path,
+                                       rev: str):
+    """MUST-PASS gate 1 (review finding): the reverse execution order (B then
+    A) must be part of the automated probes, not a manual reviewer step."""
+    home_a = fixtures.profile_a(home_root / "ba")
+    home_b = fixtures.profile_b(home_root / "ba")
+    seen = {}
+    for order, home in (("B", home_b), ("A", home_a)):
+        envelope, res, _ = _run_facets(home, "config_health", hp, src, rev)
+        seen[order] = ((envelope or {})["facets"]["config_health"]["data"]
+                       .get("primary_model")) if envelope else None
+    ok = (seen["B"] == "beta-provider/model-b"
+          and seen["A"] == "alpha-provider/model-a")
+    check("mustpass_profile_isolation_ba_reverse", ok,
+          f"B={seen['B']!r} A={seen['A']!r}")
+
+
+def probe_keycmd_sentinel(home_root: Path, hp: str, src: Path, rev: str):
+    """Contract section 7 fixture (review finding): an external-secret-helper
+    (key_cmd) sentinel proves whether config facets or the resolver execute
+    helper code. Config facets must not run it (MUST-PASS); runtime_route is
+    an OBSERVATION (a spawn there is a RED for regular mode)."""
+    marker = home_root / "keycmd-marker.txt"
+    home = fixtures.profile_keycmd(home_root / "keycmd", marker)
+    extra = {}
+    envelope_ch, res_ch, _ = _run_facets(home, "config_health", hp, src, rev,
+                                         extra=extra)
+    envelope_eff, res_eff, _ = _run_facets(home, "effective_config", hp, src,
+                                           rev, extra=extra)
+    no_helper_config = (
+        not marker.exists()
+        and (envelope_ch or {}).get("effects", {}).get("process_spawn") == []
+        and (envelope_eff or {}).get("effects", {}).get("process_spawn") == [])
+    envelope_rr, res_rr, reason_rr = _run_facets(home, "runtime_route", hp,
+                                                 src, rev, timeout_s=90)
+    helper_spawned_route = bool(
+        marker.exists()
+        or (envelope_rr or {}).get("effects", {}).get("process_spawn"))
+    leaks = sorted(set(
+        _scan_all(CANARIES, envelope_ch, res_ch, home)
+        + _scan_all(CANARIES, envelope_eff, res_eff, home)
+        + _scan_all(CANARIES, envelope_rr, res_rr, home)))
+    ok = (envelope_ch is not None and envelope_eff is not None
+          and no_helper_config and leaks == []
+          and envelope_rr is not None)
+    check("mustpass_keycmd_helper_not_executed_in_config_facets", ok,
+          f"no_helper_config={no_helper_config} "
+          f"route_helper_spawned={helper_spawned_route} leaks={leaks} "
+          f"reason_rr={reason_rr}")
 
 
 def probe_import_drift_fail_closed(home_root: Path, hp: str, src: Path, rev: str):
@@ -344,10 +452,13 @@ def probe_provider_registry_code_executes(home_root: Path, hp: str, src: Path,
     marker = home / "c0-plugin-marker.txt"
     facet = envelope["facets"]["provider_registry"] if envelope else {}
     code_executed = marker.exists()
-    ok = (envelope is not None and facet.get("state") == "ok"
+    ok = (envelope is not None
+          and facet.get("state") == "partial"
+          and facet.get("reason_code") == "discovery_swallows_plugin_errors"
           and code_executed is True)
     check("observation_provider_registry_code_executes", ok,
-          f"code_executed={code_executed} state={facet.get('state')} "
+          f"code_executed={code_executed} state={facet.get('state')}/"
+          f"{facet.get('reason_code')} "
           f"sentinel_registered={facet.get('data', {}).get('sentinel_registered')} "
           f"count={facet.get('data', {}).get('provider_count')}")
 
@@ -453,6 +564,9 @@ def main() -> int:
     probe_provider_registry_code_executes(home_root, hp, Path(src), rev)
     probe_provider_registry_raise_degrades(home_root, hp, Path(src), rev)
     probe_provider_registry_hang_containment(home_root, hp, Path(src), rev)
+    probe_config_health_env_ref_nondisclosure(home_root, hp, Path(src), rev)
+    probe_profile_isolation_ba_reverse(home_root, hp, Path(src), rev)
+    probe_keycmd_sentinel(home_root, hp, Path(src), rev)
     probe_write_effects_bounded(home_root, hp, Path(src), rev)
     print(f"\nc0-hermes-probes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

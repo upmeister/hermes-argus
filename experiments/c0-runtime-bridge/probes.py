@@ -254,17 +254,21 @@ def probe_write_detector_selfcheck(tmp: Path):
 
 def probe_bridge_envelope_contract(tmp: Path):
     """The real bridge entrypoint emits a contract-valid envelope under
-    containment: requested facet unsupported (no Hermes yet), unknown facet
-    fails closed inside the envelope, no crash before JSON."""
+    containment: caller-supplied profile label (never derived from the home
+    path), requested facet unsupported (no Hermes yet), unknown facet fails
+    closed inside the envelope, no crash before JSON."""
     env = harness.build_child_env(_home(tmp, "profile-bridge"))
-    result = harness.run_child(HERE / "bridge.py", ["--facets", "identity"],
+    result = harness.run_child(HERE / "bridge.py",
+                               ["--facets", "identity",
+                                "--profile-id", "probe-label"],
                                env=env, timeout_s=30)
     envelope, reason = harness.parse_envelope(result)
     ok_identity = (envelope is not None
-                   and envelope["source"]["profile_id"] == "profile-bridge"
+                   and envelope["source"]["profile_id"] == "probe-label"
                    and envelope["facets"]["identity"]["state"] == "unsupported")
     result = harness.run_child(HERE / "bridge.py",
-                               ["--facets", "nonexistent_facet"], env=env,
+                               ["--facets", "nonexistent_facet",
+                                "--profile-id", "probe-label"], env=env,
                                timeout_s=30)
     envelope, reason = harness.parse_envelope(result)
     ok_unknown = (envelope is not None

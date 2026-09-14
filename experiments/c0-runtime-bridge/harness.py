@@ -195,6 +195,8 @@ def run_child(bridge_entrypoint, argv: list[str] | None = None, env: dict | None
     stderr = output.get("stderr", b"").decode("utf-8", errors="replace")
     result = {"status": status, "exit_code": exit_code,
               "elapsed_s": round(elapsed, 3), "timed_out": status == "timeout",
+              "argv": [python_executable or sys.executable,
+                       str(bridge_entrypoint), *argv],
               "stdout": stdout, "stdout_truncated": stream_overflow["stdout"],
               "stderr": stderr, "stderr_truncated": stream_overflow["stderr"],
               "output_limited": status == "output_limit"}
@@ -208,12 +210,17 @@ def parse_envelope(run_result: dict) -> tuple[dict | None, str]:
 
     Mirrors the D0a consumer lesson: exact integer schema, required shapes,
     canonical facet states. Any violation rejects the whole output — a partial
-    envelope is never trusted.
+    envelope is never trusted. A truncated or output-limited run result is
+    rejected outright: the caller cannot prove what the child emitted beyond
+    the cap (review finding). Facets must be non-empty — an envelope without
+    facets carries no evidence.
     """
     if run_result.get("status") != "ok":
         return None, f"child did not finish cleanly ({run_result.get('status')})"
     if run_result.get("exit_code") != 0:
         return None, f"child exit code {run_result.get('exit_code')!r}"
+    if run_result.get("stdout_truncated") or run_result.get("output_limited"):
+        return None, "child output truncated beyond the cap - untrusted"
     text = (run_result.get("stdout") or "").strip()
     if not text:
         return None, "empty child stdout"
@@ -234,8 +241,8 @@ def parse_envelope(run_result: dict) -> tuple[dict | None, str]:
         if not isinstance(source.get(field), str) or not source[field]:
             return None, f"source.{field} must be a non-empty string"
     facets = envelope.get("facets")
-    if not isinstance(facets, dict):
-        return None, "facets is not an object"
+    if not isinstance(facets, dict) or not facets:
+        return None, "facets must be a non-empty object (review finding)"
     for name, facet in facets.items():
         if not isinstance(name, str) or not name:
             return None, "facet name must be a non-empty string"
