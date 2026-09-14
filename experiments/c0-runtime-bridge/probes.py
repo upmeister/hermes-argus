@@ -144,14 +144,20 @@ def probe_output_cap_enforced(tmp: Path):
     env = harness.build_child_env(_home(tmp, "profile-flood"))
     cap = 64 * 1024
     flood_out = _write_child(tmp, "flood_stdout_child.py",
-                             "import sys; sys.stdout.write('C0' * 4 * 1024 * 1024)\n")
+                             "import os, sys; sys.stdout.write('C0' * 4 * 1024 * 1024); sys.stdout.flush(); "
+                             "open(os.path.join(os.environ['HERMES_HOME'], 'stdout-after-flood'), 'w').write('reached')\n")
     result = harness.run_child(flood_out, env=env, timeout_s=30, output_cap=cap)
-    ok_out = (result["status"] == "ok" and result["stdout_truncated"]
+    ok_out = (result["status"] == "output_limit" and result["output_limited"]
+              and result["stdout_truncated"]
+              and not (Path(env["HERMES_HOME"]) / "stdout-after-flood").exists()
               and len(result["stdout"]) == cap)
     flood_err = _write_child(tmp, "flood_stderr_child.py",
-                             "import sys; sys.stderr.write('C0' * 4 * 1024 * 1024)\n")
+                             "import os, sys; sys.stderr.write('C0' * 4 * 1024 * 1024); sys.stderr.flush(); "
+                             "open(os.path.join(os.environ['HERMES_HOME'], 'stderr-after-flood'), 'w').write('reached')\n")
     result = harness.run_child(flood_err, env=env, timeout_s=30, output_cap=cap)
-    ok_err = (result["status"] == "ok" and result["stderr_truncated"]
+    ok_err = (result["status"] == "output_limit" and result["output_limited"]
+              and result["stderr_truncated"]
+              and not (Path(env["HERMES_HOME"]) / "stderr-after-flood").exists()
               and len(result["stderr"]) == cap)
     check("mustpass_output_cap_enforced", ok_out and ok_err,
           f"stdout={ok_out} stderr={ok_err}")
@@ -194,6 +200,33 @@ def probe_profile_home_passthrough(tmp: Path):
     check("mustpass_profile_home_passthrough",
           seen_a == str(home_a) and seen_b == str(home_b),
           f"a={seen_a!r} b={seen_b!r}")
+
+
+def probe_reserved_env_and_missing_env_fail_closed(tmp: Path):
+    """MUST-PASS: reserved containment keys cannot be overridden and omitting
+    an explicit environment never falls back to parent inheritance."""
+    home = _home(tmp, "profile-env-boundary")
+    rejected = False
+    try:
+        harness.build_child_env(home, extra={"HOME": str(tmp / "wrong")})
+    except ValueError:
+        rejected = True
+    child = _write_child(tmp, "parent_env_child.py",
+                         "import os; print(os.environ.get('C0_PARENT_TOKEN', ''))\n")
+    old = os.environ.get(PARENT_TOKEN_VAR)
+    os.environ[PARENT_TOKEN_VAR] = CANARY_SECRET
+    try:
+        result = harness.run_child(child, timeout_s=15)
+    finally:
+        if old is None:
+            os.environ.pop(PARENT_TOKEN_VAR, None)
+        else:
+            os.environ[PARENT_TOKEN_VAR] = old
+    ok = (rejected and result["status"] == "invalid_env"
+          and not result["stdout"]
+          and result.get("error_kind") == "env_required")
+    check("mustpass_reserved_env_and_missing_env_fail_closed", ok,
+          f"reserved_rejected={rejected} status={result['status']}")
 
 
 def probe_write_detector_selfcheck(tmp: Path):
@@ -251,6 +284,7 @@ def main() -> int:
     probe_output_cap_enforced(tmp)
     probe_canary_scan_selfcheck(tmp)
     probe_profile_home_passthrough(tmp)
+    probe_reserved_env_and_missing_env_fail_closed(tmp)
     probe_write_detector_selfcheck(tmp)
     probe_bridge_envelope_contract(tmp)
     print(f"\nc0-probes: {len(PASS)} pass, {len(FAIL)} fail")

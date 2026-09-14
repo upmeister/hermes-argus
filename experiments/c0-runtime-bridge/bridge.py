@@ -246,6 +246,16 @@ def _template_var(value) -> str | None:
     return None
 
 
+def _safe_model_identity(raw_value, loaded_value):
+    """Keep materialized ${VAR} model values inside the child."""
+    var = _template_var(raw_value)
+    if var is not None:
+        expanded = loaded_value != raw_value
+        return {"ref": True, "var": var, "expanded": expanded,
+                "present": expanded and bool(loaded_value)}
+    return loaded_value if isinstance(loaded_value, str) else None
+
+
 def _emit_field(raw: dict, loaded: dict, *paths) -> dict:
     """Emit one allowlisted field, comparing the raw template with the loaded
     value so materialized env expansion never crosses the boundary."""
@@ -270,8 +280,9 @@ def _emit_field(raw: dict, loaded: dict, *paths) -> dict:
             break
     var = _template_var(raw_val)
     if var is not None:
-        return {"ref": True, "var": var, "expanded": loaded_val != raw_val,
-                "present": bool(loaded_val)}
+        expanded = loaded_val != raw_val
+        return {"ref": True, "var": var, "expanded": expanded,
+                "present": expanded and bool(loaded_val)}
     if raw_val is None:
         return {"value": loaded_val if isinstance(loaded_val, str) else None,
                 "source": "default"}
@@ -381,9 +392,10 @@ def _emit_auxiliary(raw: dict, loaded: dict) -> dict:
         model_raw = task_raw.get("model")
         var = _template_var(model_raw)
         if var is not None:
+            expanded = model_loaded != model_raw
             model_record = {"ref": True, "var": var,
-                            "expanded": model_loaded != model_raw,
-                            "present": bool(model_loaded)}
+                            "expanded": expanded,
+                            "present": expanded and bool(model_loaded)}
         else:
             model_record = {"value": model_loaded if isinstance(model_loaded, str) else None,
                             "source": "user" if model_raw == model_loaded and model_raw else
@@ -422,8 +434,16 @@ def facet_runtime_route(profile_id: str) -> dict:
     if not isinstance(loaded, dict):
         return {"state": "error", "authority": "hermes", "api": api,
                 "reason_code": "load_failed", "data": {}}
+    try:
+        raw = hc.read_user_config_raw()
+    except Exception:
+        raw = {}
+    raw = raw if isinstance(raw, dict) else {}
     model_cfg = loaded.get("model") if isinstance(loaded.get("model"), dict) else {}
+    raw_model_cfg = (raw.get("model") if isinstance(raw, dict)
+                     and isinstance(raw.get("model"), dict) else {})
     target_model = str(model_cfg.get("default") or model_cfg.get("model") or "") or None
+    raw_target_model = raw_model_cfg.get("default", raw_model_cfg.get("model"))
     providers = loaded.get("providers") if isinstance(loaded.get("providers"), dict) else {}
     if not providers:
         return {"state": "unsupported", "authority": "hermes", "api": api,
@@ -457,7 +477,7 @@ def facet_runtime_route(profile_id: str) -> dict:
             "state": "ok",
             "provider": _s(runtime.get("provider")),
             "requested_provider": _s(runtime.get("requested_provider")),
-            "model": target_model,
+            "model": _safe_model_identity(raw_target_model, target_model),
             "api_mode": _s(runtime.get("api_mode")),
             "base_url_identity": _sanitize_url(runtime.get("base_url")),
             "credential_present": credential_present,

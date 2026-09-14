@@ -231,6 +231,7 @@ def probe_env_expansion_behavior(home_root: Path, hp: str, src: Path, rev: str):
         ok = (ref_d.get("ref") is True and ref_d.get("expanded") is True
               and ref_d.get("present") is True
               and ref_u.get("ref") is True and ref_u.get("expanded") is False
+              and ref_u.get("present") is False
               and leaks == [])
         detail = (f"declared={ref_d} undeclared={ref_u} leaks={leaks}")
     else:
@@ -270,6 +271,27 @@ def probe_runtime_route_metadata_allowlist(home_root: Path, hp: str, src: Path,
         detail = (f"state={facet.get('state')} inline={inline} "
                   f"alpha_cred={alpha.get('credential_present')} leaks={leaks}")
     check("mustpass_runtime_route_metadata_allowlist", ok, detail)
+
+
+def probe_runtime_route_env_ref_nondisclosure(home_root: Path, hp: str,
+                                               src: Path, rev: str):
+    """MUST-PASS gate 2: runtime routing must not serialize a materialized
+    environment value used as the model identity."""
+    home = home_root / "route-env-ref"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.yaml").write_text(
+        'model:\n  default: "${C0_CANARY_ENV}"\n'
+        'providers:\n  alpha:\n    base_url: "https://alpha.invalid/v1"\n',
+        encoding="utf-8", newline="\n")
+    envelope, result, reason = _run_facets(
+        home, "runtime_route", hp, src, rev,
+        extra={fixtures.CANARY_ENV_VAR: fixtures.CANARY_ENV_VALUE})
+    blob = json.dumps(envelope, ensure_ascii=False) if envelope else ""
+    leaks = harness.scan_canaries(CANARIES, blob, result["stdout"],
+                                  result["stderr"])
+    check("mustpass_runtime_route_env_ref_nondisclosure",
+          envelope is not None and leaks == [],
+          f"leaks={leaks} reason={reason}")
 
 
 def probe_runtime_route_effects_observed(home_root: Path, hp: str, src: Path,
@@ -426,6 +448,7 @@ def main() -> int:
     probe_effective_config_allowlist(home_root, hp, Path(src), rev)
     probe_env_expansion_behavior(home_root, hp, Path(src), rev)
     probe_runtime_route_metadata_allowlist(home_root, hp, Path(src), rev)
+    probe_runtime_route_env_ref_nondisclosure(home_root, hp, Path(src), rev)
     probe_runtime_route_effects_observed(home_root, hp, Path(src), rev)
     probe_provider_registry_code_executes(home_root, hp, Path(src), rev)
     probe_provider_registry_raise_degrades(home_root, hp, Path(src), rev)
