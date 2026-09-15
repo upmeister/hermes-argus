@@ -62,7 +62,10 @@ if [ -n "${GITHUB_REPO:-}" ] && [ -n "${GH_TOKEN:-}" ] && [ -d "$H/hermes-infra"
         sent=$((sent + 1))   # repo already fresh — counts as a live beat
     else
         if git commit -m "heartbeat: $(date -u +'%Y-%m-%d %H:%M UTC')" --quiet &&
-           git push "https://${GH_TOKEN}@github.com/${GITHUB_REPO}" main --quiet 2>>"$LOG"; then
+           GIT_CONFIG_COUNT=1 \
+           GIT_CONFIG_KEY_0='http.https://github.com/.extraheader' \
+           GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
+           git push "https://github.com/${GITHUB_REPO}" main --quiet 2>>"$LOG"; then
             sent=$((sent + 1))
             echo "[heartbeat] gh pushed at $(date -u +'%Y-%m-%d %H:%M UTC')" >> "$LOG"
         else
