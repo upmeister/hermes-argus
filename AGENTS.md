@@ -78,6 +78,9 @@ maintainer authorization and read-back verification.
 
 - `docs/adr/0001-integration-evidence-policy.md` — evidence claims, canonical
   verdicts, and side-effect policy.
+- `docs/adr/0002-hermes-discovery-sync-boundary.md` — Hermes discovery/sync
+  boundary: process-isolated metadata facets, effect budget, provenance,
+  shadow-first migration (architecture only, no production wiring).
 - `README.md` — user-facing product and module overview.
 - `CHANGELOG.md` — user-facing changes in Keep a Changelog format.
 - `scripts/gen-registry.py` — registry generation contract.
