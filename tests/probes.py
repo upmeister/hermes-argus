@@ -1662,9 +1662,13 @@ def probe_c1a_wrapper_shadow_matrix(tmp: Path):
     shadow_recorded = success.returncode == 0 and shadow_files.exists()
     degraded_ok = degraded.returncode == 0
     ok = legacy_same and shadow_recorded and degraded_ok
+    shadow_log = hermes / "logs" / "hermes-discovery-shadow.log"
+    log_tail = (shadow_log.read_text(encoding="utf-8",
+                                     errors="replace")[-300:]
+                if shadow_log.exists() else "ABSENT")
     check("c1a_wrapper_shadow_matrix", ok,
           f"legacy_same={legacy_same} shadow_recorded={shadow_recorded} "
-          f"degraded_ok={degraded_ok}")
+          f"degraded_ok={degraded_ok} log={log_tail!r}")
 
 
 # ── runner ──────────────────────────────────────────────────────────────────
