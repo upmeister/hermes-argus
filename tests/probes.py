@@ -1523,7 +1523,7 @@ def probe_c1a_hermes_facets(tmp: Path):
         'providers:\n  gated:\n    base_url: "https://gated.invalid/v1"\n'
         f'    key_cmd: "{helper_cmd}"\n',
         encoding="utf-8", newline="\n")
-    env = sh.build_child_env(home, src, extra={"C1A_HERMES_REV": rev})
+    env = sh.build_child_env(home, src, rev=rev)
     result = sh.run_child(
         os.path.join(str(REPO), "scripts", "hermes-discovery-bridge.py"),
         ["--facets", "identity,config_health,effective_config",

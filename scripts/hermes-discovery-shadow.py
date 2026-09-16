@@ -87,6 +87,8 @@ def build_child_env(profile_home: Path, hermes_src: str,
     env["HOME"] = str(profile_home)
     env["PYTHONPATH"] = hermes_src
     env["C1A_HERMES_SRC"] = hermes_src
+    if rev:
+        env["C1A_HERMES_REV"] = str(rev)
     env["C1A_HERMES_REV"] = rev
     for raw_key, value in (extra or {}).items():
         key = str(raw_key)
