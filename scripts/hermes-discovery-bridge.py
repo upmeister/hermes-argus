@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -240,6 +241,27 @@ def facet_effective_config(profile_id: str) -> dict:
 
 MAX_COLLECTION_ITEMS = 50
 
+SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _safe_key(name, index: int) -> str:
+    """Collection keys must be bounded safe identifiers: a secret-like or
+    control-bearing name is replaced with an anonymized key (review
+    finding)."""
+    name = str(name)
+    if SAFE_NAME_RE.fullmatch(name):
+        return name
+    return f"unsafe-{index}"
+
+
+def _safe_basename(command) -> str | None:
+    """Command basename from a validated path token: no whitespace, control
+    characters or embedded payloads survive (review finding)."""
+    if not isinstance(command, str) or not command.strip():
+        return None
+    name = command.replace("\\", "/").rsplit("/", 1)[-1]
+    return name if SAFE_NAME_RE.fullmatch(name) else None
+
 # Upstream placeholder: the resolver/loader reports "no key found" as the
 # literal "no-key-required" (normalized by upstream model_switch.py and
 # config_migrations.py). Known placeholders are classified, never counted
@@ -326,7 +348,8 @@ def _emit_fallback(fallback) -> list:
     if isinstance(fallback, list):
         for entry in fallback[:MAX_COLLECTION_ITEMS]:
             if isinstance(entry, str):
-                out.append({"name": entry})
+                out.append({"name": entry
+                            if SAFE_NAME_RE.fullmatch(entry) else None})
             elif isinstance(entry, dict):
                 name = entry.get("name") or entry.get("provider")
                 out.append({"name": name if isinstance(name, str) else None,
@@ -340,9 +363,11 @@ def _emit_providers(providers) -> dict:
     credential truth."""
     out = {}
     if isinstance(providers, dict):
-        for name, entry in list(providers.items())[:MAX_COLLECTION_ITEMS]:
+        for index, (raw_name, entry) in enumerate(
+                list(providers.items())[:MAX_COLLECTION_ITEMS]):
+            name = _safe_key(raw_name, index)
             if not isinstance(entry, dict):
-                out[str(name)] = {"entry_class": "non_mapping"}
+                out[name] = {"entry_class": "non_mapping"}
                 continue
             auth, present = "none", False
             if entry.get("api_key"):
@@ -351,8 +376,8 @@ def _emit_providers(providers) -> dict:
                 auth = "key_env"
             elif entry.get("key_cmd"):
                 auth = "key_cmd"
-            out[str(name)] = {"base_url_identity": _sanitize_url(entry.get("base_url")),
-                              "auth": auth, "credential_present": present}
+            out[name] = {"base_url_identity": _sanitize_url(entry.get("base_url")),
+                         "auth": auth, "credential_present": present}
     return out
 
 
@@ -363,23 +388,24 @@ def _emit_mcp_servers(servers) -> dict:
     neither connects to nor executes the server."""
     out = {}
     if isinstance(servers, dict):
-        for name, entry in list(servers.items())[:MAX_COLLECTION_ITEMS]:
+        for index, (raw_name, entry) in enumerate(
+                list(servers.items())[:MAX_COLLECTION_ITEMS]):
+            key = _safe_key(raw_name, index)
             if not isinstance(entry, dict):
-                out[str(name)] = {"transport": "unknown"}
+                out[key] = {"transport": "unknown"}
                 continue
             record: dict = {}
             if entry.get("url"):
                 record["transport"] = "http"
                 record["url_identity"] = _sanitize_url(entry.get("url"))
             elif entry.get("command"):
-                command = str(entry.get("command"))
                 record["transport"] = "stdio"
-                record["command_basename"] = command.rsplit("/", 1)[-1]
+                record["command_basename"] = _safe_basename(entry.get("command"))
                 record["args_count"] = len(entry["args"]) \
                     if isinstance(entry.get("args"), list) else 0
             else:
                 record["transport"] = "unknown"
-            out[str(name)] = record
+            out[key] = record
     return out
 
 

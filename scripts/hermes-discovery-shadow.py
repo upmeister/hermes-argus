@@ -46,6 +46,10 @@ RECONCILIATION_SCHEMA = 1
 FACET_STATES = ("ok", "partial", "unsupported", "compatibility_degraded",
                 "error")
 ACCEPTED_FACETS = ("identity", "config_health", "effective_config")
+ACCEPTED_FACET_SET = frozenset(ACCEPTED_FACETS)
+MAX_STRING_LEN = 512
+import re
+SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 BASE_ENV_ALLOWLIST = (
     "PATH", "TEMP", "TMP", "SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC",
@@ -222,6 +226,10 @@ def run_child(bridge_entrypoint: str, argv: list[str] | None = None,
     return result
 
 
+def _reject_json_constant(constant):
+    raise ValueError(f"invalid JSON constant {constant}")
+
+
 def _reject_duplicate_keys(pairs):
     result = {}
     for key, value in pairs:
@@ -231,7 +239,139 @@ def _reject_duplicate_keys(pairs):
     return result
 
 
-def parse_envelope(run_result: dict) -> tuple[dict | None, str]:
+MAX_STRING_LEN = MAX_STRING_LEN
+
+
+def _v_str(value, max_len: int = MAX_STRING_LEN) -> bool:
+    return isinstance(value, str) and len(value) <= max_len
+
+
+def _v_safe_name(value) -> bool:
+    return isinstance(value, str) and bool(SAFE_NAME_RE.fullmatch(value))
+
+
+def _v_bool(value) -> bool:
+    return isinstance(value, bool)
+
+
+def _v_tristate(value) -> bool:
+    return value is None or _v_bool(value)
+
+
+def _v_model_record(value) -> bool:
+    if not isinstance(value, dict) or not value:
+        return False
+    if value.get("ref") is True:
+        return (_v_safe_name(value.get("var"))
+                and _v_bool(value.get("expanded"))
+                and _v_bool(value.get("present"))
+                and set(value) <= {"ref", "var", "expanded", "present"})
+    return (set(value) <= {"value", "source"}
+            and (value.get("value") is None or _v_str(value.get("value"), 256))
+            and value.get("source") in ("default", "user", "canonicalized"))
+
+
+def _validate_facet_data(name: str, data) -> str:
+    """Recursive allowlist validation of facet data (C1a contract section 7):
+    only declared fields, declared types, bounded strings. NaN/Infinity are
+    rejected at JSON parse time."""
+    if not isinstance(data, dict):
+        return f"facet {name!r}: data must be an object"
+    if name == "identity":
+        if set(data) != {"hermes_version"} or not _v_str(data["hermes_version"], 64):
+            return "identity.data must contain only a bounded hermes_version"
+        return ""
+    if name == "config_health":
+        expected = {"config_file_present", "raw_parse_ok", "load_ok",
+                    "primary_model", "note"}
+        if set(data) != expected:
+            return "config_health.data has unexpected or missing fields"
+        if not _v_bool(data["config_file_present"]) or not _v_bool(data["load_ok"]):
+            return "config_health.data flag fields must be boolean"
+        if not _v_tristate(data["raw_parse_ok"]):
+            return "config_health.data.raw_parse_ok must be tri-state"
+        if not _v_model_record_or_none(data["primary_model"]):
+            return "config_health.data.primary_model is malformed"
+        if not _v_str(data["note"], 512):
+            return "config_health.data.note must be a bounded string"
+        return ""
+    if name == "effective_config":
+        expected = {"model_primary", "fallback_providers", "providers",
+                    "mcp_servers", "auxiliary"}
+        if set(data) != expected:
+            return "effective_config.data has unexpected or missing fields"
+        if not _v_model_record(data["model_primary"]):
+            return "effective_config.model_primary is malformed"
+        fb = data["fallback_providers"]
+        if not isinstance(fb, list) or len(fb) > MAX_COLLECTION_ITEMS:
+            return "effective_config.fallback_providers must be a bounded list"
+        for entry in fb:
+            if not isinstance(entry, dict) or set(entry) != {"name", "base_url_identity"}:
+                return "effective_config.fallback_providers entry is malformed"
+            if entry["name"] is not None and not _v_safe_name(entry["name"]):
+                return "effective_config.fallback_providers.name must be a safe identifier"
+            if entry["base_url_identity"] is not None \
+                    and not _v_str(entry["base_url_identity"], 256):
+                return "effective_config.fallback_providers.base_url_identity is malformed"
+        prov = data["providers"]
+        if not isinstance(prov, dict) or len(prov) > MAX_COLLECTION_ITEMS:
+            return "effective_config.providers must be a bounded object"
+        for key, entry in prov.items():
+            if not _v_safe_name(key):
+                return "effective_config.providers keys must be safe identifiers"
+            if not isinstance(entry, dict) \
+                    or set(entry) != {"base_url_identity", "auth",
+                                      "credential_present"}:
+                return f"effective_config.providers[{key!r}] is malformed"
+            if entry["base_url_identity"] is not None \
+                    and not _v_str(entry["base_url_identity"], 256):
+                return f"effective_config.providers[{key!r}].base_url_identity is malformed"
+            if entry["auth"] not in ("none", "inline_key", "key_env", "key_cmd"):
+                return f"effective_config.providers[{key!r}].auth is not canonical"
+            if not _v_bool(entry["credential_present"]):
+                return f"effective_config.providers[{key!r}].credential_present must be boolean"
+        mcp = data["mcp_servers"]
+        if not isinstance(mcp, dict) or len(mcp) > MAX_COLLECTION_ITEMS:
+            return "effective_config.mcp_servers must be a bounded object"
+        for key, entry in mcp.items():
+            if not _v_safe_name(key):
+                return "effective_config.mcp_servers keys must be safe identifiers"
+            if not isinstance(entry, dict) \
+                    or set(entry) - {"transport", "url_identity",
+                                     "command_basename", "args_count"} \
+                    or entry.get("transport") not in ("stdio", "http", "unknown"):
+                return f"effective_config.mcp_servers[{key!r}] is malformed"
+            if "url_identity" in entry and entry["url_identity"] is not None \
+                    and not _v_str(entry["url_identity"], 256):
+                return f"effective_config.mcp_servers[{key!r}].url_identity is malformed"
+            if "command_basename" in entry \
+                    and not _v_safe_name(entry.get("command_basename")):
+                return f"effective_config.mcp_servers[{key!r}].command_basename must be a safe identifier"
+            if "args_count" in entry and not _is_count(entry["args_count"]):
+                return f"effective_config.mcp_servers[{key!r}].args_count must be an integer"
+        aux = data["auxiliary"]
+        if not isinstance(aux, dict) or len(aux) > MAX_COLLECTION_ITEMS:
+            return "effective_config.auxiliary must be a bounded object"
+        for task, entry in aux.items():
+            if not _v_safe_name(task):
+                return "effective_config.auxiliary task keys must be safe identifiers"
+            if not isinstance(entry, dict) \
+                    or set(entry) != {"model", "credential_present"}:
+                return f"effective_config.auxiliary[{task!r}] is malformed"
+            if not _v_model_record(entry["model"]):
+                return f"effective_config.auxiliary[{task!r}].model is malformed"
+            if not _v_bool(entry["credential_present"]):
+                return f"effective_config.auxiliary[{task!r}].credential_present must be boolean"
+        return ""
+    return f"facet {name!r} has no declared data schema"
+
+
+def _v_model_record_or_none(value) -> bool:
+    return value is None or _v_model_record(value)
+
+def parse_envelope(run_result: dict, expected_profile_id: str = "",
+                   expected_facets: frozenset = ACCEPTED_FACET_SET
+                   ) -> tuple[dict | None, str]:
     """Fail-closed parse of the child's stdout as a bridge envelope."""
     if run_result.get("status") != "ok":
         return None, f"child did not finish cleanly ({run_result.get('status')})"
@@ -245,7 +385,8 @@ def parse_envelope(run_result: dict) -> tuple[dict | None, str]:
     if not text:
         return None, "empty child stdout"
     try:
-        envelope = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+        envelope = json.loads(text, object_pairs_hook=_reject_duplicate_keys,
+                              parse_constant=_reject_json_constant)
     except json.JSONDecodeError as exc:
         return None, f"stdout is not JSON ({exc.msg} at {exc.lineno}:{exc.colno})"
     except ValueError:
@@ -261,9 +402,15 @@ def parse_envelope(run_result: dict) -> tuple[dict | None, str]:
     for field in ("hermes_revision", "bridge_revision", "profile_id"):
         if not isinstance(source.get(field), str) or not source[field]:
             return None, f"source.{field} must be a non-empty string"
+    if expected_profile_id and source["profile_id"] != expected_profile_id:
+        return None, (f"source.profile_id {source['profile_id']!r} does not "
+                      f"match the requested {expected_profile_id!r}")
     facets = envelope.get("facets")
     if not isinstance(facets, dict) or not facets:
         return None, "facets must be a non-empty object"
+    if set(facets) != set(expected_facets):
+        return None, (f"facet set {sorted(facets)} does not match the accepted "
+                      f"facet set {sorted(expected_facets)}")
     for name, facet in facets.items():
         if not isinstance(name, str) or not name:
             return None, "facet name must be a non-empty string"
@@ -275,8 +422,9 @@ def parse_envelope(run_result: dict) -> tuple[dict | None, str]:
             return None, f"facet {name!r}: authority {facet.get('authority')!r} is not canonical"
         if not isinstance(facet.get("reason_code", ""), str):
             return None, f"facet {name!r}: reason_code must be a string"
-        if not isinstance(facet.get("data", {}), dict):
-            return None, f"facet {name!r}: data must be an object"
+        data_reason = _validate_facet_data(name, facet.get("data", {}))
+        if data_reason:
+            return None, data_reason
     effects = envelope.get("effects")
     if not isinstance(effects, dict):
         return None, "effects must be an object (evidence envelope)"
@@ -288,7 +436,8 @@ def parse_envelope(run_result: dict) -> tuple[dict | None, str]:
     return envelope, ""
 
 
-def validate_effects(envelope: dict) -> tuple[bool, list[str], list[str]]:
+def validate_effects(envelope: dict, profile_home: Path
+                     ) -> tuple[bool, list[str], list[str]]:
     """Validate the observed effect classes against the ADR 0002 budget.
 
     Returns (within_budget, unexpected_writes, network_or_spawn). Writes are
@@ -300,11 +449,60 @@ def validate_effects(envelope: dict) -> tuple[bool, list[str], list[str]]:
     network = effects.get("network") or []
     spawn = effects.get("process_spawn") or []
     writes = effects.get("writes") or []
-    unexpected = [w for w in writes
-                  if not any(w.startswith(prefix)
-                             for prefix in ALLOWED_WRITE_PREFIXES)]
+    unexpected: list[str] = []
+    home_real = os.path.realpath(profile_home)
+    prefix = "{HERMES_HOME}/"
+    for w in writes:
+        if not w.startswith(prefix):
+            unexpected.append(w)
+            continue
+        rel = w[len(prefix):]
+        if not rel or ".." in Path(rel).parts:
+            unexpected.append(w)
+            continue
+        allowed = (rel == "SOUL.md"
+                   or rel.startswith("audio_cache/")
+                   or rel.startswith("backups/config/"))
+        if not allowed:
+            unexpected.append(w)
+            continue
+        real_target = os.path.realpath(profile_home / rel)
+        if os.path.commonpath([real_target, home_real]) != home_real:
+            unexpected.append(w)
+    if effects.get("truncated"):
+        unexpected.append("audit_truncated_effects_incomplete")
     out_of_budget = bool(network or spawn or unexpected)
     return (not out_of_budget), unexpected, list(network) + list(spawn)
+
+
+def _read_git_rev(checkout: Path) -> str | None:
+    """Read the checked-out revision from .git without spawning processes."""
+    git = checkout / ".git"
+    try:
+        if git.is_file():
+            line = git.read_text(encoding="utf-8").strip()
+            if not line.startswith("gitdir:"):
+                return None
+            gitdir = Path(line.split(":", 1)[1].strip())
+            if not gitdir.is_absolute():
+                gitdir = checkout / gitdir
+        else:
+            gitdir = git
+        head = (gitdir / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref: "):
+            return head or None
+        ref = head[5:].strip()
+        ref_file = gitdir / ref
+        if ref_file.exists():
+            return ref_file.read_text(encoding="utf-8").strip() or None
+        packed = gitdir / "packed-refs"
+        if packed.exists():
+            for line in packed.read_text(encoding="utf-8").splitlines():
+                if line.endswith(" " + ref):
+                    return line.split(" ", 1)[0]
+        return None
+    except Exception:
+        return None
 
 
 def _atomic_write(path: Path, payload: dict) -> None:
@@ -341,7 +539,8 @@ def _static_url_identity(value) -> str | None:
     return f"{parts.scheme}://{parts.hostname}{parts.path.rstrip('/')}"
 
 
-def reconcile(static_entities: dict, envelope: dict) -> dict:
+def reconcile(static_entities: dict, envelope: dict,
+             profile_id: str = "") -> dict:
     """Mapped semantic comparison: nine families, six relation classes.
 
     Every record preserves provenance. This is evidence for the C1b
@@ -356,6 +555,7 @@ def reconcile(static_entities: dict, envelope: dict) -> dict:
     def add(key: str, field: str, hermes, static, relation: str,
             reason: str) -> None:
         records.append({
+            "profile_id": profile_id,
             "semantic_key": key, "field": field,
             "hermes_value_or_descriptor": hermes,
             "static_value_or_descriptor": static,
@@ -390,17 +590,43 @@ def reconcile(static_entities: dict, envelope: dict) -> dict:
         add("model.fallback", "refs", bridge_fb, None, "bridge_gain",
             "static_has_no_fallback_model_entity")
     elif static_fb is not None:
-        add("model.fallback", "refs", bridge_fb, static_fb,
-            "semantic_difference", "different_fallback_representations")
+        # Normalized comparison: static entity carries a concrete model,
+        # bridge carries fallback provider names - comparable only when one
+        # of the names is contained in the static model identity.
+        static_model = static_fb.get("model") or ""
+        bridge_names = [e.get("name") for e in bridge_fb
+                        if isinstance(e, dict)]
+        comparable = any(isinstance(n, str) and n and n in static_model
+                         for n in bridge_names)
+        relation = "equal" if comparable else "not_comparable"
+        reason = "compared" if comparable \
+            else "different_fallback_representations"
+        add("model.fallback", "refs", bridge_fb, static_fb, relation, reason)
     # 3. auxiliary task refs
     bridge_aux = eff.get("auxiliary") or {}
     static_aux_roles = {k.split(":", 1)[1]: v for k, v in
                         static_entities.items() if k.startswith("model:")}
+    def bridge_model_value(record):
+        # Normalized comparison source: plain value for value-records, None
+        # for ref-descriptors (materialized values never cross the boundary).
+        return record.get("value") if isinstance(record, dict) else None
+
     for task, record in bridge_aux.items():
         static_task = static_aux_roles.get(task)
         if static_task is not None:
-            add(f"auxiliary.{task}", "model", record.get("model"),
-                static_task.get("model"), "equal", "compared")
+            bridge_value = bridge_model_value(record.get("model"))
+            static_value = static_task.get("model")
+            if isinstance(record.get("model"), dict) \
+                    and record["model"].get("ref"):
+                add(f"auxiliary.{task}", "model", record["model"],
+                    static_task, "not_comparable",
+                    "env_ref_descriptor_value_not_crossed")
+            elif bridge_value is not None and bridge_value == static_value:
+                add(f"auxiliary.{task}", "model", record["model"],
+                    static_task.get("model"), "equal", "compared")
+            else:
+                add(f"auxiliary.{task}", "model", bridge_value,
+                    static_value, "semantic_difference", "compared")
         else:
             add(f"auxiliary.{task}", "model", record.get("model"), None,
                 "bridge_gain", "static_has_no_auxiliary_role_entity")
@@ -531,12 +757,43 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     hermes_src = args.hermes_src or str(
         Path(hermes_python).parent.parent.parent)
-    if not os.path.isfile(os.path.join(hermes_src, "pyproject.toml")):
+    pyproject = Path(hermes_src) / "pyproject.toml"
+    if not pyproject.is_file():
         print("hermes-discovery-shadow: cannot locate Hermes source checkout "
               f"from {hermes_python} (pass --hermes-src)", file=sys.stderr)
         return 2
+    # Interpreter/source binding (review finding): the configured python must
+    # live inside the selected Hermes checkout - otherwise an arbitrary
+    # launcher/source tree could be substituted through configuration.
+    real_python = os.path.realpath(hermes_python)
+    real_src = os.path.realpath(hermes_src)
+    if os.path.commonpath([real_python, real_src]) != real_src:
+        print("hermes-discovery-shadow: interpreter is outside the selected "
+              "Hermes checkout", file=sys.stderr)
+        return 2
+    try:
+        import tomllib
+        manifest_name = tomllib.loads(pyproject.read_text(
+            encoding="utf-8")).get("project", {}).get("name")
+    except Exception:
+        manifest_name = None
+    if manifest_name != "hermes-agent":
+        print("hermes-discovery-shadow: selected checkout pyproject name is "
+              f"{manifest_name!r}, expected 'hermes-agent'", file=sys.stderr)
+        return 2
     profile_home = Path(args.profile_home).resolve()
-    rev = args.hermes_rev or "unrecorded"
+    # The revision must describe the selected checkout, not a caller-provided
+    # string: read it from the checkout's .git and refuse a mismatch (review
+    # finding: the wrapper never passed --hermes-rev, so envelopes carried
+    # "unrecorded"; a caller string was trusted instead of the source).
+    rev_computed = _read_git_rev(Path(hermes_src)) or "unrecorded"
+    if args.hermes_rev and rev_computed != "unrecorded" \
+            and args.hermes_rev != rev_computed:
+        print(f"hermes-discovery-shadow: hermes revision mismatch: declared "
+              f"{args.hermes_rev!r}, selected checkout is {rev_computed!r}",
+              file=sys.stderr)
+        return 2
+    rev = rev_computed
 
     env = build_child_env(profile_home, hermes_src,
                           extra={"C1A_PROFILE_ID": args.profile_id}, rev=rev)
@@ -546,7 +803,8 @@ def main(argv: list[str] | None = None) -> int:
                        env=env, timeout_s=args.timeout,
                        output_cap=args.output_cap,
                        python_executable=hermes_python)
-    envelope, reason = parse_envelope(result)
+    envelope, reason = parse_envelope(result,
+                                      expected_profile_id=args.profile_id)
 
     state_dir = Path(args.state_dir)
     shadow_path = state_dir / "hermes-discovery-shadow.json"
@@ -572,10 +830,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     within_budget, unexpected_writes, out_of_budget_effects = \
-        validate_effects(envelope)
+        validate_effects(envelope, profile_home)
     facets = envelope["facets"]
     compatibility = "ok" if within_budget else "degraded"
-    if any(f.get("state") == "compatibility_degraded" for f in facets.values()):
+    if any(f.get("state") in ("error", "compatibility_degraded")
+           for f in facets.values()):
         compatibility = "degraded"
     shadow = {
         "schema": SHADOW_SCHEMA,
@@ -592,7 +851,7 @@ def main(argv: list[str] | None = None) -> int:
     snapshot = _load_json(Path(args.static_snapshot))
     if isinstance(snapshot, dict):
         static_entities = snapshot.get("entities") or {}
-    recon = reconcile(static_entities, envelope)
+    recon = reconcile(static_entities, envelope, args.profile_id)
     recon["updated"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     recon["profile_id"] = args.profile_id
     recon["compatibility"] = compatibility

@@ -1452,7 +1452,34 @@ def probe_c1a_containment_matrix(tmp: Path):
                               "facets": valid["facets"]}),
         "stdout_truncated": False, "stderr": "", "stderr_truncated": False,
         "output_limited": False})[0] is None
+    unknown_facet = sh.parse_envelope({
+        "status": "ok", "exit_code": 0,
+        "stdout": json.dumps({"schema": 1, "source": valid["source"],
+                              "facets": {"x": valid["facets"]["x"],
+                                         "rogue": valid["facets"]["x"]}}),
+        "stdout_truncated": False, "stderr": "", "stderr_truncated": False,
+        "output_limited": False})[0] is None
+    bound = sh.parse_envelope({
+        "status": "ok", "exit_code": 0,
+        "stdout": json.dumps({"schema": 1,
+                              "source": dict(valid["source"],
+                                             profile_id="attacker"),
+                              "facets": valid["facets"],
+                              "effects": valid["effects"]}),
+        "stdout_truncated": False, "stderr": "", "stderr_truncated": False,
+        "output_limited": False},
+        expected_profile_id="expected")[0] is None
+    nan_rejected = sh.parse_envelope({
+        "status": "ok", "exit_code": 0,
+        "stdout": '{"schema": 1, "source": {"hermes_revision": "r", '
+                  '"bridge_revision": "b", "profile_id": "p"}, '
+                  '"facets": {"x": {"state": "ok", "authority": "argus", '
+                  '"data": {"n": NaN}}}, "effects": {"network": [], '
+                  '"process_spawn": [], "writes": [], "truncated": false}}',
+        "stdout_truncated": False, "stderr": "", "stderr_truncated": False,
+        "output_limited": False})[0] is None
     ok = (result["status"] == "ok"
+          and unknown_facet and bound and nan_rejected
           and "C1A_DUMMY_CANARY" not in result["stdout"]
           and child_env.get("HERMES_HOME") == str(home)
           and child_env.get("HOME") == str(home)
@@ -1467,7 +1494,8 @@ def probe_c1a_containment_matrix(tmp: Path):
           f"env={result['status']} reserved={reserved_rejected} "
           f"invalid_env={invalid_env} cap={capped['status']} "
           f"timeout={timed['status']} "
-          f"parser={bad_stderr_trunc}/{bad_dup}/{bad_effects}")
+          f"parser={bad_stderr_trunc}/{bad_dup}/{bad_effects}/"
+          f"{unknown_facet}/{bound}/{nan_rejected}")
 
 
 def probe_c1a_profile_isolation_ab_ba(tmp: Path):

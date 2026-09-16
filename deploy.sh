@@ -100,7 +100,8 @@ CORE_SYSTEMD=(hermes-dashboard.service hermes-dashboard.service.d/memory-limits.
 
 # INTEGRATIONS: discover конфига + каскад-трекер фолбека + health-check v2 (ядро Argus v2)
 INTEGRATIONS_HOME_SCRIPTS=(integration-discover.py integration-discover-wrapper.sh fallback-tracker-v2.py \
-                           health-check-v2.py health-check-v2-wrapper.sh)
+                           health-check-v2.py health-check-v2-wrapper.sh \
+                           hermes-discovery-bridge.py hermes-discovery-shadow.py)
 INTEGRATIONS_HERMES_SCRIPTS=(health-check-integrations.sh)
 INTEGRATIONS_SYSTEMD=(hermes-vps-kit-config.path hermes-vps-kit-discover.service)
 
