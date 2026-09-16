@@ -1750,6 +1750,9 @@ def probe_c1a_wrapper_shadow_matrix(tmp: Path):
     baseline = run_wrapper({"HERMES_DISCOVERY_SHADOW": "0"})
     base_snap, base_log, base_rc = snapshot_bytes(), log_fingerprint(), \
         baseline.returncode
+    # The discover log accumulates across rows; each row must append exactly
+    # the same behavioral delta as the baseline run (review finding).
+    expected_delta = base_log[-1:] or ()
     success = run_wrapper({
         "HERMES_DISCOVERY_SHADOW": "1",
         "HERMES_DISCOVERY_HERMES_PYTHON": hp,
@@ -1767,7 +1770,8 @@ def probe_c1a_wrapper_shadow_matrix(tmp: Path):
     legacy_same = (base_rc == success.returncode == degraded.returncode
                    == timeout_zero.returncode
                    and snapshot_bytes() == base_snap
-                   and log_fingerprint() == base_log)
+                   and log_fingerprint() == base_log
+                   + expected_delta * 3)
     shadow_files = hermes / "state" / "hermes-discovery-shadow.json"
     shadow_recorded = success.returncode == 0 and shadow_files.exists()
     degraded_ok = degraded.returncode == 0
