@@ -307,7 +307,9 @@ def _validate_facet_data(name: str, data) -> str:
         if not isinstance(fb, list) or len(fb) > MAX_COLLECTION_ITEMS:
             return "effective_config.fallback_providers must be a bounded list"
         for entry in fb:
-            if not isinstance(entry, dict) or set(entry) != {"name", "base_url_identity"}:
+            # String fallback entries emit {name} only; mapping entries add
+            # base_url_identity - both shapes are contract-valid.
+            if not isinstance(entry, dict)                     or not entry.keys() <= {"name", "base_url_identity"}                     or "name" not in entry:
                 return "effective_config.fallback_providers entry is malformed"
             if entry["name"] is not None and not _v_safe_name(entry["name"]):
                 return "effective_config.fallback_providers.name must be a safe identifier"
