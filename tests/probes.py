@@ -1738,10 +1738,13 @@ def probe_c1a_wrapper_shadow_matrix(tmp: Path):
         return p_.read_bytes() if p_.exists() else b""
 
     def log_fingerprint():
+        # Timestamped entries are stripped: the fingerprint compares the
+        # behavioral sequence, not wall-clock noise.
         p_ = hermes / "logs" / "integration-discover.log"
-        return "\n".join(
-            l for l in p_.read_text(encoding="utf-8",
-                                    errors="replace").splitlines()
+        return tuple(
+            l.split("] ", 1)[-1]
+            for l in p_.read_text(encoding="utf-8",
+                                   errors="replace").splitlines()
             if "discover exit=" in l or "алерт" in l)
 
     baseline = run_wrapper({"HERMES_DISCOVERY_SHADOW": "0"})
