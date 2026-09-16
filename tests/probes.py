@@ -1572,6 +1572,12 @@ def probe_c1a_wrapper_shadow_matrix(tmp: Path):
     hermes = home / ".hermes"
     (hermes / "state").mkdir(parents=True, exist_ok=True)
     (hermes / "logs").mkdir(parents=True, exist_ok=True)
+    (home / "scripts").mkdir(parents=True, exist_ok=True)
+    # Deploy installs the shadow parent next to the wrapper; the fixture
+    # mirrors that layout with the real implementation.
+    (home / "scripts" / "hermes-discovery-shadow.py").write_text(
+        (REPO / "scripts" / "hermes-discovery-shadow.py").read_text(
+            encoding="utf-8"), encoding="utf-8", newline="\n")
     report = {"events": [{"event": "added", "key": "provider:dummy",
                           "entity": {"type": "provider", "name": "dummy"}}]}
     engine = ("import json, os, sys\n"
