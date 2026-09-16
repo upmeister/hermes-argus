@@ -313,7 +313,7 @@ def _validate_facet_data(name: str, data) -> str:
                 return "effective_config.fallback_providers entry is malformed"
             if entry["name"] is not None and not _v_safe_name(entry["name"]):
                 return "effective_config.fallback_providers.name must be a safe identifier"
-            if entry["base_url_identity"] is not None \
+            if entry.get("base_url_identity") is not None \
                     and not _v_str(entry["base_url_identity"], 256):
                 return "effective_config.fallback_providers.base_url_identity is malformed"
         prov = data["providers"]
