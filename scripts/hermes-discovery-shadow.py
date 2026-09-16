@@ -48,6 +48,7 @@ FACET_STATES = ("ok", "partial", "unsupported", "compatibility_degraded",
 ACCEPTED_FACETS = ("identity", "config_health", "effective_config")
 ACCEPTED_FACET_SET = frozenset(ACCEPTED_FACETS)
 MAX_STRING_LEN = 512
+MAX_COLLECTION_ITEMS = 50
 import re
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
