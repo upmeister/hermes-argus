@@ -367,7 +367,9 @@ def _validate_facet_data(name: str, data) -> str:
 
 
 def _v_model_record_or_none(value) -> bool:
-    return value is None or _v_model_record(value)
+    # config_health emits the raw identity string; only effective_config
+    # wraps it into a value/ref record.
+    return value is None or isinstance(value, str) or _v_model_record(value)
 
 def parse_envelope(run_result: dict, expected_profile_id: str = "",
                    expected_facets: frozenset = ACCEPTED_FACET_SET
@@ -763,13 +765,16 @@ def main(argv: list[str] | None = None) -> int:
               f"from {hermes_python} (pass --hermes-src)", file=sys.stderr)
         return 2
     # Interpreter/source binding (review finding): the configured python must
-    # live inside the selected Hermes checkout - otherwise an arbitrary
-    # launcher/source tree could be substituted through configuration.
-    real_python = os.path.realpath(hermes_python)
+    # be the venv python of the selected Hermes checkout. realpath of the
+    # interpreter itself would resolve the venv symlink to the system python,
+    # so the binding is checked through the venv directory: <checkout>/venv
+    # with its own pyvenv.cfg, inside the selected checkout.
     real_src = os.path.realpath(hermes_src)
-    if os.path.commonpath([real_python, real_src]) != real_src:
-        print("hermes-discovery-shadow: interpreter is outside the selected "
-              "Hermes checkout", file=sys.stderr)
+    venv_root = os.path.realpath(str(Path(hermes_python).parent.parent))
+    if os.path.commonpath([venv_root, real_src]) != real_src             or not os.path.isfile(
+                os.path.join(venv_root, "pyvenv.cfg")):
+        print("hermes-discovery-shadow: configured interpreter is not the "
+              "venv python of the selected Hermes checkout", file=sys.stderr)
         return 2
     try:
         import tomllib
