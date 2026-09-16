@@ -1520,7 +1520,9 @@ def probe_c1a_hermes_facets(tmp: Path):
     helper_cmd = f"sh -c 'echo C1A_DUMMY_KEYCMD_SECRET; touch {marker}'"
     (home / "config.yaml").write_text(
         'model:\n  default: "alpha-provider/model-a"\n'
-        'providers:\n  gated:\n    base_url: "https://gated.invalid/v1"\n'
+        'fallback_providers:\n  - "beta-provider"\n'
+        'providers:\n  gated:\n'
+        '    base_url: "https://gated.invalid/v1"\n'
         f'    key_cmd: "{helper_cmd}"\n',
         encoding="utf-8", newline="\n")
     env = sh.build_child_env(home, src, rev=rev)
