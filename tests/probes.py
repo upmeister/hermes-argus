@@ -1591,6 +1591,97 @@ def probe_c1a_hermes_facets(tmp: Path):
           f"leaks={leaks} reason={reason}")
 
 
+def probe_c1a_deploy_installs_runtime_entrypoints(tmp: Path):
+    """C1a review finding: deploy.sh must actually install the shadow parent,
+    the bridge and the wrapper — otherwise enabling the flag after a deploy
+    ends in a silently non-fatal missing-script path."""
+    import subprocess as sp
+    home = tmp / "c1a-deploy-home"
+    config = write(tmp / "c1a-deploy-config.env",
+                   "MODULE_CORE=ON\n"
+                   "MODULE_INTEGRATIONS=ON\n"
+                   "MODULE_TG_BOT=OFF\n"
+                   "MODULE_ANALYZER=OFF\n"
+                   "MODULE_HEARTBEAT=OFF\n"
+                   "MODULE_GH_HEARTBEAT=OFF\n"
+                   "MODULE_DISCORD_BOT=OFF\n")
+    env = dict(os.environ, HOME=str(home),
+               XDG_RUNTIME_DIR=str(tmp),
+               CRON_FILE=str(tmp / "c1a-crontab.txt"))
+    r = sp.run(["bash", str(REPO / "deploy.sh"), str(config)],
+               cwd=REPO, env=env, capture_output=True, text=True, timeout=120)
+    # deploy.sh places INTEGRATIONS_HOME_SCRIPTS under $HOME/scripts (the
+    # wrapper hook resolves the shadow parent there); the poller belongs to
+    # the TG_BOT module, which stays OFF in this fixture.
+    installed = all(
+        (home / "scripts" / name).exists()
+        for name in ("hermes-discovery-bridge.py",
+                     "hermes-discovery-shadow.py"))
+    wrapper_installed = (home / "scripts" /
+                         "integration-discover-wrapper.sh").exists()
+    ok = r.returncode == 0 and installed and wrapper_installed
+    check("c1a_deploy_installs_runtime_entrypoints", ok,
+          f"rc={r.returncode} installed={installed} "
+          f"wrapper={wrapper_installed}")
+
+
+def probe_c1a_reconciliation_relations(tmp: Path):
+    """C1a review finding: normalized comparisons and per-record provenance.
+    Covers bridge_gain, equal, not_comparable, static_retained across the
+    OAuth/plugin/registry families, and per-record profile_id."""
+    sh = _c1a_shadow()
+    static = {
+        "model:primary": {"type": "activemodel", "role": "primary",
+                          "provider": "alpha-provider",
+                          "model": "model-a"},
+        "model:fallback": {"type": "activemodel", "role": "fallback",
+                           "provider": "fallback-provider",
+                           "model": "fallback-provider/model-b"},
+        "mcp:time": {"type": "mcp", "name": "time", "transport": "stdio"},
+        "oauth:nous": {"type": "oauth", "name": "nous", "active": True},
+        "plugin-provider:community": {"type": "plugin-provider",
+                                      "name": "community"},
+        "envkey:TOOL_KEY": {"type": "envkey", "name": "TOOL_KEY"},
+        "envref:LEGACY_VAR": {"type": "envref", "name": "LEGACY_VAR",
+                              "key_present": True},
+    }
+    envelope = {"schema": 1,
+                "source": {"hermes_revision": "r", "bridge_revision": "b",
+                           "profile_id": "production"},
+                "facets": {
+                    "effective_config": {"state": "ok", "authority": "hermes",
+                                         "reason_code": "allowlist_extracted",
+                                         "data": {
+        "model_primary": {"value": "alpha-provider/model-a",
+                          "source": "user"},
+        "fallback_providers": [{"name": "fallback-provider"}],
+        "providers": {}, "mcp_servers": {"time": {"transport": "stdio"}},
+        "auxiliary": {}}},
+                    "config_health": {"state": "ok", "authority": "hermes",
+                                      "reason_code": "config_parsed",
+                                      "data": {
+        "config_file_present": True, "raw_parse_ok": True, "load_ok": True,
+        "primary_model": "alpha-provider/model-a", "note": ""}},
+                    "identity": {"state": "ok", "authority": "hermes",
+                                 "reason_code": "ok",
+                                 "data": {"hermes_version": "0.21.3"}}},
+                "effects": {"network": [], "process_spawn": [], "writes": [],
+                            "truncated": False}}
+    recon = sh.reconcile(static, envelope, profile_id="production")
+    by_key = {r["semantic_key"]: r for r in recon["records"]}
+    ok = (
+        by_key["model.primary"]["relation"] == "equal"
+        and by_key["model.fallback"]["relation"] == "equal"
+        and by_key["mcp.time"]["relation"] == "equal"
+        and by_key["oauth:nous"]["relation"] == "static_retained"
+        and by_key["plugin-provider:community"]["relation"] == "static_retained"
+        and by_key["envkey:TOOL_KEY"]["relation"] == "static_retained"
+        and all(r["profile_id"] == "production" for r in recon["records"]))
+    check("c1a_reconciliation_relations", ok,
+          f"counts={recon['counts']} "
+          f"fallback={by_key['model.fallback']['relation']}")
+
+
 def probe_c1a_wrapper_shadow_matrix(tmp: Path):
     """C1a gate: the guarded wrapper hook must not change legacy behavior for
     shadow disabled / success / degraded, and must isolate shadow output from
@@ -1619,8 +1710,14 @@ def probe_c1a_wrapper_shadow_matrix(tmp: Path):
                 "HOME": str(home), "XDG_RUNTIME_DIR": str(tmp),
                 "PYTHONIOENCODING": "utf-8",
                 "WATCHDOG_BOT_TOKEN": ""}
-    hermes_python = sys.executable
-    bridge = str(REPO / "scripts" / "hermes-discovery-bridge.py")
+    hp = os.environ.get("C1A_HERMES_PYTHON")
+    rev = os.environ.get("C1A_HERMES_REV")
+    if not (hp and rev):
+        # The wrapper matrix runs the real production Hermes interpreter;
+        # without declared C1A_HERMES_* variables the probe skips cleanly.
+        print("[SKIP] c1a_wrapper_shadow_matrix — C1A_HERMES_PYTHON/"
+              "C1A_HERMES_REV not declared")
+        return
 
     import shutil
     if shutil.which("flock") is None:
@@ -1636,28 +1733,38 @@ def probe_c1a_wrapper_shadow_matrix(tmp: Path):
                                    "integration-discover-wrapper.sh")],
                       capture_output=True, text=True, timeout=60, env=env)
 
+    def snapshot_bytes():
+        p_ = hermes / "state" / "integration-snapshot.json"
+        return p_.read_bytes() if p_.exists() else b""
+
+    def log_fingerprint():
+        p_ = hermes / "logs" / "integration-discover.log"
+        return "\n".join(
+            l for l in p_.read_text(encoding="utf-8",
+                                    errors="replace").splitlines()
+            if "discover exit=" in l or "алерт" in l)
+
     baseline = run_wrapper({"HERMES_DISCOVERY_SHADOW": "0"})
+    base_snap, base_log, base_rc = snapshot_bytes(), log_fingerprint(), \
+        baseline.returncode
     success = run_wrapper({
         "HERMES_DISCOVERY_SHADOW": "1",
-        "HERMES_DISCOVERY_HERMES_PYTHON": hermes_python,
-        "HERMES_DISCOVERY_BRIDGE": bridge,
-        "HERMES_DISCOVERY_HERMES_SRC": str(tmp / "c1a-src"),
-        "C1A_HERMES_SRC": str(tmp / "c1a-src"),
-        "C1A_HERMES_REV": "r"})
-    src_dir = tmp / "c1a-src"
-    src_dir.mkdir(parents=True, exist_ok=True)
-    (src_dir / "pyproject.toml").write_text(
-        '[project]\nname = "fixture-hermes"\nversion = "0.0.0"\n',
-        encoding="utf-8", newline="\n")
+        "HERMES_DISCOVERY_HERMES_PYTHON": hp,
+        "HERMES_DISCOVERY_HERMES_REV": rev})
     degraded = run_wrapper({
         "HERMES_DISCOVERY_SHADOW": "1",
-        "HERMES_DISCOVERY_HERMES_PYTHON": hermes_python,
-        "HERMES_DISCOVERY_BRIDGE": bridge,
-        "HERMES_DISCOVERY_HERMES_SRC": str(tmp / "c1a-src"),
-        "C1A_HERMES_SRC": str(tmp / "c1a-src"),
-        "C1A_HERMES_REV": "r"})
-    legacy_same = (baseline.returncode == success.returncode
-                   == degraded.returncode)
+        "HERMES_DISCOVERY_HERMES_PYTHON": hp,
+        "HERMES_DISCOVERY_HERMES_REV": rev,
+        "C1A_FORCE_SHADOW_FAILURE": "1"})
+    timeout_zero = run_wrapper({
+        "HERMES_DISCOVERY_SHADOW": "1",
+        "HERMES_DISCOVERY_HERMES_PYTHON": hp,
+        "HERMES_DISCOVERY_HERMES_REV": rev,
+        "HERMES_DISCOVERY_SHADOW_TIMEOUT": "0"})
+    legacy_same = (base_rc == success.returncode == degraded.returncode
+                   == timeout_zero.returncode
+                   and snapshot_bytes() == base_snap
+                   and log_fingerprint() == base_log)
     shadow_files = hermes / "state" / "hermes-discovery-shadow.json"
     shadow_recorded = success.returncode == 0 and shadow_files.exists()
     degraded_ok = degraded.returncode == 0
@@ -1765,6 +1872,8 @@ def main() -> int:
     probe_c1a_containment_matrix(tmp)
     probe_c1a_profile_isolation_ab_ba(tmp)
     probe_c1a_hermes_facets(tmp)
+    probe_c1a_reconciliation_relations(tmp)
+    probe_c1a_deploy_installs_runtime_entrypoints(tmp)
     probe_c1a_wrapper_shadow_matrix(tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
