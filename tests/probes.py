@@ -1376,6 +1376,259 @@ def probe_wrapper_v2_contract_enforced(tmp: Path):
           f"missing={state1.get('kit:DUMMY_KEY')} bool={state2.get('kit:DUMMY_KEY')}")
 
 
+
+# ── Пробы: C1a shadow bridge (ADR 0002 discovery/sync) ─────────────────────
+
+def _c1a_shadow():
+    return load_module("hermes-discovery-shadow")
+
+
+def _c1a_write_child(tmp: Path, name: str, body: str) -> str:
+    p = tmp / name
+    p.write_text(body, encoding="utf-8", newline="\n")
+    return str(p)
+
+
+def probe_c1a_containment_matrix(tmp: Path):
+    """C1a parent containment: env allowlist without parent-secret
+    inheritance, reserved-key rejection, fail-closed missing env, strict
+    parser (stderr truncation / duplicate keys / missing effects), timeout
+    bounded, output cap stops the child."""
+    sh = _c1a_shadow()
+    home = tmp / "c1a-profile"
+    home.mkdir(parents=True, exist_ok=True)
+    child = _c1a_write_child(tmp, "c1a_env_dump.py",
+                             "import json, os\n"
+                             "print(json.dumps(dict(os.environ)))\n")
+    os.environ["C1A_PARENT_TOKEN"] = "C1A_DUMMY_CANARY"
+    try:
+        env = sh.build_child_env(home, os.path.join(str(tmp), "src"),
+                                 extra={"C1A_CANARY_ENV": "declared"},
+                                 rev="r")
+        result = sh.run_child(child, env=env, timeout_s=15)
+    finally:
+        os.environ.pop("C1A_PARENT_TOKEN", None)
+    child_env = json.loads(result["stdout"]) if result["status"] == "ok" else {}
+    reserved_rejected = False
+    try:
+        sh.build_child_env(home, os.path.join(str(tmp), "src"),
+                           extra={"HOME": str(tmp / "wrong")}, rev="r")
+    except ValueError:
+        reserved_rejected = True
+    invalid_env = sh.run_child(child, timeout_s=5)["status"] == "invalid_env"
+    flood = _c1a_write_child(
+        tmp, "c1a_flood.py",
+        "import sys; sys.stdout.write('C1A' * 4 * 1024 * 1024)\n")
+    capped = sh.run_child(
+        flood, env=sh.build_child_env(home, os.path.join(str(tmp), "src"),
+                                      rev="r"),
+        timeout_s=30, output_cap=64 * 1024)
+    sleeper = _c1a_write_child(tmp, "c1a_sleep.py",
+                               "import time; time.sleep(60)\n")
+    timed = sh.run_child(
+        sleeper, env=sh.build_child_env(home, os.path.join(str(tmp), "src"),
+                                        rev="r"),
+        timeout_s=2)
+    valid = {"schema": 1,
+             "source": {"hermes_revision": "r", "bridge_revision": "b",
+                        "profile_id": "p"},
+             "facets": {"x": {"state": "ok", "authority": "argus",
+                              "data": {}}},
+             "effects": {"network": [], "process_spawn": [], "writes": [],
+                         "truncated": False}}
+    bad_stderr_trunc = sh.parse_envelope({
+        "status": "ok", "exit_code": 0, "stdout": json.dumps(valid),
+        "stdout_truncated": False, "stderr": "", "stderr_truncated": True,
+        "output_limited": False})[0] is None
+    bad_dup = sh.parse_envelope({
+        "status": "ok", "exit_code": 0,
+        "stdout": json.dumps(valid).replace('"schema": 1',
+                                            '"schema": 1, "schema": 1'),
+        "stdout_truncated": False, "stderr": "", "stderr_truncated": False,
+        "output_limited": False})[0] is None
+    bad_effects = sh.parse_envelope({
+        "status": "ok", "exit_code": 0,
+        "stdout": json.dumps({"schema": 1, "source": valid["source"],
+                              "facets": valid["facets"]}),
+        "stdout_truncated": False, "stderr": "", "stderr_truncated": False,
+        "output_limited": False})[0] is None
+    ok = (result["status"] == "ok"
+          and "C1A_DUMMY_CANARY" not in result["stdout"]
+          and child_env.get("HERMES_HOME") == str(home)
+          and child_env.get("HOME") == str(home)
+          and child_env.get("C1A_CANARY_ENV") == "declared"
+          and reserved_rejected and invalid_env
+          and capped["status"] == "output_limit"
+          and capped["stdout_truncated"]
+          and len(capped["stdout"]) == 64 * 1024
+          and timed["status"] == "timeout"
+          and bad_stderr_trunc and bad_dup and bad_effects)
+    check("c1a_parent_containment_matrix", ok,
+          f"env={result['status']} reserved={reserved_rejected} "
+          f"invalid_env={invalid_env} cap={capped['status']} "
+          f"timeout={timed['status']} "
+          f"parser={bad_stderr_trunc}/{bad_dup}/{bad_effects}")
+
+
+def probe_c1a_profile_isolation_ab_ba(tmp: Path):
+    """C1a gate 1: one explicit profile per child, no bleed in A->B and
+    B->A orders."""
+    sh = _c1a_shadow()
+    child = _c1a_write_child(
+        tmp, "c1a_home_echo.py",
+        "import os; print(os.environ.get('HERMES_HOME', ''))\n")
+    homes = {"A": tmp / "c1a-profile-a", "B": tmp / "c1a-profile-b"}
+    for h in homes.values():
+        h.mkdir(parents=True, exist_ok=True)
+    seen = {}
+    for order, pair in (("AB", ("A", "B")), ("BA", ("B", "A"))):
+        for label in pair:
+            home = homes[label]
+            env = sh.build_child_env(home, os.path.join(str(tmp), "src"),
+                                     rev="r")
+            result = sh.run_child(child, env=env, timeout_s=15)
+            seen[(order, label)] = result["stdout"].strip() \
+                if result["status"] == "ok" else None
+    ok = all(seen[(o, l)] == str(homes[l])
+             for o in ("AB", "BA") for l in ("A", "B"))
+    check("c1a_profile_isolation_ab_ba", ok, f"seen={seen}")
+
+
+def probe_c1a_hermes_facets(tmp: Path):
+    """C1a accepted facets against the actual production Hermes revision
+    (skipped unless C1A_HERMES_PYTHON/C1A_HERMES_SRC/C1A_HERMES_REV are
+    declared — the suite stays CI-green without a Hermes checkout)."""
+    hp = os.environ.get("C1A_HERMES_PYTHON")
+    src = os.environ.get("C1A_HERMES_SRC")
+    rev = os.environ.get("C1A_HERMES_REV")
+    if not (hp and src and rev):
+        print("[SKIP] c1a_hermes_facets — C1A_HERMES_PYTHON/C1A_HERMES_SRC/"
+              "C1A_HERMES_REV not declared")
+        return
+    sh = _c1a_shadow()
+    home = tmp / "c1a-hermes-home"
+    (home / "plugins" / "model-providers" / "c1a-sentinel").mkdir(
+        parents=True, exist_ok=True)
+    sentinel = home / "plugins" / "model-providers" / "c1a-sentinel" / "__init__.py"
+    sentinel.write_text(
+        "raise RuntimeError('C1a sentinel: plugin code must never be "
+        "imported by automatic facets')\n",
+        encoding="utf-8", newline="\n")
+    (home / ".env").write_text("ALPHA_API_KEY=C1A_DUMMY_DOTENV_CANARY\n",
+                               encoding="utf-8", newline="\n")
+    marker = tmp / "c1a-keycmd-marker.txt"
+    helper_cmd = f"sh -c 'echo C1A_DUMMY_KEYCMD_SECRET; touch {marker}'"
+    (home / "config.yaml").write_text(
+        'model:\n  default: "alpha-provider/model-a"\n'
+        'providers:\n  gated:\n    base_url: "https://gated.invalid/v1"\n'
+        f'    key_cmd: "{helper_cmd}"\n',
+        encoding="utf-8", newline="\n")
+    env = sh.build_child_env(home, src, extra={"C1A_HERMES_REV": rev})
+    result = sh.run_child(
+        os.path.join(str(REPO), "scripts", "hermes-discovery-bridge.py"),
+        ["--facets", "identity,config_health,effective_config",
+         "--profile-id", "c1a-probe"],
+        env=env, timeout_s=120, python_executable=hp)
+    envelope, reason = sh.parse_envelope(result)
+    facets = (envelope or {}).get("facets", {})
+    blob = json.dumps(envelope, ensure_ascii=False) if envelope else ""
+    canaries = ("C1A_DUMMY_DOTENV_CANARY", "C1A_DUMMY_KEYCMD_SECRET")
+    leaks = [c for c in canaries
+             if c in blob
+             or c in (result.get("stdout") or "")
+             or c in (result.get("stderr") or "")
+             or any(c in p for p in result.get("argv", []))]
+    marker_absent = not marker.exists()
+    no_network = (envelope or {}).get("effects", {}).get("network") == []
+    no_spawn = (envelope or {}).get("effects", {}).get("process_spawn") == []
+    unexpected_writes = [
+        w for w in (envelope or {}).get("effects", {}).get("writes", [])
+        if not (w.startswith("{HERMES_HOME}/SOUL.md")
+                or w.startswith("{HERMES_HOME}/audio_cache/")
+                or w.startswith("{HERMES_HOME}/backups/config/"))]
+    ok = (envelope is not None
+          and facets.get("identity", {}).get("state") == "ok"
+          and facets.get("config_health", {}).get("state") == "ok"
+          and facets.get("effective_config", {}).get("state") == "ok"
+          and facets.get("effective_config", {}).get("data", {})
+          .get("fallback_providers") == [{"name": "beta-provider"}]
+          and marker_absent and no_network and no_spawn
+          and not unexpected_writes and leaks == [])
+    check("c1a_hermes_facets_negative_control", ok,
+          f"states={ {k: v.get('state') for k, v in facets.items()} } "
+          f"marker_absent={marker_absent} network={no_network} "
+          f"spawn={no_spawn} unexpected_writes={unexpected_writes} "
+          f"leaks={leaks} reason={reason}")
+
+
+def probe_c1a_wrapper_shadow_matrix(tmp: Path):
+    """C1a gate: the guarded wrapper hook must not change legacy behavior for
+    shadow disabled / success / degraded, and must isolate shadow output from
+    the legacy report (C10)."""
+    import subprocess as sp
+    home = tmp / "c1a-wrapper-home"
+    hermes = home / ".hermes"
+    (hermes / "state").mkdir(parents=True, exist_ok=True)
+    (hermes / "logs").mkdir(parents=True, exist_ok=True)
+    report = {"events": [{"event": "added", "key": "provider:dummy",
+                          "entity": {"type": "provider", "name": "dummy"}}]}
+    engine = ("import json, os, sys\n"
+              "rc = int(os.environ.get('C1A_FAKE_STATIC_RC', '2'))\n"
+              f"sys.stdout.write(json.dumps({json.dumps(report)}))\n"
+              "sys.exit(rc)\n")
+    write(home / "scripts" / "integration-discover.py", engine)
+    env_base = {"PATH": os.environ.get("PATH", ""),
+                "HOME": str(home), "XDG_RUNTIME_DIR": str(tmp),
+                "PYTHONIOENCODING": "utf-8",
+                "WATCHDOG_BOT_TOKEN": ""}
+    hermes_python = sys.executable
+    bridge = str(REPO / "scripts" / "hermes-discovery-bridge.py")
+
+    import shutil
+    if shutil.which("flock") is None:
+        # The wrapper's lock primitive is unavailable on Windows dev boxes;
+        # the matrix runs in CI/ubuntu and on peetna-aws.
+        print("[SKIP] c1a_wrapper_shadow_matrix — flock not available")
+        return
+
+    def run_wrapper(extra_env):
+        env = dict(env_base)
+        env.update(extra_env)
+        return sp.run(["bash", str(REPO / "scripts" /
+                                   "integration-discover-wrapper.sh")],
+                      capture_output=True, text=True, timeout=60, env=env)
+
+    baseline = run_wrapper({"HERMES_DISCOVERY_SHADOW": "0"})
+    success = run_wrapper({
+        "HERMES_DISCOVERY_SHADOW": "1",
+        "HERMES_DISCOVERY_HERMES_PYTHON": hermes_python,
+        "HERMES_DISCOVERY_BRIDGE": bridge,
+        "HERMES_DISCOVERY_HERMES_SRC": str(tmp / "c1a-src"),
+        "C1A_HERMES_SRC": str(tmp / "c1a-src"),
+        "C1A_HERMES_REV": "r"})
+    src_dir = tmp / "c1a-src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (src_dir / "pyproject.toml").write_text(
+        '[project]\nname = "fixture-hermes"\nversion = "0.0.0"\n',
+        encoding="utf-8", newline="\n")
+    degraded = run_wrapper({
+        "HERMES_DISCOVERY_SHADOW": "1",
+        "HERMES_DISCOVERY_HERMES_PYTHON": hermes_python,
+        "HERMES_DISCOVERY_BRIDGE": bridge,
+        "HERMES_DISCOVERY_HERMES_SRC": str(tmp / "c1a-src"),
+        "C1A_HERMES_SRC": str(tmp / "c1a-src"),
+        "C1A_HERMES_REV": "r"})
+    legacy_same = (baseline.returncode == success.returncode
+                   == degraded.returncode)
+    shadow_files = hermes / "state" / "hermes-discovery-shadow.json"
+    shadow_recorded = success.returncode == 0 and shadow_files.exists()
+    degraded_ok = degraded.returncode == 0
+    ok = legacy_same and shadow_recorded and degraded_ok
+    check("c1a_wrapper_shadow_matrix", ok,
+          f"legacy_same={legacy_same} shadow_recorded={shadow_recorded} "
+          f"degraded_ok={degraded_ok}")
+
+
 # ── runner ──────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -1465,6 +1718,12 @@ def main() -> int:
     probe_discover_url_secret_leak(disc, tmp)
     probe_discover_url_shape_and_literals(disc, tmp)
     probe_deploy_cron_profile(tmp)
+
+    # C1a shadow bridge (ADR 0002 discovery/sync)
+    probe_c1a_containment_matrix(tmp)
+    probe_c1a_profile_isolation_ab_ba(tmp)
+    probe_c1a_hermes_facets(tmp)
+    probe_c1a_wrapper_shadow_matrix(tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

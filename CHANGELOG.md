@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add the C1a Hermes discovery/sync shadow bridge (ADR 0002, default OFF via
+  `HERMES_DISCOVERY_SHADOW`): a short-lived Hermes child collects only
+  `identity`, `config_health` and `effective_config` into separate
+  shadow/reconciliation state files with provenance — legacy static
+  discovery, health verdicts and alert behavior remain unchanged. Opt-in
+  config knobs: `HERMES_DISCOVERY_SHADOW`,
+  `HERMES_DISCOVERY_HERMES_PYTHON`, `HERMES_DISCOVERY_SHADOW_TIMEOUT`.
 ### Fixed
 
 - Resolve the Honcho health target with profile-aware host/workspace/base-URL

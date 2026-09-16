@@ -15,6 +15,29 @@ if ! flock -n 9; then
     exit 0
 fi
 
+# Переменные окружения нужны и shadow-hook'у, и legacy-алерту — source один,
+# до любого early-return.
+source "$H/.env" 2>/dev/null || true
+
+# ── C1a shadow bridge (default OFF, ADR 0002) ──────────────────────────────
+# Сбор Hermes-owned discovery-метаданных в shadow-режиме. Строго изолировано:
+# rc/stdout/stderr shadow не влияют на legacy report/rc/alerts; падение shadow
+# не фатально и не блокирует legacy-путь (bounded timeout на весь вызов).
+if [ "${HERMES_DISCOVERY_SHADOW:-0}" = "1" ] \
+   && [ -n "${HERMES_DISCOVERY_HERMES_PYTHON:-}" ] \
+   && [ -x "${HERMES_DISCOVERY_HERMES_PYTHON}" ]; then
+    SHADOW_LOG="$H/logs/hermes-discovery-shadow.log"
+    timeout "${HERMES_DISCOVERY_SHADOW_TIMEOUT:-180}" \
+        python3 "$HOME/scripts/hermes-discovery-shadow.py" \
+        --hermes-python "$HERMES_DISCOVERY_HERMES_PYTHON" \
+        --bridge "${HERMES_DISCOVERY_BRIDGE:-$HOME/scripts/hermes-discovery-bridge.py}" \
+        --profile-home "$H" \
+        --profile-id production \
+        ${HERMES_DISCOVERY_HERMES_SRC:+--hermes-src "$HERMES_DISCOVERY_HERMES_SRC"} \
+        >> "$SHADOW_LOG" 2>&1 \
+        || echo "[$(date -Is)] shadow collection failed (non-fatal)" >> "$SHADOW_LOG"
+fi
+
 REPORT=$(python3 "$HOME/scripts/integration-discover.py" 2>>"$LOG")
 RC=$?
 echo "[$(date -Is)] discover exit=$RC" >> "$LOG"
@@ -22,7 +45,6 @@ echo "[$(date -Is)] discover exit=$RC" >> "$LOG"
 [ "$RC" != "2" ] && exit 0
 
 # Есть события — алерт в TG (новое в конфиге = важно)
-source "$H/.env" 2>/dev/null || true
 if [ -z "${WATCHDOG_BOT_TOKEN:-}" ]; then
     echo "$REPORT" >> "$LOG"
     exit 0
