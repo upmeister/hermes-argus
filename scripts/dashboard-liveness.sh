@@ -20,7 +20,9 @@ send_recovery() {
   chtok=$(grep -E '^WATCHDOG_CHAT_ID=' "$H/.env" | cut -d= -f2-)
   [ -z "$chtok" ] && chtok=@WATCHDOG_CHAT_ID@
   prx="${TELEGRAM_PROXY:-http://127.0.0.1:8444}"
-  curl -s -m 20 -x "$prx" -X POST "https://api.telegram.org/bot${btok}/sendMessage" \
+  # Токен не в argv: URL уходит в curl через -K - (config на stdin)
+  printf 'url = %s\n' "https://api.telegram.org/bot${btok}/sendMessage" | \
+    curl -s -m 20 -x "$prx" -K - -X POST \
     -d chat_id="$chtok" --data-urlencode "text=✅ Dashboard восстановился (снова отвечает)" -d disable_notification=true > /dev/null
 }
 
@@ -74,7 +76,9 @@ if [ "$FAILS" -ge 3 ]; then
   date -Is > "$STATE_FILE"
   # Прямой api.telegram.org мёртв при РКН-волнах — только через telegram-smart-proxy
   proxy="${TELEGRAM_PROXY:-http://127.0.0.1:8444}"
-  curl -s -m 20 -x "$proxy" -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+  # Токен не в argv: URL уходит в curl через -K - (config на stdin)
+  printf 'url = %s\n' "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" | \
+    curl -s -m 20 -x "$proxy" -K - -X POST \
     -d chat_id="$CHAT_ID" --data-urlencode "text=$TEXT" -d disable_notification=false > /dev/null
   echo "$TEXT"
   exit 0

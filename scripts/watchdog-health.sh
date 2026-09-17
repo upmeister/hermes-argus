@@ -77,7 +77,9 @@ if [ -n "$problems" ]; then
     MSG="⚠️ <b>Мониторинг мониторинга</b> (%HOSTNAME%)
 Обнаружены проблемы:$problems"
     MSG_ESC=$(echo "$MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
-    curl -s -X POST "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" \
+    # Токен не в argv: URL уходит в curl через -K - (config на stdin)
+    printf 'url = %s\n' "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" | \
+        curl -s -K - -X POST \
         -H "Content-Type: application/json" \
         -d "{\"chat_id\": \"$WATCHDOG_CHAT_ID\", \"text\": $MSG_ESC, \"parse_mode\": \"HTML\", \"disable_notification\": false}" \
         -o /dev/null -x "${TELEGRAM_PROXY:-}" 2>/dev/null || true

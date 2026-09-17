@@ -30,7 +30,9 @@ if [ "$CURRENT_COUNT" -ge 3 ]; then
     echo "[$(date -u +'%Y-%m-%d %H:%M UTC')] CIRCUIT BREAKER: $CURRENT_COUNT авто-фиксов за час — стоп" >> "$LOG_FILE"
     source "$HOME/.hermes/.env" 2>/dev/null
     if [ -n "$WATCHDOG_BOT_TOKEN" ]; then
-        curl -s -x "${TELEGRAM_PROXY:-http://127.0.0.1:8444}" -X POST "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" \
+        # Токен не в argv: URL уходит в curl через -K - (config на stdin)
+        printf 'url = %s\n' "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" | \
+            curl -s -K - -x "${TELEGRAM_PROXY:-http://127.0.0.1:8444}" -X POST \
             -H "Content-Type: application/json" \
             -d "{\"chat_id\":\"@WATCHDOG_CHAT_ID@\",\"text\":\"🚨 Circuit Breaker: ${CURRENT_COUNT} авто-фиксов за час. Требуется вмешательство человека.\"}" \
             -o /dev/null 2>&1
@@ -115,7 +117,8 @@ if [ -n "$REPORT" ]; then
     source "$HOME/.hermes/.env" 2>/dev/null
     if [ -n "$WATCHDOG_BOT_TOKEN" ]; then
         ESCAPED=$(echo -e "$REPORT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null)
-        curl -s -x "${TELEGRAM_PROXY:-http://127.0.0.1:8444}" -X POST "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" \
+        printf 'url = %s\n' "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" | \
+            curl -s -K - -x "${TELEGRAM_PROXY:-http://127.0.0.1:8444}" -X POST \
             -H "Content-Type: application/json" \
             -d "{\"chat_id\": \"@WATCHDOG_CHAT_ID@\", \"text\": ${ESCAPED}, \"disable_notification\": true}" \
             -o /dev/null 2>&1

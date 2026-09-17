@@ -51,9 +51,10 @@ check_url() {   # name url [expected] [auth_header] [proxy]
     local name="$1" url="$2" expected="${3:-200}" auth_header="${4:-}" proxy="${5:-}"
     local attempt=0 code
     while [[ $attempt -lt $RETRIES ]]; do
-        code=$(curl -s -o /dev/null -w "%{http_code}" --max-time "$TIMEOUT" \
+        # URL может нести токен (getMe) — через -K - (config на stdin), не в argv
+        code=$(printf 'url = %s\n' "$url" | curl -s -o /dev/null -w "%{http_code}" --max-time "$TIMEOUT" \
             ${proxy:+--proxy "$proxy"} \
-            ${auth_header:+-H "$auth_header"} "$url" 2>/dev/null || true)
+            ${auth_header:+-H "$auth_header"} -K - 2>/dev/null || true)
         [[ "$code" == "$expected" ]] && return 0
         attempt=$((attempt + 1))
         [[ $attempt -lt $RETRIES ]] && sleep "$RETRY_DELAY"
@@ -158,8 +159,9 @@ except Exception:
     if [ -n "${WATCHDOG_BOT_TOKEN:-}" ]; then
         local BOT_OK=false attempt RESP BODY
         for attempt in 1 2 3; do
-            RESP=$(curl -s -w $'\n%{http_code}' --connect-timeout 8 --max-time 25 -x "$TG_PROXY" \
-                "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/getMe" 2>/dev/null)
+            # Токен не в argv: URL уходит в curl через -K - (config на stdin)
+            RESP=$(printf 'url = %s\n' "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/getMe" | \
+                curl -s -w $'\n%{http_code}' --connect-timeout 8 --max-time 25 -x "$TG_PROXY" -K - 2>/dev/null)
             HTTP_CODE=$(printf '%s' "$RESP" | tail -1)
             BODY=$(printf '%s' "$RESP" | head -n -1)
             if printf '%s' "$BODY" | python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)" 2>/dev/null; then

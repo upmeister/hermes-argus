@@ -278,7 +278,9 @@ if items:
     [ -z "$body" ] && return 0
     MSG_ESC=$(python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" <<< "$body")
     proxy="${TELEGRAM_PROXY:-http://127.0.0.1:8444}"
-    curl -s -m 20 -x "$proxy" -X POST "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" \
+    # Токен не в argv: URL уходит в curl через -K - (config на stdin)
+    printf 'url = %s\n' "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" | \
+        curl -s -m 20 -x "$proxy" -K - -X POST \
         -H "Content-Type: application/json" \
         -d "{\"chat_id\": \"${WATCHDOG_CHAT_ID}\", \"text\": $MSG_ESC, \"parse_mode\": \"HTML\"}" \
         -o /dev/null >> "$LOG" 2>&1 || true

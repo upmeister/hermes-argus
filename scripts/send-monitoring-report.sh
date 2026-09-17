@@ -24,8 +24,10 @@ if [ "$KEYBOARD" = "keyboard" ]; then
 fi
 
 # Используем smart-proxy для доступа к Telegram API (прямые IP заблокированы РКН)
-curl -s --max-time 30 --proxy http://127.0.0.1:8444 \
-    -X POST "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" \
+# Токен не в argv: URL уходит в curl через -K - (config на stdin)
+printf 'url = %s\n' "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" | \
+    curl -s --max-time 30 --proxy http://127.0.0.1:8444 -K - \
+    -X POST \
     -H "Content-Type: application/json" \
     -d "{\"chat_id\": \"@WATCHDOG_CHAT_ID@\", \"text\": ${ESCAPED}${DISABLE_NOTIF}${REPLY_MARKUP}}" \
     -o /dev/null -w "HTTP %{http_code}"

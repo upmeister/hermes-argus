@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep Telegram bot tokens out of child-process argv in every active shell and
+  Python notifier: token-bearing URLs are delivered to `curl` via stdin config
+  (`curl -K -`) instead of being expanded into the command line. Request
+  wiring (proxy, timeouts, payload, retries, response parsing) is unchanged.
 - Keep deployment secret values out of the child-process argument list:
   template substitutions are applied through a temporary `sed` script file,
   GitHub Heartbeat secrets are piped to `gh secret set` via stdin, and the
