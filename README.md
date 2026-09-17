@@ -62,6 +62,10 @@ Argus is currently in a stabilization-first phase. The C1a Hermes runtime
 shadow-bridge direction was stopped and PR #27 was closed without merge; those
 documents remain historical evidence, not active implementation authority.
 
+R1a deploy/GitHub-heartbeat secret-in-argv work is complete in PR #29. The next
+selected implementation task is R1b: remove Telegram bot tokens from child argv
+in active/deployable shell `curl` paths without redesigning notifications.
+
 Before contributing implementation work, read:
 
 1. `AGENTS.md` — mandatory scope control;
@@ -72,12 +76,17 @@ Before contributing implementation work, read:
 Current bounded implementation sequence:
 
 ```text
-secret-in-argv
- -> malformed YAML fail-safe discovery
- -> gateway liveness via Hermes runtime status
- -> bounded fallback/static-discovery compatibility
+R1a deploy secret-in-argv                  DONE
+ -> R1b shell Telegram secret-in-argv      NEXT
+ -> R2a malformed YAML fail-safe discovery
+ -> R2c bounded fallback/static discovery
  -> reduction / v0.1 stabilization
 ```
+
+The earlier R2b proposal to use `gateway_state.json.updated_at` freshness for
+gateway liveness is **deferred**: production/upstream evidence proved that a
+healthy idle gateway does not continuously advance that field. Do not revive
+that implementation from old handoffs without a new evidence-backed contract.
 
 Multi-profile monitoring is near-term product work but intentionally separate
 from these patches so it cannot widen the stabilization tasks.
