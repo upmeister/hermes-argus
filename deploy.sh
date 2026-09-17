@@ -284,9 +284,11 @@ if module_enabled MODULE_GH_HEARTBEAT; then
                 else
                     echo "   ⚠️  push failed — проверьте права токена (repo/workflow)"
                 fi
-                # Секреты через stdin (--body-file -): значения не попадают в argv.
-                printf '%s' "${WATCHDOG_BOT_TOKEN:-}" | gh secret set WATCHDOG_BOT_TOKEN --repo "$GH_USER/$GH_HB_REPO" --body-file - >/dev/null && \
-                printf '%s' "${WATCHDOG_CHAT_ID:-}" | gh secret set WATCHDOG_CHAT_ID --repo "$GH_USER/$GH_HB_REPO" --body-file - >/dev/null && \
+                # Секреты через stdin (gh читает значение из stdin, когда --body
+                # не передан; флага --body-file в gh 2.45 нет): значения не
+                # попадают в argv.
+                printf '%s' "${WATCHDOG_BOT_TOKEN:-}" | gh secret set WATCHDOG_BOT_TOKEN --repo "$GH_USER/$GH_HB_REPO" >/dev/null && \
+                printf '%s' "${WATCHDOG_CHAT_ID:-}" | gh secret set WATCHDOG_CHAT_ID --repo "$GH_USER/$GH_HB_REPO" >/dev/null && \
                 echo "   ✅ secrets установлены"
                 echo "   ✅ GH Heartbeat готов. Добавьте в config.env и перезапустите deploy:"
                 echo "      GITHUB_REPO=$GH_USER/$GH_HB_REPO"

@@ -918,15 +918,79 @@ def probe_deploy_gh_heartbeat_secret_not_in_argv(tmp: Path):
     # git получает и -c-опции, поэтому push ищем внутри строки лога
     push_lines = [line for line in git_argv_text.splitlines() if " push " in line]
     push_ok = bool(push_lines) and "https://github.com/dummyuser/" in push_lines[0]
+    # gh 2.45 не имеет --body-file и читает значение из stdin только когда
+    # --body не передан: любая форма флага тела в argv = регрессия к
+    # нерабочему/утекающему варианту
+    no_body_flag = "--body" not in gh_argv_text
     check("deploy_gh_heartbeat_secret_not_in_argv",
           result.returncode == 0
           and token not in gh_argv_text and token not in git_argv_text
           and chat not in gh_argv_text
           and token in gh_stdin_text and chat in gh_stdin_text
-          and push_ok,
+          and push_ok and no_body_flag,
           f"rc={result.returncode} gh_calls={len(gh_argv_text.splitlines())} "
           f"git_calls={len(git_argv_text.splitlines())} push_ok={push_ok} "
-          f"stdin_has_secrets={token in gh_stdin_text and chat in gh_stdin_text}")
+          f"stdin_has_secrets={token in gh_stdin_text and chat in gh_stdin_text} "
+          f"no_body_flag={no_body_flag}")
+
+
+def probe_gh_secret_stdin_flag_supported(tmp: Path):
+    """R1a remediation: real gh CLI accepts `gh secret set NAME` with the value
+    on stdin and rejects the nonexistent --body-file form.
+
+    Runs against a nonexistent repo with GH_HOST pointed at an unroutable host
+    and no token in env: the API call can never mutate anything, so the probe
+    observes only flag parsing. The --body-file arm is the negative control
+    proving the discriminator itself fires."""
+    gh = shutil.which("gh")
+    if not gh:
+        check("gh_secret_stdin_flag_supported", True, "skipped: gh not installed")
+        return
+    env = _probe_subprocess_env(tmp / "gh-flag-home", {"GH_HOST": "argus-probe.invalid"})
+    stdin_value = "ARGUS_CANARY_GH_TOKEN_R1A\n"
+    ok_call = subprocess.run([gh, "secret", "set", "ARGUS_CANARY",
+                              "--repo", "dummyuser/argus-nonexistent-repo"],
+                             input=stdin_value.encode(), env=env,
+                             capture_output=True, timeout=60)
+    bad_call = subprocess.run([gh, "secret", "set", "ARGUS_CANARY",
+                               "--repo", "dummyuser/argus-nonexistent-repo",
+                               "--body-file", "-"],
+                              input=stdin_value.encode(), env=env,
+                              capture_output=True, timeout=60)
+    ok_err = (ok_call.stderr or b"").decode(errors="ignore")
+    bad_err = (bad_call.stderr or b"").decode(errors="ignore")
+    stdin_form_parses = "unknown flag" not in ok_err
+    bodyfile_rejected = "unknown flag" in bad_err
+    check("gh_secret_stdin_flag_supported", stdin_form_parses and bodyfile_rejected,
+          f"rc={ok_call.returncode} stdin_parses={stdin_form_parses} "
+          f"bodyfile_rejected={bodyfile_rejected}")
+
+
+def probe_git_credential_helper_real(tmp: Path):
+    """R1a remediation: the exact credential-helper expression from deploy.sh,
+    executed by real git via sh -c, serves `credential fill` from $GH_TOKEN.
+
+    No network contact (fill consults helpers only), no store writes (empty
+    helper= resets system/global helpers, fixture HOME isolates state)."""
+    git = shutil.which("git")
+    if not git:
+        check("git_credential_helper_real", True, "skipped: git not installed")
+        return
+    home = tmp / "cred-home"
+    home.mkdir()
+    token = "ARGUS_CANARY_GH_TOKEN_R1A"
+    helper = ('credential.helper=!f(){ printf "username=argus\\npassword=%s" '
+              '"$GH_TOKEN"; }; f')
+    env = _probe_subprocess_env(home, {"GH_TOKEN": token})
+    result = subprocess.run([git, "-c", "credential.helper=", "-c", helper,
+                             "credential", "fill"],
+                            input="protocol=https\nhost=github.com\n\n",
+                            env=env, capture_output=True, text=True, timeout=60)
+    filled = "username=argus" in result.stdout and f"password={token}" in result.stdout
+    no_store = not (home / ".git-credentials").exists()
+    check("git_credential_helper_real",
+          result.returncode == 0 and filled and no_store,
+          f"rc={result.returncode} filled={filled} no_store={no_store}")
 
 
 # ── Пробы: D0a schema v2 (envelope, projection, dual-read) ──────────────────
@@ -1594,6 +1658,8 @@ def main() -> int:
     probe_deploy_cron_profile(tmp)
     probe_deploy_secret_not_in_argv(tmp)
     probe_deploy_gh_heartbeat_secret_not_in_argv(tmp)
+    probe_gh_secret_stdin_flag_supported(tmp)
+    probe_git_credential_helper_real(tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:
