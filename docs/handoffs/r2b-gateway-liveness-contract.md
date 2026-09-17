@@ -1,73 +1,74 @@
-# R2b contract — gateway liveness from Hermes runtime status
+# R2b contract — gateway liveness research record
 
-Status: **READY FOR IMPLEMENTATION AFTER R1/R2a**
+Status: **DEFERRED / NOT AUTHORIZED FOR IMPLEMENTATION**
 
-## Problem
+> Superseded on 2026-09-18 by production/upstream evidence. The earlier proposal
+> to treat `gateway_state.json.updated_at` as an always-advancing event-loop
+> heartbeat is incorrect for the currently supported Hermes deployment.
 
-`scripts/gateway-liveness.sh` currently infers event-loop liveness from a log line produced by Hermes periodic memory trimming:
+## Why this contract is deferred
+
+`scripts/gateway-liveness.sh` currently infers event-loop liveness from the Hermes housekeeping/memory-trim log marker:
 
 ```text
 memory trim: reason=messaging gateway housekeeping
 ```
 
-That signal is incidental. Fresh Hermes exposes a more direct external contract: `gateway_state.json` is periodically refreshed by the gateway event loop, and upstream itself uses `updated_at` / status freshness to distinguish a live process from stale runtime state.
+The earlier R2b proposal attempted to replace that signal with freshness of:
 
-Argus should consume the direct persisted status signal rather than allocator-maintenance logging.
+```text
+gateway_state.json.updated_at
+```
 
-## Owner
+That migration is **not safe** on the currently supported production Hermes.
 
-Primary owner: `scripts/gateway-liveness.sh`.
+Evidence gathered on 2026-09-18 established:
 
-Allowed adjacent path: tests only.
+- a healthy idle gateway may leave `gateway_state.json.updated_at` unchanged for many hours;
+- current upstream explicitly notes that an idle gateway does not advance that field;
+- upstream stale-status handling combines persisted state with process/pid state as tombstone logic rather than treating timestamp age alone as proof of a frozen event loop;
+- production showed an old `updated_at` while the gateway remained healthy and the current housekeeping marker remained fresh.
 
-## Target behavior
+Using timestamp freshness as specified by the original contract would therefore create false-positive hang detection and could cause a restart loop on a healthy idle gateway.
 
-Keep the existing high-level watchdog policy:
+## Current decision
 
-1. if the gateway process/service is not running, do not compete with the service manager's normal crash restart path;
-2. if the process is running, inspect the Hermes-owned runtime status file for liveness freshness;
-3. stale/missing/unparseable status is suspicious, not immediate proof of a hang;
-4. perform the existing second-check delay before restart;
-5. restart and alert only after the second observation still proves the event loop stale;
-6. preserve dedup and quiet recovery behavior.
+For the current stabilization line:
 
-## Source of truth
+```text
+keep existing memory-trim/housekeeping liveness signal
+DO NOT migrate to gateway_state.json.updated_at freshness
+DO NOT implement the old acceptance matrix
+```
 
-For default-profile v0.1, read the default Hermes home's `gateway_state.json` directly. Use the persisted `updated_at` (or file mtime only as a documented compatibility fallback if the exact deployed Hermes format requires it).
+This file remains only as a record of the disproven direction and its stop decision.
 
-Do not import `gateway.status` or other Hermes Python modules.
+## What may reopen R2b
 
-The threshold may remain conservative around the existing 180-second Argus policy even if upstream currently uses a 120-second stale TTL. The contract is about changing the signal, not aggressively changing restart policy.
+A new implementation contract requires one of:
 
-## Fail-safe rules
+1. a future Hermes release exposes and documents a stable external event-loop heartbeat/liveness endpoint or persisted field, and production evidence confirms its behavior; or
+2. a separate research-first task demonstrates a safe externally observable HTTP/event-loop probe with acceptable false-positive/side-effect characteristics.
 
-- malformed JSON -> log diagnostic, do not blindly restart on the first observation;
-- missing `updated_at` -> treat as unknown/suspicious and require second observation;
-- future timestamp or nonsensical timestamp -> unknown/suspicious, not healthy;
-- stale status with a dead process -> let service-manager crash handling own recovery;
-- fresh status -> clear incident state and emit existing quiet recovery if one was active.
+A new research task must begin with evidence. It must not assume the old design is valid merely because this file exists.
 
-## Acceptance criteria
+## Current owner behavior
 
-Fixtures/tests cover at least:
+`scripts/gateway-liveness.sh` is **not an active implementation owner under R2b** right now.
 
-- running process + fresh `updated_at` -> no restart;
-- running process + stale `updated_at`, then fresh on second check -> no restart;
-- running process + stale on both observations -> restart path selected;
-- malformed/missing runtime status does not produce a one-shot destructive false positive;
-- dead process remains outside the hang-restart path;
-- dedup/recovery semantics preserved;
-- no dependency on the `memory trim` log marker remains in liveness decision logic.
+Ordinary bug fixes to the current liveness script still require their own concrete incident/evidence and separately selected task.
 
-## Non-goals
+## Non-goals while deferred
 
-- multi-profile gateway supervision;
-- multiplexed gateway routing;
-- replacing systemd/service-manager responsibilities;
-- changing memory trimming;
-- importing Hermes internals;
-- adding a generic status adapter layer.
+Do not:
 
-## Stop condition
+- reinterpret file mtime as a substitute heartbeat without evidence;
+- import `gateway.status` or Hermes internals;
+- invent a new heartbeat daemon;
+- broaden into multi-profile gateway supervision;
+- change memory trimming merely to manufacture a monitoring signal;
+- bundle gateway-liveness experimentation into R1b/R2a/R2c.
 
-If the deployed Hermes runtime status cannot provide a stable timestamp/state contract on the supported installation, stop and return exact evidence before inventing a new heartbeat mechanism.
+## Stop rule
+
+If an agent reaches this document from an old roadmap/handoff, STOP and return to the active execution baseline. No R2b implementation is authorized until the maintainer explicitly selects a new research/implementation contract.
