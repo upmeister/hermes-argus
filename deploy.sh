@@ -56,7 +56,11 @@ echo "   Модули: CORE=$(module_enabled MODULE_CORE && echo ON || echo OFF)
 echo ""
 
 # ── Функция: развернуть bash-шаблон ──────────────────────────────────────
-# Заменяет @МАРКЕРЫ@ на значения из конфига. Новый маркер = новая sed-рулька.
+# Заменяет @МАРКЕРЫ@ на значения из конфига. Новый маркер = новая printf-строка.
+SED_SCRIPT_TMP=""
+cleanup_sed_script() { [ -z "$SED_SCRIPT_TMP" ] || rm -f "$SED_SCRIPT_TMP"; }
+trap cleanup_sed_script EXIT
+
 deploy_template() {
     local src="$1"
     local dst="$2"
@@ -64,23 +68,31 @@ deploy_template() {
 
     mkdir -p "$(dirname "$dst")"
 
-    sed \
-        -e "s/@HERMES_HOST@/$HERMES_HOST/g" \
-        -e "s/@HERMES_PORT@/$HERMES_PORT/g" \
-        -e "s|@HERMES_DIR@|$HERMES_DIR|g" \
-        -e "s|@HERMES_BIN@|$HERMES_DIR/hermes-agent/venv/bin/hermes|g" \
-        -e "s|@HOME_DIR@|$HOME_DIR|g" \
-        -e "s/@WATCHDOG_BOT_TOKEN@/$WATCHDOG_BOT_TOKEN/g" \
-        -e "s/@WATCHDOG_CHAT_ID@/$WATCHDOG_CHAT_ID/g" \
-        -e "s/@HERMES_BOT_TOKEN@/$HERMES_BOT_TOKEN/g" \
-        -e "s/@HERMES_BOT_UID@/$HERMES_BOT_UID/g" \
-        -e "s/@BREAKER_MAX@/$BREAKER_MAX/g" \
-        -e "s/@DMS_SNITCH@/$DMS_SNITCH/g" \
-        -e "s/@DMS_API_KEY@/$DMS_API_KEY/g" \
-        -e "s/@NETDATA_PORT@/$NETDATA_PORT/g" \
-        -e "s|@GITHUB_REPO@|$GITHUB_REPO|g" \
-        -e "s/@HOSTNAME@/$(hostname)/g" \
-        "$src" > "$dst"
+    # Значения замен (в т.ч. секреты) пишутся во временный sed-скрипт (mktemp =
+    # 0600) и подаются через -f: в argv sed попадает только путь скрипта, не
+    # значения. Порядок замен сохранён прежнему sed -e списку.
+    SED_SCRIPT_TMP=$(mktemp)
+    {
+        printf 's/@HERMES_HOST@/%s/g\n' "$HERMES_HOST"
+        printf 's/@HERMES_PORT@/%s/g\n' "$HERMES_PORT"
+        printf 's|@HERMES_DIR@|%s|g\n' "$HERMES_DIR"
+        printf 's|@HERMES_BIN@|%s|g\n' "$HERMES_DIR/hermes-agent/venv/bin/hermes"
+        printf 's|@HOME_DIR@|%s|g\n' "$HOME_DIR"
+        printf 's/@WATCHDOG_BOT_TOKEN@/%s/g\n' "$WATCHDOG_BOT_TOKEN"
+        printf 's/@WATCHDOG_CHAT_ID@/%s/g\n' "$WATCHDOG_CHAT_ID"
+        printf 's/@HERMES_BOT_TOKEN@/%s/g\n' "$HERMES_BOT_TOKEN"
+        printf 's/@HERMES_BOT_UID@/%s/g\n' "$HERMES_BOT_UID"
+        printf 's/@BREAKER_MAX@/%s/g\n' "$BREAKER_MAX"
+        printf 's/@DMS_SNITCH@/%s/g\n' "$DMS_SNITCH"
+        printf 's/@DMS_API_KEY@/%s/g\n' "$DMS_API_KEY"
+        printf 's/@NETDATA_PORT@/%s/g\n' "$NETDATA_PORT"
+        printf 's|@GITHUB_REPO@|%s|g\n' "$GITHUB_REPO"
+        printf 's/@HOSTNAME@/%s/g\n' "$(hostname)"
+    } > "$SED_SCRIPT_TMP"
+
+    sed -f "$SED_SCRIPT_TMP" "$src" > "$dst"
+    cleanup_sed_script
+    SED_SCRIPT_TMP=""
 
     # Делаем исполняемым если исходник был
     [ -x "$src" ] && chmod +x "$dst"
@@ -261,13 +273,20 @@ if module_enabled MODULE_GH_HEARTBEAT; then
                 git init -q 2>/dev/null || true
                 git checkout -q -b main 2>/dev/null || true
                 git add -A && git diff --cached --quiet || git commit -q -m "argus heartbeat init"
-                if git push -q -f "https://${GH_TOKEN}@github.com/$GH_USER/$GH_HB_REPO" main 2>/dev/null; then
+                # Токен не попадает в argv: username/password подставляет
+                # in-memory credential-helper (значение берётся из окружения),
+                # пустой helper= сбрасывает системные хелперы (никаких записей
+                # в ~/.git-credentials).
+                if git -c credential.helper= \
+                       -c 'credential.helper=!f(){ printf "username=argus\npassword=%s" "$GH_TOKEN"; }; f' \
+                       push -q -f "https://github.com/$GH_USER/$GH_HB_REPO" main 2>/dev/null; then
                     echo "   ✅ репо запушен"
                 else
                     echo "   ⚠️  push failed — проверьте права токена (repo/workflow)"
                 fi
-                gh secret set WATCHDOG_BOT_TOKEN --repo "$GH_USER/$GH_HB_REPO" --body "${WATCHDOG_BOT_TOKEN:-}" >/dev/null && \
-                gh secret set WATCHDOG_CHAT_ID --repo "$GH_USER/$GH_HB_REPO" --body "${WATCHDOG_CHAT_ID:-}" >/dev/null && \
+                # Секреты через stdin (--body-file -): значения не попадают в argv.
+                printf '%s' "${WATCHDOG_BOT_TOKEN:-}" | gh secret set WATCHDOG_BOT_TOKEN --repo "$GH_USER/$GH_HB_REPO" --body-file - >/dev/null && \
+                printf '%s' "${WATCHDOG_CHAT_ID:-}" | gh secret set WATCHDOG_CHAT_ID --repo "$GH_USER/$GH_HB_REPO" --body-file - >/dev/null && \
                 echo "   ✅ secrets установлены"
                 echo "   ✅ GH Heartbeat готов. Добавьте в config.env и перезапустите deploy:"
                 echo "      GITHUB_REPO=$GH_USER/$GH_HB_REPO"
