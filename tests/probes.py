@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import shutil
 import subprocess
 import json
 import os
@@ -802,6 +803,247 @@ def probe_deploy_cron_profile(tmp: Path):
           f"rc={result.returncode} cron={cron_text!r}")
 
 
+def _path_shim_env(home: Path, extra: dict | None = None) -> dict:
+    """Environment for deploy.sh probes: fixture HOME + caller's PATH overrides."""
+    return _probe_subprocess_env(home, extra)
+
+
+def _write_argv_shim(shim_dir: Path, command: str, body: str) -> Path:
+    """Extensionless sh shim: a command shadowed by PATH for argv-capture probes."""
+    path = shim_dir / command
+    path.write_text("#!/bin/sh\n" + body, encoding="utf-8", newline="\n")
+    path.chmod(0o755)
+    return path
+
+
+def probe_deploy_secret_not_in_argv(tmp: Path):
+    """R1a: deploy substitution values (incl. secrets) never reach a child argv.
+
+    A PATH shim logs every sed invocation argv; a canary token in config.env must
+    stay out of that log while still reaching the rendered output (chat-id canary
+    proves substitution semantics are unchanged) and must not survive in temp
+    files after deploy (sed script cleanup)."""
+    home = tmp / "deploy-argv-home"
+    token = "ARGUS_CANARY_TOKEN_R1A"
+    chat = "ARGUS_CANARY_CHAT_R1A"
+    config = write(tmp / "argv-config.env",
+                   "MODULE_CORE=ON\n"
+                   "MODULE_INTEGRATIONS=ON\n"
+                   "MODULE_TG_BOT=OFF\n"
+                   "MODULE_ANALYZER=OFF\n"
+                   "MODULE_HEARTBEAT=OFF\n"
+                   "MODULE_GH_HEARTBEAT=OFF\n"
+                   "MODULE_DISCORD_BOT=OFF\n"
+                   f"WATCHDOG_BOT_TOKEN={token}\n"
+                   f"WATCHDOG_CHAT_ID={chat}\n")
+    cron = tmp / "argv-cron.txt"
+    shim = tmp / "shim-sed"
+    shim.mkdir()
+    argv_log = tmp / "sed-argv.log"
+    tmpd = tmp / "deploy-tmp"
+    tmpd.mkdir()
+    real_sed = shutil.which("sed") or "/usr/bin/sed"
+    _write_argv_shim(shim, "sed",
+                     f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
+                     f'exec "{Path(real_sed).as_posix()}" "$@"\n')
+    env = _path_shim_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "TMPDIR": str(tmpd), "TMP": str(tmpd), "TEMP": str(tmpd),
+        "CRON_PROFILE": "minimal", "CRON_FILE": str(cron),
+    })
+    result = subprocess.run(["bash", str(REPO / "deploy.sh"), str(config)],
+                            cwd=REPO, env=env, capture_output=True, text=True, timeout=120)
+    argv_text = argv_log.read_text(encoding="utf-8") if argv_log.exists() else ""
+    rendered = home / "scripts" / "send-monitoring-report.sh"
+    rendered_ok = rendered.exists() and chat in rendered.read_text(encoding="utf-8")
+    leftover_leak = any(token in p.read_text(encoding="utf-8", errors="ignore")
+                        for p in tmpd.iterdir() if p.is_file())
+    check("deploy_secret_not_in_argv",
+          result.returncode == 0 and token not in argv_text and chat not in argv_text
+          and rendered_ok and not leftover_leak,
+          f"rc={result.returncode} sed_calls={len(argv_text.splitlines())} "
+          f"chat_rendered={rendered_ok} leftover_leak={leftover_leak}")
+
+
+def probe_deploy_gh_heartbeat_secret_not_in_argv(tmp: Path):
+    """R1a: gh secret set and git push take credentials via stdin/env, not argv.
+
+    gh/git PATH shims log argv (gh also captures stdin). The GH_TOKEN canary must
+    never appear in any gh/git argv: secret values arrive on stdin (--body-file -),
+    the push URL is credential-free, and the in-memory credential helper only
+    references the env var name."""
+    home = tmp / "deploy-gh-home"
+    token = "ARGUS_CANARY_GH_TOKEN_R1A"
+    chat = "ARGUS_CANARY_GH_CHAT_R1A"
+    config = write(tmp / "gh-config.env",
+                   "MODULE_CORE=ON\n"
+                   "MODULE_INTEGRATIONS=ON\n"
+                   "MODULE_TG_BOT=OFF\n"
+                   "MODULE_ANALYZER=OFF\n"
+                   "MODULE_HEARTBEAT=OFF\n"
+                   "MODULE_GH_HEARTBEAT=ON\n"
+                   "MODULE_DISCORD_BOT=OFF\n"
+                   f"GH_TOKEN={token}\n"
+                   f"WATCHDOG_BOT_TOKEN={token}\n"
+                   f"WATCHDOG_CHAT_ID={chat}\n")
+    shim = tmp / "shim-gh"
+    shim.mkdir()
+    gh_argv, gh_stdin = tmp / "gh-argv.log", tmp / "gh-stdin.log"
+    git_argv = tmp / "git-argv.log"
+    _write_argv_shim(shim, "gh",
+                     f'printf \'%s\\n\' "$*" >> "{gh_argv.as_posix()}"\n'
+                     'case "$1 $2" in\n'
+                     '  "api user") echo dummyuser; exit 0;;\n'
+                     '  "repo view") exit 1;;\n'
+                     '  "repo create") exit 0;;\n'
+                     f'  "secret set") cat >> "{gh_stdin.as_posix()}"; '
+                     f'printf \'\\n--\\n\' >> "{gh_stdin.as_posix()}"; exit 0;;\n'
+                     '  *) exit 0;;\n'
+                     'esac\n')
+    _write_argv_shim(shim, "git",
+                     f'printf \'%s\\n\' "$*" >> "{git_argv.as_posix()}"\n'
+                     'case "$1" in diff) exit 1;; *) exit 0;; esac\n')
+    env = _path_shim_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "CRON_PROFILE": "minimal", "CRON_FILE": str(tmp / "gh-cron.txt"),
+    })
+    # input в binary-режиме: text=True на Windows переводит "\n" в "\r\n",
+    # и read в deploy.sh получает "y\r" — ответ не матчится.
+    result = subprocess.run(["bash", str(REPO / "deploy.sh"), str(config)],
+                            cwd=REPO, env=env, input=b"y\n",
+                            capture_output=True, timeout=120)
+    gh_argv_text = gh_argv.read_text(encoding="utf-8") if gh_argv.exists() else ""
+    git_argv_text = git_argv.read_text(encoding="utf-8") if git_argv.exists() else ""
+    gh_stdin_text = gh_stdin.read_text(encoding="utf-8") if gh_stdin.exists() else ""
+    # git получает и -c-опции, поэтому push ищем внутри строки лога
+    push_lines = [line for line in git_argv_text.splitlines() if " push " in line]
+    push_ok = bool(push_lines) and "https://github.com/dummyuser/" in push_lines[0]
+    # gh 2.45 не имеет --body-file и читает значение из stdin только когда
+    # --body не передан: любая форма флага тела в argv = регрессия к
+    # нерабочему/утекающему варианту
+    no_body_flag = "--body" not in gh_argv_text
+    check("deploy_gh_heartbeat_secret_not_in_argv",
+          result.returncode == 0
+          and token not in gh_argv_text and token not in git_argv_text
+          and chat not in gh_argv_text
+          and token in gh_stdin_text and chat in gh_stdin_text
+          and push_ok and no_body_flag,
+          f"rc={result.returncode} gh_calls={len(gh_argv_text.splitlines())} "
+          f"git_calls={len(git_argv_text.splitlines())} push_ok={push_ok} "
+          f"stdin_has_secrets={token in gh_stdin_text and chat in gh_stdin_text} "
+          f"no_body_flag={no_body_flag}")
+
+
+def probe_deploy_gh_secret_failure_gates_deploy(tmp: Path):
+    """R1a remediation 2: a failing gh secret set must abort deploy nonzero
+    before the readiness message and cron generation.
+
+    Bash errexit does not fire for non-final commands of a bare &&-chain, so
+    the gate must be an explicit if around the provisioning pipelines."""
+    home = tmp / "deploy-ghfail-home"
+    token = "ARGUS_CANARY_GH_TOKEN_R1A"
+    config = write(tmp / "ghfail-config.env",
+                   "MODULE_CORE=ON\n"
+                   "MODULE_INTEGRATIONS=ON\n"
+                   "MODULE_TG_BOT=OFF\n"
+                   "MODULE_ANALYZER=OFF\n"
+                   "MODULE_HEARTBEAT=OFF\n"
+                   "MODULE_GH_HEARTBEAT=ON\n"
+                   "MODULE_DISCORD_BOT=OFF\n"
+                   f"GH_TOKEN={token}\n"
+                   f"WATCHDOG_BOT_TOKEN={token}\n"
+                   "WATCHDOG_CHAT_ID=ARGUS_CANARY_GH_CHAT_R1A\n")
+    shim = tmp / "shim-ghfail"
+    shim.mkdir()
+    gh_argv = tmp / "ghfail-argv.log"
+    _write_argv_shim(shim, "gh",
+                     f'printf \'%s\\n\' "$*" >> "{gh_argv.as_posix()}"\n'
+                     'case "$1 $2" in\n'
+                     '  "api user") echo dummyuser; exit 0;;\n'
+                     '  "repo view") exit 1;;\n'
+                     '  "repo create") exit 0;;\n'
+                     '  "secret set") echo "boom: synthetic gh failure" >&2; exit 1;;\n'
+                     '  *) exit 0;;\n'
+                     'esac\n')
+    _write_argv_shim(shim, "git",
+                     'case "$1" in diff) exit 1;; *) exit 0;; esac\n')
+    env = _path_shim_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "CRON_PROFILE": "minimal", "CRON_FILE": str(tmp / "ghfail-cron.txt"),
+    })
+    result = subprocess.run(["bash", str(REPO / "deploy.sh"), str(config)],
+                            cwd=REPO, env=env, input=b"y\n",
+                            capture_output=True, timeout=120)
+    stdout = result.stdout.decode(errors="ignore")
+    argv_text = gh_argv.read_text(encoding="utf-8") if gh_argv.exists() else ""
+    check("deploy_gh_secret_failure_gates_deploy",
+          result.returncode != 0
+          and "GH Heartbeat готов" not in stdout
+          and not (tmp / "ghfail-cron.txt").exists()
+          and token not in argv_text,
+          f"rc={result.returncode} ready_msg_suppressed="
+          f"{'GH Heartbeat готов' not in stdout}")
+
+
+def probe_gh_secret_stdin_flag_supported(tmp: Path):
+    """R1a remediation: real gh CLI accepts `gh secret set NAME` with the value
+    on stdin and rejects the nonexistent --body-file form.
+
+    Runs against a nonexistent repo with GH_HOST pointed at an unroutable host
+    and no token in env: the API call can never mutate anything, so the probe
+    observes only flag parsing. The --body-file arm is the negative control
+    proving the discriminator itself fires."""
+    gh = shutil.which("gh")
+    if not gh:
+        check("gh_secret_stdin_flag_supported", True, "skipped: gh not installed")
+        return
+    env = _probe_subprocess_env(tmp / "gh-flag-home", {"GH_HOST": "argus-probe.invalid"})
+    stdin_value = "ARGUS_CANARY_GH_TOKEN_R1A\n"
+    ok_call = subprocess.run([gh, "secret", "set", "ARGUS_CANARY",
+                              "--repo", "dummyuser/argus-nonexistent-repo"],
+                             input=stdin_value.encode(), env=env,
+                             capture_output=True, timeout=60)
+    bad_call = subprocess.run([gh, "secret", "set", "ARGUS_CANARY",
+                               "--repo", "dummyuser/argus-nonexistent-repo",
+                               "--body-file", "-"],
+                              input=stdin_value.encode(), env=env,
+                              capture_output=True, timeout=60)
+    ok_err = (ok_call.stderr or b"").decode(errors="ignore")
+    bad_err = (bad_call.stderr or b"").decode(errors="ignore")
+    stdin_form_parses = "unknown flag" not in ok_err
+    bodyfile_rejected = "unknown flag" in bad_err
+    check("gh_secret_stdin_flag_supported", stdin_form_parses and bodyfile_rejected,
+          f"rc={ok_call.returncode} stdin_parses={stdin_form_parses} "
+          f"bodyfile_rejected={bodyfile_rejected}")
+
+
+def probe_git_credential_helper_real(tmp: Path):
+    """R1a remediation: the exact credential-helper expression from deploy.sh,
+    executed by real git via sh -c, serves `credential fill` from $GH_TOKEN.
+
+    No network contact (fill consults helpers only), no store writes (empty
+    helper= resets system/global helpers, fixture HOME isolates state)."""
+    git = shutil.which("git")
+    if not git:
+        check("git_credential_helper_real", True, "skipped: git not installed")
+        return
+    home = tmp / "cred-home"
+    home.mkdir()
+    token = "ARGUS_CANARY_GH_TOKEN_R1A"
+    helper = ('credential.helper=!f(){ printf "username=argus\\npassword=%s" '
+              '"$GH_TOKEN"; }; f')
+    env = _probe_subprocess_env(home, {"GH_TOKEN": token})
+    result = subprocess.run([git, "-c", "credential.helper=", "-c", helper,
+                             "credential", "fill"],
+                            input="protocol=https\nhost=github.com\n\n",
+                            env=env, capture_output=True, text=True, timeout=60)
+    filled = "username=argus" in result.stdout and f"password={token}" in result.stdout
+    no_store = not (home / ".git-credentials").exists()
+    check("git_credential_helper_real",
+          result.returncode == 0 and filled and no_store,
+          f"rc={result.returncode} filled={filled} no_store={no_store}")
+
+
 # ── Пробы: D0a schema v2 (envelope, projection, dual-read) ──────────────────
 
 # Explicit environment allowlist for wrapper subprocesses (review pass):
@@ -1465,6 +1707,11 @@ def main() -> int:
     probe_discover_url_secret_leak(disc, tmp)
     probe_discover_url_shape_and_literals(disc, tmp)
     probe_deploy_cron_profile(tmp)
+    probe_deploy_secret_not_in_argv(tmp)
+    probe_deploy_gh_heartbeat_secret_not_in_argv(tmp)
+    probe_deploy_gh_secret_failure_gates_deploy(tmp)
+    probe_gh_secret_stdin_flag_supported(tmp)
+    probe_git_credential_helper_real(tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:
