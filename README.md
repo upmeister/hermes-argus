@@ -56,6 +56,32 @@ requiring external services is off by default.
 Cron lines for enabled modules are generated to `/tmp/hermes-argus-crontab.txt`
 — merge them into your crontab, deploy never touches it directly.
 
+## Development baseline
+
+Argus is currently in a stabilization-first phase. The C1a Hermes runtime
+shadow-bridge direction was stopped and PR #27 was closed without merge; those
+documents remain historical evidence, not active implementation authority.
+
+Before contributing implementation work, read:
+
+1. `AGENTS.md` — mandatory scope control;
+2. `docs/handoffs/README.md` — active vs historical handoffs;
+3. `docs/handoffs/2026-09-17-next-steps-execution-baseline.md`;
+4. exactly one maintainer-selected active task contract.
+
+Current bounded implementation sequence:
+
+```text
+secret-in-argv
+ -> malformed YAML fail-safe discovery
+ -> gateway liveness via Hermes runtime status
+ -> bounded fallback/static-discovery compatibility
+ -> reduction / v0.1 stabilization
+```
+
+Multi-profile monitoring is near-term product work but intentionally separate
+from these patches so it cannot widen the stabilization tasks.
+
 ## Status
 
 Pre-release, under active development. Breaking changes expected before v0.1.
