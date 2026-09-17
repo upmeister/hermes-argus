@@ -934,6 +934,57 @@ def probe_deploy_gh_heartbeat_secret_not_in_argv(tmp: Path):
           f"no_body_flag={no_body_flag}")
 
 
+def probe_deploy_gh_secret_failure_gates_deploy(tmp: Path):
+    """R1a remediation 2: a failing gh secret set must abort deploy nonzero
+    before the readiness message and cron generation.
+
+    Bash errexit does not fire for non-final commands of a bare &&-chain, so
+    the gate must be an explicit if around the provisioning pipelines."""
+    home = tmp / "deploy-ghfail-home"
+    token = "ARGUS_CANARY_GH_TOKEN_R1A"
+    config = write(tmp / "ghfail-config.env",
+                   "MODULE_CORE=ON\n"
+                   "MODULE_INTEGRATIONS=ON\n"
+                   "MODULE_TG_BOT=OFF\n"
+                   "MODULE_ANALYZER=OFF\n"
+                   "MODULE_HEARTBEAT=OFF\n"
+                   "MODULE_GH_HEARTBEAT=ON\n"
+                   "MODULE_DISCORD_BOT=OFF\n"
+                   f"GH_TOKEN={token}\n"
+                   f"WATCHDOG_BOT_TOKEN={token}\n"
+                   "WATCHDOG_CHAT_ID=ARGUS_CANARY_GH_CHAT_R1A\n")
+    shim = tmp / "shim-ghfail"
+    shim.mkdir()
+    gh_argv = tmp / "ghfail-argv.log"
+    _write_argv_shim(shim, "gh",
+                     f'printf \'%s\\n\' "$*" >> "{gh_argv.as_posix()}"\n'
+                     'case "$1 $2" in\n'
+                     '  "api user") echo dummyuser; exit 0;;\n'
+                     '  "repo view") exit 1;;\n'
+                     '  "repo create") exit 0;;\n'
+                     '  "secret set") echo "boom: synthetic gh failure" >&2; exit 1;;\n'
+                     '  *) exit 0;;\n'
+                     'esac\n')
+    _write_argv_shim(shim, "git",
+                     'case "$1" in diff) exit 1;; *) exit 0;; esac\n')
+    env = _path_shim_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "CRON_PROFILE": "minimal", "CRON_FILE": str(tmp / "ghfail-cron.txt"),
+    })
+    result = subprocess.run(["bash", str(REPO / "deploy.sh"), str(config)],
+                            cwd=REPO, env=env, input=b"y\n",
+                            capture_output=True, timeout=120)
+    stdout = result.stdout.decode(errors="ignore")
+    argv_text = gh_argv.read_text(encoding="utf-8") if gh_argv.exists() else ""
+    check("deploy_gh_secret_failure_gates_deploy",
+          result.returncode != 0
+          and "GH Heartbeat готов" not in stdout
+          and not (tmp / "ghfail-cron.txt").exists()
+          and token not in argv_text,
+          f"rc={result.returncode} ready_msg_suppressed="
+          f"{'GH Heartbeat готов' not in stdout}")
+
+
 def probe_gh_secret_stdin_flag_supported(tmp: Path):
     """R1a remediation: real gh CLI accepts `gh secret set NAME` with the value
     on stdin and rejects the nonexistent --body-file form.
@@ -1658,6 +1709,7 @@ def main() -> int:
     probe_deploy_cron_profile(tmp)
     probe_deploy_secret_not_in_argv(tmp)
     probe_deploy_gh_heartbeat_secret_not_in_argv(tmp)
+    probe_deploy_gh_secret_failure_gates_deploy(tmp)
     probe_gh_secret_stdin_flag_supported(tmp)
     probe_git_credential_helper_real(tmp)
 

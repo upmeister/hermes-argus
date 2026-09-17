@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   template substitutions are applied through a temporary `sed` script file,
   GitHub Heartbeat secrets are piped to `gh secret set` via stdin, and the
   heartbeat repo push authenticates through an in-memory credential helper
-  instead of a token-bearing URL.
+  instead of a token-bearing URL. A failed `gh secret set` now aborts the
+  deploy with a clear error instead of reporting the heartbeat ready.
 - Resolve the Honcho health target with profile-aware host/workspace/base-URL
   precedence compatible with current upstream Hermes, and require the queue
   endpoint to declare `application/json` before schema validation.

@@ -286,12 +286,19 @@ if module_enabled MODULE_GH_HEARTBEAT; then
                 fi
                 # Секреты через stdin (gh читает значение из stdin, когда --body
                 # не передан; флага --body-file в gh 2.45 нет): значения не
-                # попадают в argv.
-                printf '%s' "${WATCHDOG_BOT_TOKEN:-}" | gh secret set WATCHDOG_BOT_TOKEN --repo "$GH_USER/$GH_HB_REPO" >/dev/null && \
-                printf '%s' "${WATCHDOG_CHAT_ID:-}" | gh secret set WATCHDOG_CHAT_ID --repo "$GH_USER/$GH_HB_REPO" >/dev/null && \
-                echo "   ✅ secrets установлены"
-                echo "   ✅ GH Heartbeat готов. Добавьте в config.env и перезапустите deploy:"
-                echo "      GITHUB_REPO=$GH_USER/$GH_HB_REPO"
+                # попадают в argv. Провал provisioning — явный гейт: bare
+                # &&-цепочка под set -e НЕ прерывает деплой (errexit подавляется
+                # для не-финальных команд AND-списка), и деплой отчитался бы
+                # «готов» без secrets.
+                if printf '%s' "${WATCHDOG_BOT_TOKEN:-}" | gh secret set WATCHDOG_BOT_TOKEN --repo "$GH_USER/$GH_HB_REPO" >/dev/null \
+                   && printf '%s' "${WATCHDOG_CHAT_ID:-}" | gh secret set WATCHDOG_CHAT_ID --repo "$GH_USER/$GH_HB_REPO" >/dev/null; then
+                    echo "   ✅ secrets установлены"
+                    echo "   ✅ GH Heartbeat готов. Добавьте в config.env и перезапустите deploy:"
+                    echo "      GITHUB_REPO=$GH_USER/$GH_HB_REPO"
+                else
+                    echo "   🚨 gh secret set failed — heartbeat secrets НЕ установлены, деплой прерван (повторный запуск deploy идемпотентен)" >&2
+                    exit 1
+                fi
             else
                 echo "   ℹ️  Пропущено по отказу юзера. Альтернативы: DMS / Cronping"
                 echo "      (https://deadmanssnitch.com, https://cronping.com)"
