@@ -13,6 +13,95 @@ protocol-specific runtime semantics. Argus owns discovery orchestration,
 independent external verification policy, watchdog state, hysteresis/alerts,
 and reporting.
 
+Argus is not a second Hermes runtime, a generic Hermes compatibility layer, or
+an application-level sandbox around a trusted local Hermes installation.
+
+## Scope control — mandatory
+
+The requested scope is a **maximum**, not a minimum.
+
+Do only the behavior explicitly requested by the task and its acceptance
+criteria. Do not add adjacent features, generalized abstractions,
+defense-in-depth subsystems, new configuration knobs, new persistent state,
+migration machinery, integrity verification, compatibility frameworks, or
+unrelated cleanup unless the maintainer explicitly approves them.
+
+A blocker outside the approved scope is a finding to report, not permission to
+fix it.
+
+### Stop instead of expanding
+
+STOP implementation and return a concise scope/blocker report if resolving a
+finding would require any of:
+
+- a new subsystem or security boundary;
+- changes outside the named functional surface;
+- more than one new production entrypoint;
+- a new dependency;
+- a new persistent state format;
+- pinning an upstream historical revision;
+- sandboxing, interpreter/worktree integrity verification, supply-chain
+  verification, or OS-security emulation in application code;
+- changing legacy behavior that the task says to preserve;
+- hundreds of new lines for a bug expected to be local;
+- a second remediation cycle.
+
+These are not forbidden forever. They require an explicit maintainer scope/value
+decision before implementation continues.
+
+### Reviewer authority
+
+A reviewer may fix only a defect that directly violates an explicit acceptance
+criterion and can be corrected locally without expanding architecture.
+
+A reviewer MUST NOT:
+
+- implement wishlist items discovered during review;
+- broaden the threat model on its own;
+- redesign adjacent code;
+- add generic hardening "while here";
+- create or delegate new workstreams without maintainer approval;
+- launch repeated independent review waves automatically.
+
+Default review loop:
+
+```text
+one implementation pass
+-> one focused review
+-> at most one remediation pass
+-> re-read the exact committed/staged tree once
+-> merge decision OR stop and return blockers to maintainer
+```
+
+Do not use instructions such as "remediate through as many loops as needed".
+
+### Threat model
+
+Assume the local OS account, intentionally installed Hermes checkout/venv, and
+code intentionally installed for Hermes are trusted to the degree required to
+run Hermes itself.
+
+Protect against accidental secret disclosure, malformed/unexpected data,
+upstream drift, hangs, false-green classifications, unintended network/process
+activity, and ordinary programming/deployment mistakes.
+
+Do not attempt to defend Argus against a malicious same-user Hermes
+installation, hostile native extensions, deliberate filesystem tampering by an
+actor with write access to the user's home, or compromised local dependencies.
+Those require OS-level isolation under a separately approved project.
+
+### Work admission and complexity budget
+
+Before a non-trivial implementation task, be able to state:
+
+```text
+problem -> evidence -> smallest patch -> owning path -> explicit non-goals
+```
+
+If a small-sounding task begins to require multiple new files, a new abstraction
+layer, or a large amount of compatibility/security plumbing, treat that as
+evidence that the design is wrong and STOP for maintainer review.
+
 ## Source of truth and deployment
 
 - Repository scripts, module manifests, `registry.yaml`, and `deploy.sh` are
@@ -78,12 +167,12 @@ maintainer authorization and read-back verification.
 
 - `docs/adr/0001-integration-evidence-policy.md` — evidence claims, canonical
   verdicts, and side-effect policy.
-- `docs/adr/0002-hermes-discovery-sync-boundary.md` — Hermes discovery/sync
-  boundary: process-isolated metadata facets, effect budget, provenance,
-  shadow-first migration (architecture only, no production wiring).
+- `docs/adr/0002-hermes-discovery-sync-boundary.md` — historical Hermes
+  discovery/sync architecture record. Its production bridge migration is
+  superseded by the 2026-09-17 stabilization plan unless explicitly reopened.
 - `README.md` — user-facing product and module overview.
 - `CHANGELOG.md` — user-facing changes in Keep a Changelog format.
 - `scripts/gen-registry.py` — registry generation contract.
 - `tests/probes.py` — fixture-driven regression and security probes.
-- Hermes integration-monitoring conventions and the project research notes in
-  the canonical Obsidian vault.
+- Canonical active roadmap in the Obsidian vault:
+  `projects/hermes-argus/plans/2026-09-17-architecture-reset-and-stabilization-plan.md`.
