@@ -14,10 +14,15 @@ Contract: `docs/handoffs/oa0-account-auth-discovery-research-contract.md`.
   `chore(release): v0.21.3 (v2026.9.14)`.
 - Hermes main observed SHA (warning only, what production actually runs, editable
   install): `d177b119e9c56c9ddc0b7379ffce52341ec06584` — 2096 commits ahead of
-  the supported tag. The only behavioral drift relevant to this research: two
-  additional response fields (`retryable`, `retry_after`) on the OAuth session
-  **poll** endpoint (`POST`-family session polling, not the status GET); the
-  `GET /api/providers/oauth` handler is otherwise unchanged.
+  the supported tag. Tag→main drift is **substantive** in the exact modules
+  that own refresh/persistence side effects (`hermes_cli/auth.py`,
+  `agent/credential_pool.py`); the `GET /api/providers/oauth` handler itself is
+  unchanged apart from two additional fields (`retryable`, `retry_after`) on
+  the OAuth session **poll** endpoint. Therefore:
+  side-effect semantics were **source-verified at the tag** (authority), the
+  empirical probes were **captured on main@prod** (labeled per claim), and the
+  reviewer (Pytna) **independently reproduced all probe results at the exact
+  tag** — see "Probe provenance" in Appendix B.
 - All source citations below are from the tag unless explicitly marked `main@prod`.
 
 Evidence classes are labeled per contract §8: **[source]** = tag source read,
@@ -63,18 +68,22 @@ throwaway-home probe with synthetic credentials only.
   contains exactly `oauth:nous` and `oauth:copilot (pat-only)`.
   **`oauth:openai-codex` is absent although a live Codex account is configured** —
   the user-visible false negative.
-- Empirical reproduction (Probe A, local synthetic fixture, `HERMES_DIR`
-  override): an `auth.json` with a nested Codex singleton (future-`exp` JWT) and
-  a pool-only Codex entry produces `["oauth:nous"]` only from
-  `integration-discover.py`. Reproduction script in Appendix A.
+- Empirical reproduction (Probe A, local synthetic fixtures, `HERMES_DIR`
+  override; Appendix A): with a nested Codex singleton (future-`exp` JWT) and
+  a pool-only Codex entry, `integration-discover.py` emits only
+  `["oauth:nous"]`; with a pool row **only**, it emits zero oauth entities and
+  exits silently. Both shapes invisible, pool-only case isolated.
 
 ## Scope definition
 
 - **Model/account auth in scope**: nous, openai-codex, xai-oauth, minimax-oauth,
   qwen-oauth, anthropic (Hermes-managed PKCE + pool), copilot-acp, claude-code
-  (external CLI store), and any plugin-added `tab == "accounts"` provider that
-  Hermes itself lists — insofar as their evidence lives in the persisted auth
-  store or provider-owned files Argus can read statically.
+  (external CLI store), and any provider whose evidence lives in the persisted
+  auth store (`providers`/`credential_pool` sections) that Argus can read
+  statically. Credentials held **only** in external CLI files or ambient cloud
+  SDK chains (Codex CLI `~/.codex/auth.json`, Vertex ADC/OAuth2, Bedrock IAM
+  chain, Copilot OS keychain) are **bounded known misses**, not coverage
+  claims — see taxonomy.
 - **Excluded OAuth domains** (per contract): MCP OAuth, Spotify/tool OAuth,
   memory-provider OAuth, dashboard/user identity, connector/session auth,
   arbitrary third-party OAuth files, multi-profile implementation.
@@ -94,27 +103,37 @@ Store: `$HERMES_HOME/auth.json` (0600, parent 0700, atomic writes, flock;
 | provider/class | singleton shape (`providers.<id>`) | pool shape (`credential_pool.<id>[]`) | external source | generic static rule possible? | notes |
 |---|---|---|---|---|---|
 | nous | `access_token`, `refresh_token`, `agent_key`, expiry/scope fields — **flat** | oauth rows carry token material | — | yes (flat) | the only flat-shape provider in production today |
-| openai-codex | `tokens.{access_token, refresh_token}`, `last_refresh`, `auth_mode` — **nested** | oauth rows carry token material | — | yes (nested + pool) | the demonstrated false negative |
+| openai-codex | `tokens.{access_token, refresh_token}`, `last_refresh`, `auth_mode` — **nested** | oauth rows carry token material | Codex CLI `$CODEX_HOME`/`~/.codex/auth.json` (`_import_codex_cli_tokens` reads it; `_recover_codex_tokens_from_cli` adopts the pair into the Hermes store) — runtime-visible **before** any Hermes-store state exists | yes (nested + pool); CLI-file state is a known miss | the demonstrated false negative |
 | xai-oauth | tag: xai writes via `_save_xai_oauth_tokens` with write-through to global root | prod pool key is `xai` (alias drift vs provider id `xai-oauth`) | — | yes, with id-alias caution | same single-use refresh family as codex |
 | minimax-oauth | flat `access_token` + `expires_at`/`region` (oauth state) | possible | — | yes | status path is local-only at tag |
 | qwen-oauth | none (Hermes keeps none) | possible | Qwen CLI auth file (`_qwen_cli_auth_path()`) | pool yes; CLI file = external, opt-in read | status refresh-validates (see seam section) |
 | anthropic | none (PKCE file instead) | rows (incl. `sk-ant-oat*` tokens auto-typed `oauth` by `_normalize_pool_auth_type`) | `$HERMES_HOME/.anthropic_oauth.json` (Hermes-owned) | yes (pool + Hermes-owned file) | dashboard card reads PKCE file + env vars |
 | claude-code | none | possible (borrowed) | `~/.claude/.credentials.json` | external file, opt-in read | borrowed sources are metadata-only at rest |
 | copilot-acp | none | possible | `~/.copilot/config.json`, `~/.config/github-copilot/*` (JSONC/JSON), `COPILOT_*` env | external files, opt-in read | CLI may hold session in an OS keychain Hermes cannot read — absence is not logged-out |
-| api-key pool rows (gemini, openrouter, clinepass, cline, cline-pass, opencode-go, …) | — | rows persist **metadata + `secret_fingerprint` only** (no key at rest; hydrated from live source at load) | env / gh CLI / provider CLI | yes, as credential-evidence rows | `secret_fingerprint` is derived key material — must never be emitted by Argus |
-| plugin-added account providers | whatever the plugin writes via Hermes' own store APIs | possible | plugin-owned | pool/`providers` sections are generic — yes | `_build_oauth_catalog` admits any `provider_catalog()` entry with `tab == "accounts"` automatically [source] |
+| api-key pool rows (gemini, openrouter, clinepass, cline, cline-pass, opencode-go, …) | — | **source-qualified storage**: borrowed env/CLI sources persist **metadata + `secret_fingerprint` only** (secret stripped at the disk boundary, hydrated at load); `manual`/`manual:*` rows and rows whose `(provider, source)` is in `_PERSISTABLE_PROVIDER_SOURCES` (e.g. `anthropic/hermes_pkce`) **can carry the raw credential at rest** (`agent/credential_persistence.py`: "Owned sources pass through unchanged") | env / gh CLI / provider CLI | yes, as credential-evidence rows | `secret_fingerprint` is derived key material; raw values in owned rows must never be read or emitted by Argus |
+| vertex | none in auth.json (GCP OAuth2 service account / ADC chain) | possible | GCP ADC / service-account chain (`gcloud` state, workload identity) | no — ambient cloud chain, **known miss** | canonical description: "OAuth2 service account or ADC" |
+| bedrock | none in auth.json (AWS SDK credential chain) | possible | AWS IAM env/profile/IMDS chain | no — ambient cloud chain, **known miss** | canonical description: "IAM or API key" |
+| plugin-added account providers | whatever the plugin writes via Hermes' own store APIs (`providers`/`credential_pool` sections are generic) | possible | plugin-owned | store rows: yes; **the seam: no** | plugin extension of `CANONICAL_PROVIDERS` deliberately **skips** all account-auth plugin types (`oauth_device_code`, `oauth_external`, `external_process`, `aws_sdk`, `copilot`, `vertex`) — `models_catalog_static.py`; the `oauth.py` docstring claiming automatic appearance is inaccurate at the tag |
 
 Key structural facts [source]:
 
 - `auth_type` persisted values: `oauth` | `api_key`; **legacy rows missing
-  `auth_type` default to `api_key`** on load (`PooledCredential.from_dict`).
-  `_normalize_pool_auth_type` re-types `anthropic` `sk-ant-oat*` tokens to
-  `oauth`.
+  `auth_type` default to `api_key`** on load (`PooledCredential.from_dict`
+  accepts the persisted value unchecked). The `_normalize_pool_auth_type`
+  re-typing of `anthropic` `sk-ant-oat*` tokens to `oauth` happens **only at
+  runtime, after reading the secret value** — a static reader cannot replicate
+  it without violating the secret boundary and must not try; persisted
+  `auth_type` is used as-is.
 - `source` values include `device_code`, `loopback_pkce`, `hermes_pkce`,
   `manual`, `manual:*`, `env:<VAR>`, `gh_cli`-style borrowed sources.
   `_EXPLICIT_POOL_SOURCES` = `{device_code, loopback_pkce, hermes_pkce, manual}`
   (+ `manual:` prefixes); borrowed/ambient sources are deliberately **not**
   "explicit" for Hermes' own configured-ness logic.
+- `env:<VAR>`-sourced rows **persist after the referenced env var disappears**
+  (ordinary `load_pool()` keeps them; only the runtime explicit-configuredness
+  check re-tests the env live). A static reader sees the row without being
+  able to re-check the var without evaluating the environment — a standing
+  false-positive source for any stronger-than-evidence claim.
 - Cooldown/health state on rows: `last_status` (`ok|exhausted|dead`),
   `last_status_at`, `last_error_*`, `last_error_reset_at`. **These are
   mutated by Hermes' own runtime — a static reader must treat them as
@@ -134,9 +153,16 @@ Key structural facts [source]:
   `DELETE /{provider_id}`, `POST /{provider_id}/start|submit`,
   `GET /{provider_id}/poll/{session_id}`, `DELETE /sessions/{id}`.
 - **Provider-universe construction**: curated `_OAUTH_PROVIDER_CATALOG` first,
-  then every `provider_catalog()` entry with `tab == "accounts"` appended
-  automatically — plugin-added account providers enter the list without code
-  changes [source].
+  then `provider_catalog()` entries with `tab == "accounts"` appended. The
+  catalog is built **solely from the static `CANONICAL_PROVIDERS` list**: the
+  plugin auto-extension in `models_catalog_static.py` deliberately skips every
+  account-auth plugin type (`oauth_device_code`, `oauth_external`,
+  `oauth_minimax`-shaped, `external_process`, `aws_sdk`, `copilot`, `vertex`)
+  because "non-api-key flows need bespoke picker UX". Net effect
+  [source-verified at the tag]: **plugin-added account providers do NOT appear
+  in the seam** — its universe is bounded by the curated list plus static
+  canonical account-type entries; the `oauth.py` docstring claiming plugins
+  "appear automatically" is inaccurate.
 - **Status dispatch**: hand-written per-provider cards (`nous`,
   `openai-codex`, `qwen-oauth`, `minimax-oauth`, `xai-oauth`) wrapping
   `get_*_auth_status` helpers; everything else (plugin entries) falls through
@@ -238,28 +264,40 @@ code, labeled as such), FastAPI TestClient, deny-by-construction networking
 | Candidate | Completeness | Side-effect risk | Secret exposure | Plugin/future provider coverage | Profile fit | Maintenance cost | Verdict |
 |---|---|---|---|---|---|---|---|
 | current hard-coded static list | misses nested singleton + all pool state (demonstrated) | none | none (field names only) | none — new providers need Argus edits | none | low but already wrong | reject as-is |
-| generic static auth.json structure | full for `providers` + `credential_pool`; opt-in for external CLI files | none (read-only, no Hermes execution) | none if only presence/metadata is read (never values, never `secret_fingerprint`) | good — pool/`providers` sections are generic; provider ids come from the store itself | reads the same store the seam scopes (MP-compatible later) | low — structural rules, not a provider roster | **recommended** |
-| `GET /api/providers/oauth` | best runtime truth (pool-only codex `logged_in`) | **demonstrated persistent writes + network refresh on expiring/failed paths; qwen refresh-validates by design** | `token_preview` = partial real token in every response | best — plugin entries included | yes (`?profile=`) | medium — HTTP client, auth, schema drift | reject for polling now; record as future upstream-gated enrichment (OA2 gate below) |
+| generic static auth.json structure | full for `providers` + `credential_pool` (the persisted auth-store universe); external CLI files opt-in; ambient cloud chains (Vertex ADC, Bedrock IAM, Copilot keychain) remain misses | none (read-only, no Hermes execution) | none if only presence/metadata is read (never values, never `secret_fingerprint`) | pool/`providers` sections are generic and store-keyed; account-type **plugins** surface only if they write store rows | reads the same store the seam scopes (MP-compatible later) | low — structural rules, not a provider roster | **recommended** |
+| `GET /api/providers/oauth` | best runtime truth (pool-only codex `logged_in`) | **demonstrated persistent writes + network refresh on expiring/failed paths; qwen refresh-validates by design** | `token_preview` = partial real token in every response | none for new account-type plugins (universe bounded by static catalog) | yes (`?profile=`) | medium — HTTP client, auth, schema drift | reject for polling now; record as future upstream-gated enrichment (OA2 gate below) |
 | `hermes auth list` | pool + registry universe | `load_pool()` per provider seeds/heals the store (writes); CLI cold start | none in output (labels/ids only) | pool-driven | no profile flag at tag | high — human-readable text, no JSON schema | reject |
 | `GET /api/credentials/pool` | pool only | `load_pool()` "may hit the network synchronously (Copilot token exchange)"; borrowed-source hydration may spawn `gh` | redacted views only | pool only | no profile param | medium | reject — strictly worse than reading the same pool statically |
 | importing Hermes auth/provider internals | best | runtime coupling; forbidden by architecture invariant (C1a dropped) | n/a | n/a | n/a | n/a | forbidden — do not revive |
 
 ## Proposed OA1 semantics
 
-- **What static discovery may claim**: `credential evidence present` /
-  `configured` for an account-auth identity — **never** `healthy`, never
-  `logged_in` (that is Hermes' runtime claim and the seam is not polled).
+- **What static discovery may claim**: `persisted credential evidence present`
+  for an identity — **never** `healthy`, never `logged_in`, and — for pool
+  rows of borrowed/ambient origin — not even `configured` (rows persist after
+  their source disappears; only "evidence exists on disk" is provable). The
+  distinction `evidence present` vs Hermes' `logged_in` vs independent health
+  is mandatory in any OA1 output schema.
 - **Structural rules** (evaluate, do not widen):
   1. `providers.<id>` object containing a non-empty credential structure —
      flat `access_token`/`refresh_token` **or** a `tokens` sub-object with a
-     non-empty `access_token`/`refresh_token` → identity `<id>`;
-  2. `credential_pool.<id>[]` rows with `auth_type == "oauth"` **or** (bounded
-     legacy fallback) a non-empty `refresh_token` → identity `<id>`;
-  3. `auth_type == "api_key"` pool rows → identity evidence with
-     `auth_type: api_key` (presently invisible to Argus too); whether they
-     surface as `oauth:*` entities or a distinct class is an OA1 schema
-     decision — the existing `oauth` entity name is semantically imperfect;
-     recorded as schema debt, no rename authorized by OA0;
+     non-empty `access_token`/`refresh_token` → identity `<id>`. Presence
+     alone does not classify the auth kind: a flat block on an API-key-style
+     provider is key evidence, not OAuth evidence.
+  2. `credential_pool.<id>[]` rows with persisted `auth_type == "oauth"` →
+     identity `<id>` (account-auth evidence).
+     Bounded legacy fallback: rows with **no persisted `auth_type`** and a
+     non-empty `refresh_token` → identity `<id>` flagged `evidence: weak`
+     (possible false positive on stale/manual/plugin rows). The runtime-only
+     `anthropic sk-ant-oat*` re-typing is NOT replicated (it requires reading
+     the secret value).
+  3. `auth_type == "api_key"` pool rows → `persisted credential evidence`
+     with `auth_type: api_key` (presently invisible to Argus too). Stale
+     `env:*` rows survive their env var — no validity or configuredness claim
+     may be attached. Whether these surface as `oauth:*` entities or a
+     distinct class is an OA1 schema decision — the existing `oauth` entity
+     name is semantically imperfect; recorded as schema debt, no rename
+     authorized by OA0.
   4. provider ids come from the store keys themselves (including aliases such
      as pool key `xai` vs provider id `xai-oauth`) — no new hard-coded roster.
 - **Secret fields explicitly discarded**: `access_token`, `refresh_token`,
@@ -269,9 +307,12 @@ code, labeled as such), FastAPI TestClient, deny-by-construction networking
   row count, boolean has-refresh, presence of cooldown markers
   (`last_status` value is runtime-owned; at most surfaced as `runtime_cooldown: true`).
 - **Known misses** (documented, acceptable): credentials held only in external
-  CLI stores/keychains (copilot OS keychain, qwen CLI) remain invisible unless
-  OA1 adds opt-in file readers; that extension needs its own evidence (the
-  files contain secret material at rest) and is not part of the minimum rule.
+  CLI stores/keychains or ambient cloud chains (Codex CLI `~/.codex/auth.json`
+  before adoption, Copilot OS keychain, qwen CLI file, Vertex ADC/OAuth2,
+  Bedrock IAM chain) remain invisible unless OA1 adds opt-in file readers;
+  that extension needs its own evidence (the files contain secret material at
+  rest) and is not part of the minimum rule. Account-auth **plugins** that
+  never write `providers`/`credential_pool` rows are likewise invisible.
 
 ## OA2 gate
 
@@ -301,13 +342,19 @@ code, labeled as such), FastAPI TestClient, deny-by-construction networking
 **STATIC ONLY**
 
 Generic static structure of `auth.json` (`providers` + `credential_pool`
-sections) covers the demonstrated product need (Codex — and every pool-backed
-provider — becomes visible) with zero execution, zero side effects, zero
-secret exposure, and no new dependency. The Hermes-owned seam is architecturally
-attractive (it even saw pool-only Codex in the probe) but is disqualified for
-Argus polling today by demonstrated write side effects and the absent headless
-auth path; both blockers are upstream-owned. Per the contract this is not a
-runtime-bridge proposal and no OA1 code is submitted here.
+sections) covers the **persisted auth-store universe** — which is exactly the
+demonstrated product need: the false negative is a Codex account whose
+credentials *are* in the store (nested singleton + pool) and become visible.
+It does so with zero execution, zero side effects, zero secret exposure, and
+no new dependency. The Hermes-owned seam is architecturally attractive (it
+even saw pool-only Codex in the probe) but is disqualified for Argus polling
+today by demonstrated write side effects, the absent headless auth path, and
+a plugin-hostile universe bounded by a static catalog; all three blockers are
+upstream-owned. Credentials held only in external CLI files or ambient cloud
+chains (Codex CLI file, Vertex ADC, Bedrock IAM, Copilot keychain) remain
+documented known misses — they are not the demonstrated gap, and extending to
+them would be a separate, separately-evidenced decision. Per the contract this
+is not a runtime-bridge proposal and no OA1 code is submitted here.
 
 ## Out-of-scope findings (recorded, not acted on)
 
@@ -344,41 +391,50 @@ the roadmap order chosen by the maintainer; OA1 does not unblock or depend on it
 
 ## Appendix A — Probe A: Argus gap reproduction (synthetic, local)
 
+Two variants against `scripts/integration-discover.py` with a synthetic
+`HERMES_DIR` (no Hermes execution; fixture built locally):
+
 ```python
-# fixture: $TMP/home/auth.json
+# fixture builder
 import base64, json, time
 def b64(o): return base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode()
 future = int(time.time()) + 3600
-auth = {
-  "version": 2,
-  "providers": {
-    "nous": {"access_token": "nous-flat-token", "refresh_token": "r",
-             "expires_at": "2099-01-01T00:00:00Z"},
-    "openai-codex": {"tokens": {"access_token": "hdr." + b64({"exp": future}) + ".sig",
-                                "refresh_token": "rt"},
-                     "last_refresh": "2026-09-18T00:00:00Z", "auth_mode": "chatgpt"},
-  },
-  "credential_pool": {
-    "openai-codex": [{"id": "abc123", "label": "probe", "auth_type": "oauth",
-                      "priority": 0, "source": "device_code",
-                      "access_token": "hdr." + b64({"exp": future}) + ".sig",
-                      "refresh_token": "rt"}],
-  },
-  "active_provider": "nous",
-}
-# run: HERMES_DIR=$TMP/home python3 scripts/integration-discover.py
-# result: snapshot entities == ["oauth:nous"]  (oauth:openai-codex absent)
+def fixture(singleton: bool, pool: bool) -> dict:
+    auth = {"version": 2, "providers": {}, "credential_pool": {}}
+    if singleton:
+        auth["providers"]["openai-codex"] = {
+            "tokens": {"access_token": "hdr." + b64({"exp": future}) + ".sig",
+                       "refresh_token": "rt"},
+            "last_refresh": "2026-09-18T00:00:00Z", "auth_mode": "chatgpt"}
+    if pool:
+        auth["credential_pool"]["openai-codex"] = [{
+            "id": "abc123", "label": "probe", "auth_type": "oauth", "priority": 0,
+            "source": "device_code",
+            "access_token": "hdr." + b64({"exp": future}) + ".sig",
+            "refresh_token": "rt"}]
+    return auth
+# run per variant: HERMES_DIR=$TMP/home python3 scripts/integration-discover.py
 ```
 
-Observed: `integration-discover.py` emitted exactly `["oauth:nous"]`
-(discover exit 2 = events present). The Codex identity exists in both shapes
-and is invisible to both.
+Observed (asserted in the run):
+
+- **Variant A1 — nested singleton AND pool row present**: snapshot entities ==
+  `["oauth:nous"]` (a flat `nous` block was also present as control);
+  `oauth:openai-codex` absent; discover exit 2 (events present). Both Codex
+  shapes invisible.
+- **Variant A2 — pool row only** (no `providers` state at all): snapshot oauth
+  entities == `[]`, discover exit 0 (silent) — a pool-only working Codex
+  account produces *no* events at all, isolating the pool-only miss.
 
 ## Appendix B — Probe B: isolated seam probe (synthetic, throwaway home)
 
-Runs on the Hermes venv (`main@prod` code — labeled), `HERMES_HOME` pointed at
-a throwaway dir, `HERMES_DASHBOARD_SESSION_TOKEN` pinned for the session
-header, `HTTPS_PROXY/HTTP_PROXY=http://127.0.0.1:9` and empty `NO_PROXY`
+### Script (full, with assertions)
+
+Runs on the Hermes venv (`main@prod` code — labeled; tag path source-verified
+separately and independently reproduced by the reviewer at the exact tag, see
+provenance below), `HERMES_HOME` pointed at a throwaway dir,
+`HERMES_DASHBOARD_SESSION_TOKEN` pinned for the session header,
+`HTTPS_PROXY/HTTP_PROXY=http://127.0.0.1:9` and empty `NO_PROXY`
 (deny-by-construction), FastAPI TestClient.
 
 ```python
@@ -389,44 +445,84 @@ def jwt(exp): return "hdr." + b64({"alg": "none", "exp": exp}) + ".sig"
 now = int(time.time())
 home = os.path.join(tmp, "home"); os.makedirs(home, exist_ok=True)
 p = os.path.join(home, "auth.json")
-open(p, "w").write(json.dumps({
-    "version": 2,
-    "providers": {"openai-codex": {"tokens": {"access_token": jwt(now - 3600),
-                                              "refresh_token": "rt"},
-                                   "last_refresh": "2026-09-18T00:00:00Z",
-                                   "auth_mode": "chatgpt"}},
-    "credential_pool": {"openai-codex": [{"id": "abc123", "label": "probe",
-                                          "auth_type": "oauth", "priority": 0,
-                                          "source": "device_code",
-                                          "access_token": jwt(now - 3600),
-                                          "refresh_token": "rt"}]},
-}))
+sha = lambda: hashlib.sha256(open(p, "rb").read()).hexdigest()
+def write_auth(singleton, pool, exp):
+    auth = {"version": 2, "providers": {}, "credential_pool": {}}
+    if singleton:
+        auth["providers"]["openai-codex"] = {
+            "tokens": {"access_token": jwt(exp), "refresh_token": "rt"},
+            "last_refresh": "2026-09-18T00:00:00Z", "auth_mode": "chatgpt"}
+    if pool:
+        auth["credential_pool"]["openai-codex"] = [{
+            "id": "abc123", "label": "probe", "auth_type": "oauth", "priority": 0,
+            "source": "device_code", "access_token": jwt(exp), "refresh_token": "rt"}]
+    open(p, "w").write(json.dumps(auth))
 os.environ["HERMES_HOME"] = home
 os.environ["HERMES_DASHBOARD_SESSION_TOKEN"] = "oa0-probe-token"
 os.environ["HTTPS_PROXY"] = "http://127.0.0.1:9"; os.environ["HTTP_PROXY"] = "http://127.0.0.1:9"
 os.environ["NO_PROXY"] = ""; os.environ["no_proxy"] = ""
 from fastapi.testclient import TestClient
-from hermes_cli.web_server import app
+from hermes_cli.web_server import app, _SESSION_TOKEN
 c = TestClient(app)
 H = {"X-Hermes-Session-Token": "oa0-probe-token"}
-sha = lambda: hashlib.sha256(open(p, "rb").read()).hexdigest()
-r = c.get("/api/providers/oauth", headers=H)          # case 2 (expired)
+assert _SESSION_TOKEN == "oa0-probe-token"
+
+# case 1: pool-only codex, non-expiring — visibility + steady-state + 401
+write_auth(singleton=False, pool=True, exp=now + 3600)
+h0 = sha()
+r = c.get("/api/providers/oauth", headers=H)
+assert r.status_code == 200
+codex = next(x for x in r.json()["providers"] if x["id"] == "openai-codex")
+assert codex["status"]["logged_in"] is True
+assert codex["status"]["source"] == "pool:probe"
+h1 = sha()
+for _ in range(2):
+    assert c.get("/api/providers/oauth", headers=H).status_code == 200
+assert sha() == h0 == h1, "steady-state GETs must not mutate auth.json"
+assert c.get("/api/providers/oauth").status_code == 401, "unauthenticated GET must 401"
+
+# case 2: expired singleton+pool — refresh attempt + persistent write
+write_auth(singleton=True, pool=True, exp=now - 3600)
+h2 = sha()
+r = c.get("/api/providers/oauth", headers=H)
+assert r.status_code == 200
+codex = next(x for x in r.json()["providers"] if x["id"] == "openai-codex")
+assert codex["status"]["logged_in"] is False
+assert "Connection refused" in (codex["status"].get("error") or ""), \
+    "refresh attempt must have hit the deny-by-construction proxy"
 after = json.load(open(p))
-# case 1 (pool-only, future exp) observed separately:
-#   r.status_code == 200; codex card logged_in == True, source == "pool:probe";
-#   sha256 unchanged across 3 GETs; unauthenticated GET == 401
+row = after["credential_pool"]["openai-codex"][0]
+assert row.get("last_status") == "exhausted", "failed-refresh path persists cooldown state"
+assert after.get("updated_at"), "store metadata rewritten by a GET"
 ```
 
-Observed (case 2, field-level diff, token fields redacted by length):
+### Observed results (all assertions passed)
 
-```text
-GET status: 200 (refresh attempt failed fast: [Errno 111] Connection refused)
-CHANGED /credential_pool/openai-codex: [...] ->
-         [... + last_status: "exhausted", last_status_at: 1789...,
-               last_error_*, base_url, last_refresh, request_count]
-CHANGED /updated_at: <absent> -> 2026-09-18T16:27:44...+00:00
-CHANGED /version: 2 -> 1
-```
+- **Case 1**: `200`; codex card `logged_in: true`, `source: "pool:probe"` —
+  the seam sees pool-only Codex, the exact case Argus misses; `auth.json`
+  byte-identical (sha256) across three GETs (0.03 s); unauthenticated GET
+  → `401` (loopback regime).
+- **Case 2**: `200` in 0.20 s; codex `logged_in: false` with the refresh
+  attempt surfacing `[Errno 111] Connection refused`; field-level diff showed
+  the pool row **persistently rewritten** — `last_status: "exhausted"` +
+  `last_status_at` (a durable cooldown the runtime honors), `updated_at`
+  added (and store `version` rewritten). A monitoring poller calling this
+  endpoint during a provider incident would actively freeze Hermes' own
+  credentials.
 
-The durable `last_status: "exhausted"` on a pool row after a single GET is the
-decisive side-effect evidence against polling the seam.
+### Probe provenance
+
+- Side-effect code paths (status helper dispatch, pool-first resolve, refresh
+  + `write_through` save, cooldown persistence) were **source-verified at the
+  exact supported tag** `345cd2b0` (authority for this decision).
+- The empirical run above was **captured on `main@prod`** (`d177b119`,
+  editable production venv) because the tag is not the installed tree; per the
+  baselines section, tag→main drift in `auth.py`/`agent/credential_pool.py` is
+  substantive, so main-run evidence alone was not treated as tag evidence.
+- The reviewer (Pytna) **independently built and ran a minimal throwaway
+  harness at the exact tag** and reproduced every claimed property: pool-only
+  Codex → `200` with `source pool:probe`; three GETs → `200` with unchanged
+  `auth.json`; missing session token → `401`; expired-refresh path →
+  persisted `last_status=exhausted` + `updated_at`. The empirical claims of
+  this report therefore have exact-tag provenance via independent
+  reproduction.
