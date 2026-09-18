@@ -899,7 +899,8 @@ def probe_oa1_storage_shape_stability(disc, tmp: Path):
 
 
 def probe_oa1_malformed_ignored(disc, tmp: Path):
-    """OA1 acceptance 8: битые структуры auth.json не роняют дискавери."""
+    """OA1 acceptance 8 + review remediation: битые/неполные структуры auth.json
+    не роняют дискавери и не классифицируются как OAuth."""
     cases = {
         "corrupt_json": "{not json",
         "json_null": "null",
@@ -914,6 +915,19 @@ def probe_oa1_malformed_ignored(disc, tmp: Path):
                                                                  "refresh_token": 7}]}}),
         "auth_type_int": _oa1_auth({"credential_pool": {"x": [{"auth_type": 5,
                                                                "access_token": "a"}]}}),
+        # remediation: partial nested tokens — рантайм требует ОБЕ части пары
+        "tokens_partial_access": _oa1_auth({"providers": {"x": {"tokens": {
+            "access_token": "a"}}}}),
+        "tokens_partial_refresh": _oa1_auth({"providers": {"x": {"tokens": {
+            "refresh_token": "r"}}}}),
+        # remediation: присутствующий, но falsey auth_type — malformed,
+        # а НЕ «отсутствие ключа» (weak-fallback не применяется)
+        "auth_type_null": _oa1_auth({"credential_pool": {"x": [
+            {"auth_type": None, "refresh_token": "r"}]}}),
+        "auth_type_empty": _oa1_auth({"credential_pool": {"x": [
+            {"auth_type": "", "refresh_token": "r"}]}}),
+        "auth_type_false": _oa1_auth({"credential_pool": {"x": [
+            {"auth_type": False, "refresh_token": "r"}]}}),
     }
     results = {}
     for name, raw in cases.items():

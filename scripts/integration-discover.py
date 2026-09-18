@@ -42,9 +42,12 @@ def _provider_state_is_account_auth(state) -> bool:
     if _nonempty_credential(state.get("refresh_token")):
         return True
     tokens = state.get("tokens")
+    # Форма Codex/xAI: рантайм требует ОБЕ части токен-пары, поэтому неполный
+    # блок tokens (только access_token или только refresh_token) — не
+    # свидетельство.
     return isinstance(tokens, dict) and (
         _nonempty_credential(tokens.get("access_token"))
-        or _nonempty_credential(tokens.get("refresh_token")))
+        and _nonempty_credential(tokens.get("refresh_token")))
 
 
 def _pool_rows_are_account_auth(rows) -> bool:
@@ -53,16 +56,16 @@ def _pool_rows_are_account_auth(rows) -> bool:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        auth_type = row.get("auth_type")
-        if isinstance(auth_type, str):
-            # "oauth" — сильное свидетельство; любой другой persisted auth_type
-            # (api_key, неизвестный) — вне OA1.
-            if auth_type.strip().lower() == "oauth":
+        if "auth_type" in row:
+            # Сильное свидетельство — только строковый "oauth". Любое другое
+            # ПРИСУТСТВУЮЩЕЕ значение (api_key, неизвестное, null/""/не-строка)
+            # — вне OA1: weak-fallback разрешён лишь при физическом отсутствии
+            # ключа (contract §4.2), null/""/False — malformed, не "отсутствие".
+            auth_type = row.get("auth_type")
+            if isinstance(auth_type, str) and auth_type.strip().lower() == "oauth":
                 return True
             continue
-        if auth_type:
-            continue
-        # Legacy-строка: auth_type отсутствует, но есть refresh_token.
+        # Legacy-строка: ключа auth_type нет, но есть refresh_token.
         if _nonempty_credential(row.get("refresh_token")):
             return True
     return False
