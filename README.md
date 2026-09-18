@@ -58,19 +58,49 @@ Cron lines for enabled modules are generated to `/tmp/hermes-argus-crontab.txt`
 
 ## Development baseline
 
-Argus is currently in a stabilization-first phase. C1a runtime-bridge
-productionization remains stopped.
+Argus is in a stabilization-first phase. C1a runtime-bridge productionization
+remains stopped.
 
-R1a is complete in PR #29; R1b is complete in PR #31.
+Completed:
 
-OA0 account-auth research is complete in PR #33 with decision **STATIC ONLY**.
-The demonstrated problem is that current discovery can miss a working
-OpenAI/Codex account because Hermes auth state is now nested and/or pool-backed.
+```text
+R1a / PR #29 = DONE
+R1b / PR #31 = DONE
+OA0 / PR #33 = DONE / STATIC ONLY
+OA1 / PR #35 = DONE / MERGED
+```
 
-The current selected implementation task is **OA1: generic static account-auth
-discovery**.
+OA1 fixed the demonstrated OpenAI/Codex inventory false negative with generic
+static auth-store discovery and also removed the false-green projection that
+treated persisted OAuth evidence as "logged in".
 
-OA1 must preserve the semantic boundary established by OA0:
+The current selected task is **OA-close**: an exact-main acceptance/docs pass,
+not another auth implementation.
+
+```text
+OA-close NOW
+ -> OA PHASE COMPLETE
+ -> R1c Authorization-header argv debt
+
+OA2 = CLOSED / UPSTREAM-GATED
+```
+
+Current Argus main:
+
+```text
+cfa6c535518e3d3ad9b78c20d442335f48e84fd6
+```
+
+OA1 reviewed PR head:
+
+```text
+abb7ceecd805fe4c4ffc1f90248a562be88de051
+```
+
+All four OA1 changed blobs are identical between that reviewed head and merged
+main. PR-head CI run #61 passed static checks and regression probes.
+
+The OA semantic boundary remains:
 
 ```text
 persisted credential evidence present
@@ -78,29 +108,10 @@ persisted credential evidence present
 != healthy
 ```
 
-That includes correcting the current health projection that labels any static
-`oauth` entity as healthy/logged-in.
-
-Current bounded sequence:
-
-```text
-OA0 DONE / PR #33 / STATIC ONLY
- -> OA1 static account-auth discovery       NOW
- -> OA-close exact-main acceptance
- -> OA PHASE COMPLETE
-
-OA2 status shadow                           CLOSED / UPSTREAM-GATED
-
-then:
-R1c Authorization-header argv debt
- -> R2a malformed YAML
- -> R2c bounded fallback/static discovery
- -> reduction / v0.1 stabilization
-```
-
 Latest supported Hermes stable remains v0.21.3 / `v2026.9.14`. Fresh upstream
-`main` has partially improved the status-side-effect problem found by OA0, but
-the endpoint still does not satisfy the OA2 reopen gate; do not poll it.
+`main` moved to `03c9fc892f5cf3f2e02aa4a4888a30ae292d256d`,
+but the account-status/auth surfaces relevant to the OA2 reopen gate have not
+changed since the previous watch. OA2 remains closed.
 
 Before contributing work, read:
 
@@ -112,7 +123,7 @@ Before contributing work, read:
 Current contract:
 
 ```text
-docs/handoffs/oa1-static-account-auth-discovery-contract.md
+docs/handoffs/oa-close-account-auth-acceptance-contract.md
 ```
 
 Multi-profile remains a separate track.
