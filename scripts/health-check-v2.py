@@ -392,21 +392,6 @@ def parse_host_port(value: str, default: str = "127.0.0.1:8444") -> tuple[str, i
     return "127.0.0.1", 8444
 
 
-def parse_expiry(v: str):
-    """expires_at from auth.json: epoch float or ISO — tolerant parse, None if unknown."""
-    v = (v or "").strip()
-    if not v:
-        return None
-    try:
-        return float(v)
-    except ValueError:
-        pass
-    try:
-        return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
-
-
 # ADR 0001: canonical v2 verdicts and the conservative legacy projection.
 VERDICT_FOR_STATUS = {"ok": "healthy", "fail": "failed",
                       "unconfigured": "unconfigured", "skipped": "skipped"}
@@ -599,19 +584,16 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
             return "fail", "catalog rate-limited (429) — not proof of key validity"
         return "fail", f"unreachable (HTTP {last})"
     if prim == "oauth":
-        name = c.get("name", "")
         if c.get("status") == "pat-only":
             return ("unconfigured",
                     "classic GitHub PAT is rejected by Copilot — run the device-flow "
                     "login to store COPILOT_GITHUB_TOKEN")
-        # Static check only: auth.json access tokens rotate via the refresh flow
-        # (expires_at may be past between runs — that is normal, NOT a failure).
-        exp_ts = parse_expiry(c.get("expires_at", ""))
-        if exp_ts and exp_ts <= time.time():
-            return "ok", "logged in (access token past expiry — refresh flow renews it)"
-        if exp_ts:
-            return "ok", f"logged in (valid until {c.get('expires_at', '')[:19]})"
-        return "ok", "logged in"
+        # OA1: oauth-сущности снапшота — статические persisted-свидетельства
+        # из auth.json (структурное чтение). Runtime auth-примитива нет, поэтому
+        # наличие свидетельства — не login/health-клейм: проецируем в существующий
+        # не-зелёный skipped verdict вместо прежнего ложного "ok / logged in".
+        return ("skipped",
+                "persisted credential evidence present; login/health not verified")
     if prim == "tg-getme":
         token = (env.get(c.get("key_env", "")) or "").strip().strip('"\'')
         if not token:
@@ -740,7 +722,7 @@ def run(argv: list[str] | None = None) -> int:
     args.out.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8",
                         newline="\n")
 
-    marks = {"ok": "OK  ", "fail": "FAIL", "unconfigured": "SKIP"}
+    marks = {"ok": "OK  ", "fail": "FAIL", "unconfigured": "SKIP", "skipped": "SKIP"}
     for r in results:
         print(f"[{marks.get(r['status'], '????')}] {r['label']}: {r['detail']}")
     print(f"health-check-v2: {report['ok']}/{report['total']} ok, "

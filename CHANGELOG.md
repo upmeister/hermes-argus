@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Discover persisted account-auth identities structurally from the Hermes
+  auth store instead of a hard-coded provider roster: nested provider token
+  state (`providers.<id>.tokens.*`), flat provider state with a refresh token,
+  and `credential_pool.<id>[]` rows persisted with `auth_type: "oauth"` (or
+  legacy rows without an auth type but with a refresh token) now produce
+  `oauth:<id>` inventory entities. This closes the demonstrated false negative
+  where a working OpenAI/Codex account was invisible to integration discovery.
+  Provider identity comes from the store keys themselves; no credential values,
+  fingerprints, labels, or expiry metadata are emitted.
+- Stop reporting static auth-store evidence as a green "logged in" verdict:
+  `oauth` inventory entities are now projected as `skipped` ("persisted
+  credential evidence present; login/health not verified") because presence of
+  persisted credentials is not proof of login or health. Copilot PAT-only
+  remains `unconfigured`.
 - Keep Telegram bot tokens out of child-process argv in every active shell and
   Python notifier: token-bearing URLs are delivered to `curl` via stdin config
   (`curl -K -`) instead of being expanded into the command line. Request
