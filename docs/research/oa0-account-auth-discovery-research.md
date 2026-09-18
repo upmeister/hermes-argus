@@ -82,8 +82,8 @@ throwaway-home probe with synthetic credentials only.
   auth store (`providers`/`credential_pool` sections) that Argus can read
   statically. Credentials held **only** in external CLI files or ambient cloud
   SDK chains (Codex CLI `~/.codex/auth.json`, Vertex ADC/OAuth2, Bedrock IAM
-  chain, Copilot OS keychain) are **bounded known misses**, not coverage
-  claims — see taxonomy.
+  chain, Azure Foundry Entra ID, Copilot OS keychain) are **bounded known
+  misses**, not coverage claims — see taxonomy.
 - **Excluded OAuth domains** (per contract): MCP OAuth, Spotify/tool OAuth,
   memory-provider OAuth, dashboard/user identity, connector/session auth,
   arbitrary third-party OAuth files, multi-profile implementation.
@@ -113,7 +113,8 @@ Store: `$HERMES_HOME/auth.json` (0600, parent 0700, atomic writes, flock;
 | api-key pool rows (gemini, openrouter, clinepass, cline, cline-pass, opencode-go, …) | — | **source-qualified storage**: borrowed env/CLI sources persist **metadata + `secret_fingerprint` only** (secret stripped at the disk boundary, hydrated at load); `manual`/`manual:*` rows and rows whose `(provider, source)` is in `_PERSISTABLE_PROVIDER_SOURCES` (e.g. `anthropic/hermes_pkce`) **can carry the raw credential at rest** (`agent/credential_persistence.py`: "Owned sources pass through unchanged") | env / gh CLI / provider CLI | yes, as credential-evidence rows | `secret_fingerprint` is derived key material; raw values in owned rows must never be read or emitted by Argus |
 | vertex | none in auth.json (GCP OAuth2 service account / ADC chain) | possible | GCP ADC / service-account chain (`gcloud` state, workload identity) | no — ambient cloud chain, **known miss** | canonical description: "OAuth2 service account or ADC" |
 | bedrock | none in auth.json (AWS SDK credential chain) | possible | AWS IAM env/profile/IMDS chain | no — ambient cloud chain, **known miss** | canonical description: "IAM or API key" |
-| plugin-added account providers | whatever the plugin writes via Hermes' own store APIs (`providers`/`credential_pool` sections are generic) | possible | plugin-owned | store rows: yes; **the seam: no** | plugin extension of `CANONICAL_PROVIDERS` deliberately **skips** all account-auth plugin types (`oauth_device_code`, `oauth_external`, `external_process`, `aws_sdk`, `copilot`, `vertex`) — `models_catalog_static.py`; the `oauth.py` docstring claiming automatic appearance is inaccurate at the tag |
+| plugin-added account providers | whatever the plugin writes via Hermes' own store APIs (`providers`/`credential_pool` sections are generic) | possible | plugin-owned | store rows: yes; **the seam: no, with one typed exception** | plugin extension skips auth_types `{oauth_device_code, oauth_external, external_process, aws_sdk, copilot, vertex}`; the sole `_ACCOUNTS_AUTH_TYPES` member outside the skip-set is `oauth_minimax`, so only a plugin explicitly typed `oauth_minimax` reaches the seam — `models_catalog_static.py` + `provider_catalog.py`; the `oauth.py` docstring claiming automatic appearance is inaccurate at the tag |
+| azure-foundry | none in auth.json for `auth_mode: entra_id` (no store tokens) | possible | Microsoft Entra ID via `azure-identity` (ambient credential chain); `api_key` mode = `AZURE_FOUNDRY_API_KEY` env | api_key mode: yes (env presence); entra_id mode: no — ambient chain, **known miss** | status helper deliberately never probes the chain (`credential_probe: not_run`) — `hermes_cli/auth.py` |
 
 Key structural facts [source]:
 
@@ -139,9 +140,11 @@ Key structural facts [source]:
   mutated by Hermes' own runtime — a static reader must treat them as
   descriptive, never as Argus-owned verdicts.**
 - Logout clears both sections (`clear_provider_auth` iterates
-  `("providers", "credential_pool")`), so stale blocks are not the normal
-  exit path; residual blocks are possible only via manual file edits
-  (false-positive risk: low, and `logged_in` is never claimed from static data).
+  `("providers", "credential_pool")`), so logout is the clean exit path.
+  Residual stale evidence nevertheless arises **without** any manual edit —
+  `env:<VAR>`-sourced pool rows persist after their env var disappears (kept
+  by ordinary `load_pool()`; see the note below) — and manual file edits are
+  by definition unmediated. `logged_in` is never claimable from static data.
 - An unparsable/expired-claim-free JWT reads as **not expiring**
   (`_codex_access_token_is_expiring`: no `exp` claim → `False`). Confirms the
   contract's warning: static data cannot claim health, only evidence.
@@ -155,14 +158,16 @@ Key structural facts [source]:
 - **Provider-universe construction**: curated `_OAUTH_PROVIDER_CATALOG` first,
   then `provider_catalog()` entries with `tab == "accounts"` appended. The
   catalog is built **solely from the static `CANONICAL_PROVIDERS` list**: the
-  plugin auto-extension in `models_catalog_static.py` deliberately skips every
-  account-auth plugin type (`oauth_device_code`, `oauth_external`,
-  `oauth_minimax`-shaped, `external_process`, `aws_sdk`, `copilot`, `vertex`)
-  because "non-api-key flows need bespoke picker UX". Net effect
-  [source-verified at the tag]: **plugin-added account providers do NOT appear
-  in the seam** — its universe is bounded by the curated list plus static
-  canonical account-type entries; the `oauth.py` docstring claiming plugins
-  "appear automatically" is inaccurate.
+  plugin auto-extension in `models_catalog_static.py` skips plugin entries
+  whose `auth_type` is in the literal skip-set `{oauth_device_code,
+  oauth_external, external_process, aws_sdk, copilot, vertex}` ("non-api-key
+  flows need bespoke picker UX"). One `_ACCOUNTS_AUTH_TYPES` member is **not**
+  in that set: a plugin typed `oauth_minimax` passes the filter and would
+  reach the seam. Net effect [source-verified at the tag]: **plugin-added
+  account providers do not reach the seam, with that single typed exception** —
+  the universe is otherwise bounded by the curated list plus static canonical
+  account-type entries; the `oauth.py` docstring claiming plugins "appear
+  automatically" is inaccurate.
 - **Status dispatch**: hand-written per-provider cards (`nous`,
   `openai-codex`, `qwen-oauth`, `minimax-oauth`, `xai-oauth`) wrapping
   `get_*_auth_status` helpers; everything else (plugin entries) falls through
@@ -264,8 +269,8 @@ code, labeled as such), FastAPI TestClient, deny-by-construction networking
 | Candidate | Completeness | Side-effect risk | Secret exposure | Plugin/future provider coverage | Profile fit | Maintenance cost | Verdict |
 |---|---|---|---|---|---|---|---|
 | current hard-coded static list | misses nested singleton + all pool state (demonstrated) | none | none (field names only) | none — new providers need Argus edits | none | low but already wrong | reject as-is |
-| generic static auth.json structure | full for `providers` + `credential_pool` (the persisted auth-store universe); external CLI files opt-in; ambient cloud chains (Vertex ADC, Bedrock IAM, Copilot keychain) remain misses | none (read-only, no Hermes execution) | none if only presence/metadata is read (never values, never `secret_fingerprint`) | pool/`providers` sections are generic and store-keyed; account-type **plugins** surface only if they write store rows | reads the same store the seam scopes (MP-compatible later) | low — structural rules, not a provider roster | **recommended** |
-| `GET /api/providers/oauth` | best runtime truth (pool-only codex `logged_in`) | **demonstrated persistent writes + network refresh on expiring/failed paths; qwen refresh-validates by design** | `token_preview` = partial real token in every response | none for new account-type plugins (universe bounded by static catalog) | yes (`?profile=`) | medium — HTTP client, auth, schema drift | reject for polling now; record as future upstream-gated enrichment (OA2 gate below) |
+| generic static auth.json structure | full for `providers` + `credential_pool` (the persisted auth-store universe); external CLI files opt-in; ambient cloud chains (Vertex ADC, Bedrock IAM, Azure Foundry Entra ID, Copilot keychain) remain misses | none (read-only, no Hermes execution) | none if only presence/metadata is read (never values, never `secret_fingerprint`) | pool/`providers` sections are generic and store-keyed; account-type **plugins** surface only if they write store rows | reads the same store the seam scopes (MP-compatible later) | low — structural rules, not a provider roster | **recommended** |
+| `GET /api/providers/oauth` | best runtime truth (pool-only codex `logged_in`) | **demonstrated persistent writes + network refresh on expiring/failed paths; qwen refresh-validates by design** | `token_preview` = partial real token in every response | no for new account-type plugins, single typed exception `oauth_minimax` (universe otherwise bounded by the static catalog) | yes (`?profile=`) | medium — HTTP client, auth, schema drift | reject for polling now; record as future upstream-gated enrichment (OA2 gate below) |
 | `hermes auth list` | pool + registry universe | `load_pool()` per provider seeds/heals the store (writes); CLI cold start | none in output (labels/ids only) | pool-driven | no profile flag at tag | high — human-readable text, no JSON schema | reject |
 | `GET /api/credentials/pool` | pool only | `load_pool()` "may hit the network synchronously (Copilot token exchange)"; borrowed-source hydration may spawn `gh` | redacted views only | pool only | no profile param | medium | reject — strictly worse than reading the same pool statically |
 | importing Hermes auth/provider internals | best | runtime coupling; forbidden by architecture invariant (C1a dropped) | n/a | n/a | n/a | n/a | forbidden — do not revive |
@@ -285,7 +290,10 @@ code, labeled as such), FastAPI TestClient, deny-by-construction networking
      alone does not classify the auth kind: a flat block on an API-key-style
      provider is key evidence, not OAuth evidence.
   2. `credential_pool.<id>[]` rows with persisted `auth_type == "oauth"` →
-     identity `<id>` (account-auth evidence).
+     identity `<id>`. This is **unvalidated persisted metadata** (the loader
+     accepts the stored value unchecked), i.e. evidence of what the store
+     claims, not a verified account-auth type; a mislabeled row remains a
+     possible false positive that OA1 output should surface as such.
      Bounded legacy fallback: rows with **no persisted `auth_type`** and a
      non-empty `refresh_token` → identity `<id>` flagged `evidence: weak`
      (possible false positive on stale/manual/plugin rows). The runtime-only
@@ -309,10 +317,11 @@ code, labeled as such), FastAPI TestClient, deny-by-construction networking
 - **Known misses** (documented, acceptable): credentials held only in external
   CLI stores/keychains or ambient cloud chains (Codex CLI `~/.codex/auth.json`
   before adoption, Copilot OS keychain, qwen CLI file, Vertex ADC/OAuth2,
-  Bedrock IAM chain) remain invisible unless OA1 adds opt-in file readers;
-  that extension needs its own evidence (the files contain secret material at
-  rest) and is not part of the minimum rule. Account-auth **plugins** that
-  never write `providers`/`credential_pool` rows are likewise invisible.
+  Bedrock IAM chain, Azure Foundry Entra ID) remain invisible unless
+  OA1 adds opt-in file readers; that extension needs its own evidence (the
+  files contain secret material at rest) and is not part of the minimum rule.
+  Account-auth **plugins** that never write `providers`/`credential_pool`
+  rows are likewise invisible.
 
 ## OA2 gate
 
@@ -351,7 +360,8 @@ even saw pool-only Codex in the probe) but is disqualified for Argus polling
 today by demonstrated write side effects, the absent headless auth path, and
 a plugin-hostile universe bounded by a static catalog; all three blockers are
 upstream-owned. Credentials held only in external CLI files or ambient cloud
-chains (Codex CLI file, Vertex ADC, Bedrock IAM, Copilot keychain) remain
+chains (Codex CLI file, Vertex ADC, Bedrock IAM, Azure Foundry Entra ID,
+Copilot keychain) remain
 documented known misses — they are not the demonstrated gap, and extending to
 them would be a separate, separately-evidenced decision. Per the contract this
 is not a runtime-bridge proposal and no OA1 code is submitted here.
@@ -399,8 +409,12 @@ Two variants against `scripts/integration-discover.py` with a synthetic
 import base64, json, time
 def b64(o): return base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode()
 future = int(time.time()) + 3600
-def fixture(singleton: bool, pool: bool) -> dict:
+def fixture(singleton: bool, pool: bool, nous: bool) -> dict:
     auth = {"version": 2, "providers": {}, "credential_pool": {}}
+    if nous:  # positive control: the flat shape current Argus DOES detect
+        auth["providers"]["nous"] = {"access_token": "nous-flat-token",
+                                     "refresh_token": "r",
+                                     "expires_at": "2099-01-01T00:00:00Z"}
     if singleton:
         auth["providers"]["openai-codex"] = {
             "tokens": {"access_token": "hdr." + b64({"exp": future}) + ".sig",
@@ -418,13 +432,15 @@ def fixture(singleton: bool, pool: bool) -> dict:
 
 Observed (asserted in the run):
 
-- **Variant A1 — nested singleton AND pool row present**: snapshot entities ==
-  `["oauth:nous"]` (a flat `nous` block was also present as control);
-  `oauth:openai-codex` absent; discover exit 2 (events present). Both Codex
-  shapes invisible.
-- **Variant A2 — pool row only** (no `providers` state at all): snapshot oauth
-  entities == `[]`, discover exit 0 (silent) — a pool-only working Codex
-  account produces *no* events at all, isolating the pool-only miss.
+- **Variant A1 — `fixture(singleton=True, pool=True, nous=True)`** (nested
+  singleton AND pool row present, flat nous as positive control): snapshot
+  entities == `["oauth:nous"]`; `oauth:openai-codex` absent; discover exit 2
+  (events present). The control proves the harness sees a flat block while
+  both Codex shapes stay invisible.
+- **Variant A2 — `fixture(singleton=False, pool=True, nous=False)`** (pool row
+  only): snapshot oauth entities == `[]`, discover exit 0 (silent) — a
+  pool-only working Codex account produces *no* events at all, isolating the
+  pool-only miss.
 
 ## Appendix B — Probe B: isolated seam probe (synthetic, throwaway home)
 
