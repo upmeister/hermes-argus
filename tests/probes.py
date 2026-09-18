@@ -1353,7 +1353,14 @@ def probe_telegram_static_audit_no_argv_leak(tmp: Path):
             stripped = line.strip()
             ends_cont = line.rstrip().endswith("\\")
             has_url = "api.telegram.org/bot" in line
-            has_alias = "${TG_API}" in line or "${TELEGRAM_API}" in line
+            # aliases: braced and unbraced forms
+            has_alias = bool(re.search(r"\$\{?TG_API\}?", line)
+                             or re.search(r"\$\{?TELEGRAM_API\}?", line))
+            # токен как аргумент python-ребёнка (env-чтение в коде это не спасает)
+            python_token_argv = ("python" in line
+                                 and re.search(r"\$\{?(WATCHDOG_BOT_TOKEN|"
+                                               r"TELEGRAM_BOT_TOKEN|BOT_TOKEN)\}?", line)
+                                 and "printf 'url = " not in line)
             curl_start = window is None and (
                 stripped.startswith("curl") or "| curl" in line)
             fn_start = window is None and "check_url " in stripped
@@ -1363,15 +1370,15 @@ def probe_telegram_static_audit_no_argv_leak(tmp: Path):
                 mode = "fn"
             else:
                 mode = None
-            if has_url or has_alias:
+            if has_url or has_alias or python_token_argv:
                 if "printf 'url = " in line:
                     pass
                 elif 'input=f"url = ' in line:
                     pass
                 elif stripped.startswith("#"):
                     pass
-                elif (not has_alias
-                      and re.match(r"^\s*(export\s+)?[A-Za-z_][A-Za-z_0-9]*=", line)):
+                elif (not has_alias and not python_token_argv
+                      and re.match(r"^\s*(export\s+)?(TG_API|TELEGRAM_API)=", line)):
                     pass
                 elif path.name in in_process_py and "curl" not in line and has_url:
                     pass
