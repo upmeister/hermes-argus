@@ -17,10 +17,20 @@
 #   github: see modules/gh-heartbeat/ — needs a PAT with repo write
 #     (classic: repo scope; fine-grained: Contents read/write).
 
-set -u
+set -euo pipefail
 
-H="$HOME/.hermes"
+H="@HERMES_DIR@"
 LOG="$H/logs/heartbeat.log"
+STATE_DIR="$H/logs/auto-remediate-state"
+
+mkdir -p "$H/logs" "$STATE_DIR"
+LOCK_FILE="$STATE_DIR/heartbeat.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    printf '[%s] heartbeat уже выполняется — пропускаю параллельный запуск\n' \
+        "$(date -Is)" >> "$LOG"
+    exit 0
+fi
 
 # cron does not export .env — load secrets ourselves
 if [ -f "$H/.env" ]; then
