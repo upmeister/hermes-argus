@@ -53,7 +53,8 @@ relevant to OA2 are unchanged from the previous
 ## Current execution order
 
 ```text
-OA-close exact-main acceptance               NOW
+OA1b OAuth evidence rendering                NOW
+ -> OA-close exact-main acceptance
  -> OA PHASE COMPLETE
  -> R1c Authorization-header argv debt
  -> R2a malformed YAML
@@ -92,10 +93,13 @@ when that function is next touched.
 ## Current selected contract
 
 ```text
-docs/handoffs/oa-close-account-auth-acceptance-contract.md
+docs/handoffs/oa1b-oauth-evidence-rendering-contract.md
 ```
 
-OA-close is an acceptance/docs task, not a second auth feature.
+OA-close is paused pending OA1b. Production confirmed that the conservative
+`skipped` verdict is rendered misleadingly as bare "пропущено" for OAuth
+evidence. OA1b fixes only presentation; canonical health semantics remain
+unchanged.
 
 ## OA-close acceptance
 
@@ -171,3 +175,24 @@ Queued:
 Deferred:
 
 - `r2b-gateway-liveness-contract.md`
+
+## OA1b production finding
+
+Observed after deploy:
+
+```text
+⏸ oauth nous — пропущено
+⏸ oauth openai-codex — пропущено
+```
+
+This is not an auth failure. It is a renderer bug: OAuth persisted evidence is
+correctly canonical `skipped` because runtime health is unverified, but the
+bot displays the generic skipped label without the evidence context.
+
+Current contract:
+
+```text
+docs/handoffs/oa1b-oauth-evidence-rendering-contract.md
+```
+
+OA-close resumes only after OA1b passes.

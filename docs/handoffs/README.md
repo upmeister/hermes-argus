@@ -14,7 +14,7 @@ Read in this order:
 
 Current selected task:
 
-- `oa-close-account-auth-acceptance-contract.md` — **NOW / READY**
+- `oa1b-oauth-evidence-rendering-contract.md` — **NOW / READY**
 
 Completed:
 
@@ -30,7 +30,8 @@ OA0 DONE
 OA1 DONE
 OA2 CLOSED / UPSTREAM-GATED
 
-OA-close NOW
+OA1b NOW — OAuth evidence rendering fix
+ -> OA-close
  -> OA PHASE COMPLETE
  -> R1c
 ```
@@ -87,6 +88,10 @@ to the reopen gate changed since the previous watch. OA2 remains closed.
 
 Current:
 
+- `oa1b-oauth-evidence-rendering-contract.md`
+
+Paused until OA1b:
+
 - `oa-close-account-auth-acceptance-contract.md`
 
 Completed:
@@ -125,3 +130,13 @@ turning closeout into another implementation PR.
 
 Before merge recommendation, refresh the PR body/evidence receipt to the exact
 candidate head.
+
+## Production UX finding after OA1
+
+The first production deployment found that OAuth evidence rows are rendered as
+`⏸ ... — пропущено`. The underlying `skipped` verdict is intentionally
+conservative, but the renderer loses the distinction between "static auth
+evidence found; runtime status not verified" and a genuinely skipped policy
+check.
+
+OA1b owns only this presentation correction. OA-close resumes afterwards.
