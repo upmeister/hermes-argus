@@ -15,9 +15,9 @@ Latest upstream watch recorded 2026-09-19:
 
 ```text
 latest stable = v2026.9.14 / v0.21.3
-Hermes main = 1e4952ddba1bc585416ad43438d60183380035cd
-OA0-observed main = d177b119e9c56c9ddc0b7379ffce52341ec06584
-drift = +602 commits
+Hermes main = 03c9fc892f5cf3f2e02aa4a4888a30ae292d256d
+previous OA watch main = 1e4952ddba1bc585416ad43438d60183380035cd
+latest stable = unchanged
 ```
 
 ## Decision
@@ -75,6 +75,14 @@ This is useful upstream progress, but it does **not** reopen OA2:
    none of the fresh-main improvement anyway.
 
 Therefore the OA0 production decision remains `STATIC ONLY`.
+
+### Follow-up watch after OA1
+
+From `1e4952dd...` to `03c9fc89...`, Hermes main advanced another 185
+commits. The account-auth files that define the OA2 gate
+(`auth_nous.py`, `auth_codex.py`, `auth_qwen.py`, OAuth router,
+provider catalog, dashboard token-auth seam) are unchanged. No OA2 reopen
+trigger was found.
 
 ## Reopen conditions
 
