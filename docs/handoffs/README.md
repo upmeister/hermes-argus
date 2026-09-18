@@ -1,6 +1,7 @@
 # Handoffs and implementation contracts
 
-This directory contains both active implementation contracts and historical handoffs. **Old handoff presence is not implementation authority.**
+This directory contains both active implementation contracts and historical
+handoffs. **Old handoff presence is not implementation authority.**
 
 Repository `AGENTS.md` scope-control rules apply to every document here.
 
@@ -13,51 +14,51 @@ Read in this order:
 
 Current selected task:
 
-- `oa1-static-account-auth-discovery-contract.md` — **NOW / READY**
+- `oa-close-account-auth-acceptance-contract.md` — **NOW / READY**
 
 Completed:
 
 - R1a deploy/GitHub-heartbeat secret-in-argv — **DONE / PR #29**
 - R1b Telegram child-argv secret exposure — **DONE / PR #31**
-- OA0 account-auth discovery research — **DONE / PR #33 / decision STATIC ONLY**
+- OA0 account-auth research — **DONE / PR #33 / STATIC ONLY**
+- OA1 generic static account-auth discovery — **DONE / PR #35**
 
 OA phase:
 
-- OA1 generic static account-auth discovery — **NOW**
-- OA2 Hermes status shadow — **CLOSED / UPSTREAM-GATED**
-- OA-close acceptance — **AFTER OA1**
+```text
+OA0 DONE
+OA1 DONE
+OA2 CLOSED / UPSTREAM-GATED
 
-Queued after OA close:
+OA-close NOW
+ -> OA PHASE COMPLETE
+ -> R1c
+```
+
+Queued after successful OA close:
 
 - R1c demonstrated non-Telegram Authorization-header argv debt;
 - R2a malformed YAML;
-- R2c bounded static compatibility excluding account-auth.
+- R2c bounded static compatibility excluding account-auth;
+- R3 stabilization/reduction.
 
 Deferred:
 
-- `r2b-gateway-liveness-contract.md` — research only until a stable external liveness seam is demonstrated.
+- `r2b-gateway-liveness-contract.md`
 
-## Current execution order
+## OA1 accepted baseline
 
 ```text
-R1a DONE / PR #29
-R1b DONE / PR #31
-OA0 DONE / PR #33 / STATIC ONLY
-
-OA1 NOW — generic static account-auth discovery
- -> OA-close exact-main acceptance
- -> OA PHASE COMPLETE
-
-OA2 CLOSED / UPSTREAM-GATED
-
-then:
-R1c Authorization-header argv debt
- -> R2a malformed YAML
- -> R2c bounded static discovery
- -> R3 stabilization/reduction
+reviewed PR head = abb7ceecd805fe4c4ffc1f90248a562be88de051
+merged main      = cfa6c535518e3d3ad9b78c20d442335f48e84fd6
+PR #35           = merged
+CI #61           = success
 ```
 
-OA1 must preserve the OA0 semantic boundary:
+The four changed file blobs are identical between reviewed PR head and merged
+main.
+
+OA1 preserves the required semantic boundary:
 
 ```text
 persisted credential evidence present
@@ -65,13 +66,12 @@ persisted credential evidence present
 != healthy
 ```
 
-This matters because the current `health-check-v2.py` projects every
-`type=oauth` entity to `ok / logged in`; OA1 must correct that adjacent
-false-green path while adding generic static discovery.
+Static account-auth entities now project to a non-green skipped result; Copilot
+PAT-only remains unconfigured.
 
 ## OA2 status
 
-Do not implement or poll `GET /api/providers/oauth` now.
+OA2 is **not** part of closeout implementation.
 
 See:
 
@@ -79,28 +79,25 @@ See:
 oa2-hermes-status-shadow-reopen-gate.md
 ```
 
-The 2026-09-19 upstream watch found partial progress on fresh Hermes `main`,
-but latest stable remains v0.21.3 and all reopen conditions are not satisfied.
+Latest stable remains Hermes v0.21.3 / `v2026.9.14`. Fresh main is
+`03c9fc892f5cf3f2e02aa4a4888a30ae292d256d`; no account-auth surface relevant
+to the reopen gate changed since the previous watch. OA2 remains closed.
 
 ## Current contracts
 
 Current:
 
-- `oa1-static-account-auth-discovery-contract.md`
-
-After OA1:
-
 - `oa-close-account-auth-acceptance-contract.md`
+
+Completed:
+
+- `oa1-static-account-auth-discovery-contract.md`
+- `oa0-account-auth-discovery-research-contract.md`
+- R1a/R1b contracts
 
 Closed/upstream-gated:
 
 - `oa2-hermes-status-shadow-reopen-gate.md`
-
-Completed/history:
-
-- `oa0-account-auth-discovery-research-contract.md`
-- `r1-secret-in-argv-contract.md`
-- `r1b-telegram-secret-argv-contract.md`
 
 Queued:
 
@@ -111,40 +108,20 @@ Deferred:
 
 - `r2b-gateway-liveness-contract.md`
 
-## Multi-profile boundary
-
-Multi-profile remains a separate near-term product track. OA1 may preserve
-profile-compatible raw store semantics but must not implement profile discovery,
-projection or alerting.
-
-## Historical / superseded
-
-The following remain evidence only:
-
-- `b1b-adr0002-agent-handoff.md`
-- `b1b-adr0002-implementation-contract.md`
-- `c0-runtime-bridge-zcode.md`
-- `c1a-shadow-bridge-agent-handoff.md`
-- `c1a-shadow-bridge-implementation-contract.md`
-
-C1a/C1b runtime-bridge productionization remains superseded.
-
-## Agent workflow
+## Workflow
 
 ```text
-maintainer selects one active contract
- -> one implementation/research pass
- -> focused review
+one selected contract
+ -> one implementation/research/acceptance pass
+ -> one focused review
  -> at most one remediation by default
  -> exact-tree reread
  -> merge/decision OR blocker
 ```
 
-If a second remediation is required, stop and return the exact blocker to the
-maintainer unless a narrow extra remediation is explicitly authorized.
+OA-close is expected to be docs/acceptance only. If it discovers a functional
+OA1 regression, stop and return it to the maintainer instead of silently
+turning closeout into another implementation PR.
 
-Before merge recommendation, refresh the PR description/evidence receipt so it
-describes the actual exact candidate head.
-
-If an active task conflicts with a historical handoff, the active baseline and
-`AGENTS.md` win.
+Before merge recommendation, refresh the PR body/evidence receipt to the exact
+candidate head.
