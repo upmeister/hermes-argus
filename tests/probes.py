@@ -1328,45 +1328,120 @@ def probe_telegram_py_form_send_canary(ft, tmp: Path):
 
 
 def probe_telegram_static_audit_no_argv_leak(tmp: Path):
-    """R1b acceptance A: scripted repository audit.
+    """R1b acceptance A: scripted repository audit over scripts/ (top level)
+    and modules/ (recursive).
 
-    Forbidden: any single line containing both `curl` and the token-URL host
-    path (post-fix, URL lines are printf/input-config lines, curl lines carry
-    only flags). Red-capable both ways: each FIX file must also contain its
-    config-stdin delivery line, so deleting the fix or reverting a site fails
-    the audit."""
+    Forbidden: a curl command line (or its continuation window) carrying the
+    token URL — literal or via the TG_API/TELEGRAM_API aliases — and any
+    standalone token-URL line that is not a config-stdin delivery line, alias
+    assignment, comment, check_url argument (its body is guarded by the
+    file-level delivery requirement), or in-process urllib Request.
+    Red-capable: every FIX file must keep its delivery line,
+    register-commands.sh must read the token from the environment (never
+    sys.argv), and the heartbeat workflow must keep the -K - delivery."""
     import re
-    offenders, missing_fix = [], []
-    fix_files_shell = [
-        "auto-remediate.sh", "check-updates.sh", "watchdog-health.sh",
-        "ssl-expiry-check.sh", "send-monitoring-report.sh",
-        "integration-discover-wrapper.sh", "health-check-v2-wrapper.sh",
-        "dashboard-liveness.sh", "gateway-liveness.sh", "network-guard.sh",
-        "hermes-watchdog.sh", "health-check-integrations.sh",
-    ]
-    fix_files_py = ["health-check-v2.py", "fallback-tracker-v2.py"]
-    script_dirs = [REPO / "scripts"]
-    for d in script_dirs:
-        for path in sorted(d.iterdir()):
-            if path.suffix not in (".sh", ".py") or not path.is_file():
-                continue
-            for i, line in enumerate(
-                    path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
-                if "api.telegram.org/bot" not in line:
-                    continue
-                if "curl" in line:
-                    offenders.append(f"{path.name}:{i}")
-    for name in fix_files_shell:
-        text = (REPO / "scripts" / name).read_text(encoding="utf-8", errors="ignore")
-        if "printf 'url = " not in text:
-            missing_fix.append(name)
-    for name in fix_files_py:
-        text = (REPO / "scripts" / name).read_text(encoding="utf-8", errors="ignore")
-        if 'input=f"url = https://api.telegram.org' not in text:
-            missing_fix.append(name)
+    offenders = []
+    in_process_py = {"webhook.py", "monitoring-bot-poller.py", "register-commands.sh"}
+    scan = sorted((REPO / "scripts").glob("*.sh"))
+    scan += sorted((REPO / "scripts").glob("*.py"))
+    scan += [p for p in sorted((REPO / "modules").rglob("*"))
+             if p.suffix in (".yml", ".yaml", ".sh", ".py") and p.is_file()]
+    for path in scan:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        window = None  # continuation window: None | 'curl' | 'fn'
+        for i, line in enumerate(text.splitlines(), 1):
+            stripped = line.strip()
+            ends_cont = line.rstrip().endswith("\\")
+            has_url = "api.telegram.org/bot" in line
+            has_alias = "${TG_API}" in line or "${TELEGRAM_API}" in line
+            curl_start = window is None and (
+                stripped.startswith("curl") or "| curl" in line)
+            fn_start = window is None and "check_url " in stripped
+            if window == "curl" or curl_start:
+                mode = "curl"
+            elif window == "fn" or fn_start:
+                mode = "fn"
+            else:
+                mode = None
+            if has_url or has_alias:
+                if "printf 'url = " in line:
+                    pass
+                elif 'input=f"url = ' in line:
+                    pass
+                elif stripped.startswith("#"):
+                    pass
+                elif (not has_alias
+                      and re.match(r"^\s*(export\s+)?[A-Za-z_][A-Za-z_0-9]*=", line)):
+                    pass
+                elif path.name in in_process_py and "curl" not in line and has_url:
+                    pass
+                elif mode == "fn":
+                    pass
+                else:
+                    # URL внутри curl-команды или вне разрешённых форм — утечка
+                    offenders.append(f"{path.relative_to(REPO).as_posix()}:{i}")
+            # команда продолжается, пока строки кончаются на "\"
+            window = mode if ends_cont else None
+    required = {
+        "scripts/auto-remediate.sh": "printf 'url = ",
+        "scripts/check-updates.sh": "printf 'url = ",
+        "scripts/watchdog-health.sh": "printf 'url = ",
+        "scripts/ssl-expiry-check.sh": "printf 'url = ",
+        "scripts/send-monitoring-report.sh": "printf 'url = ",
+        "scripts/integration-discover-wrapper.sh": "printf 'url = ",
+        "scripts/health-check-v2-wrapper.sh": "printf 'url = ",
+        "scripts/dashboard-liveness.sh": "printf 'url = ",
+        "scripts/gateway-liveness.sh": "printf 'url = ",
+        "scripts/network-guard.sh": "printf 'url = ",
+        "scripts/hermes-watchdog.sh": "printf 'url = ",
+        "scripts/health-check-integrations.sh": "printf 'url = ",
+        "scripts/health-check-v2.py": 'input=f"url = https://api.telegram.org',
+        "scripts/fallback-tracker-v2.py": 'input=f"url = https://api.telegram.org',
+        "modules/gh-heartbeat/heartbeat-alert.yml": "printf 'url = ",
+    }
+    missing = []
+    for rel, marker in required.items():
+        if marker not in (REPO / rel).read_text(encoding="utf-8", errors="ignore"):
+            missing.append(rel)
+    reg = (REPO / "scripts" / "register-commands.sh").read_text(
+        encoding="utf-8", errors="ignore")
+    reg_env_ok = ('os.environ["WATCHDOG_BOT_TOKEN"]' in reg
+                  and "sys.argv" not in reg)
     check("telegram_static_audit_no_argv_leak",
-          not offenders and not missing_fix,
-          f"offenders={offenders[:5]} missing_fix={missing_fix[:5]}")
+          not offenders and not missing and reg_env_ok,
+          f"offenders={offenders[:5]} missing_fix={missing[:5]} "
+          f"reg_env_ok={reg_env_ok}")
+
+
+def probe_register_commands_env_token_canary(tmp: Path):
+    """R1b remediation: register-commands.sh hands the token to the python
+    child via inherited environment, never via argv. python3 shim captures
+    argv and the env-provided canary."""
+    home = tmp / "tg-reg-home"
+    (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
+    write(home / ".hermes" / ".env",
+          f"WATCHDOG_BOT_TOKEN={R1B_TOKEN}\nWATCHDOG_CHAT_ID={R1B_CHAT}\n")
+    shim = tmp / "shim-reg"
+    shim.mkdir()
+    argv_log = tmp / "reg-py-argv.log"
+    env_log = tmp / "reg-py-env.log"
+    _write_argv_shim(shim, "python3",
+                     f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
+                     f'printf \'%s\\n\' "${{WATCHDOG_BOT_TOKEN:-}}" >> "{env_log.as_posix()}"\n'
+                     'exit 0\n')
+    env = _path_shim_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", "")})
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts" / "register-commands.sh")],
+        cwd=REPO, env=env, input=b"", capture_output=True, timeout=60)
+    argv = _read_or(argv_log)
+    env_token = _read_or(env_log)
+    check("register_commands_env_token_canary",
+          result.returncode == 0
+          and R1B_TOKEN not in argv
+          and R1B_TOKEN in env_token,
+          f"rc={result.returncode} argv_leak={R1B_TOKEN in argv} "
+          f"env_ok={R1B_TOKEN in env_token}")
 
 
 # ── Пробы: D0a schema v2 (envelope, projection, dual-read) ──────────────────
@@ -2046,6 +2121,7 @@ def main() -> int:
     probe_healthcheck_check_url_canary(tmp)
     probe_telegram_py_form_send_canary(ft, tmp)
     probe_telegram_static_audit_no_argv_leak(tmp)
+    probe_register_commands_env_token_canary(tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

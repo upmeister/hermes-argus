@@ -45,6 +45,8 @@ jobs:
           TOKEN: ${{ secrets.WATCHDOG_BOT_TOKEN }}
           CHAT: ${{ secrets.WATCHDOG_CHAT_ID }}
         run: |
-          curl -fsS -m 15 "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+          # Токен не в argv: URL уходит в curl через -K - (config на stdin)
+          printf 'url = %s\n' "https://api.telegram.org/bot${TOKEN}/sendMessage" | \
+            curl -fsS -m 15 -K - \
             -H "Content-Type: application/json" \
             -d "{\"chat_id\": \"${CHAT}\", \"text\": \"💀 Argus heartbeat STALE on $(hostname): no push for ${{ steps.fresh.outputs.age }}\"}"
