@@ -1,6 +1,6 @@
 # OA0 contract — research generic Hermes account-auth discovery
 
-Status: **NOW / RESEARCH ONLY — NO PRODUCTION IMPLEMENTATION**
+Status: **DONE / MERGED IN PR #33 — DECISION STATIC ONLY**
 
 Baseline:
 
