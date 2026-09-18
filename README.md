@@ -62,26 +62,49 @@ Argus is currently in a stabilization-first phase. The C1a Hermes runtime
 shadow-bridge direction was stopped and PR #27 was closed without merge; those
 documents remain historical evidence, not active implementation authority.
 
-R1a deploy/GitHub-heartbeat secret-in-argv work is complete in PR #29. The next
-selected implementation task is R1b: remove Telegram bot tokens from child argv
-in active/deployable shell `curl` paths without redesigning notifications.
+R1a deploy/GitHub-heartbeat secret-in-argv work is complete in PR #29. R1b
+Telegram child-argv secret exposure is complete in PR #31.
 
-Before contributing implementation work, read:
+The current selected task is **OA0: account-auth discovery research**.
+
+A demonstrated product gap motivated the reprioritization: current static
+discovery uses a fixed OAuth provider list and expects a flat
+`auth.json.providers.<id>.access_token`, while supported Hermes can represent
+OpenAI/Codex credentials in nested provider token state and/or the credential
+pool. A working primary Codex account can therefore be invisible to Argus.
+
+OA0 is research-only. It must decide whether the next implementation should use
+generic static auth-store structure alone or combine that static baseline with a
+bounded Hermes-owned external status seam. It does **not** authorize a runtime
+bridge, credential refresh, provider resolution, or OA1/OA2 production code.
+
+Before contributing implementation or research work, read:
 
 1. `AGENTS.md` — mandatory scope control;
 2. `docs/handoffs/README.md` — active vs historical handoffs;
 3. `docs/handoffs/2026-09-17-next-steps-execution-baseline.md`;
 4. exactly one maintainer-selected active task contract.
 
-Current bounded implementation sequence:
+Current bounded sequence:
 
 ```text
-R1a deploy secret-in-argv                  DONE
- -> R1b shell Telegram secret-in-argv      NEXT
+R1a deploy secret-in-argv                  DONE / PR #29
+R1b Telegram child-argv secret exposure   DONE / PR #31
+
+OA0 account-auth discovery research       NOW
+ -> maintainer decision
+ -> OA1 generic structural auth discovery
+ -> OA2 optional Hermes status shadow/enrichment
+
+then:
+R1c demonstrated Authorization-header argv debt
  -> R2a malformed YAML fail-safe discovery
  -> R2c bounded fallback/static discovery
  -> reduction / v0.1 stabilization
 ```
+
+OA1/OA2 are not authorized merely because they appear in the roadmap; OA0 must
+finish first and the maintainer must select a new contract.
 
 The earlier R2b proposal to use `gateway_state.json.updated_at` freshness for
 gateway liveness is **deferred**: production/upstream evidence proved that a
@@ -89,7 +112,8 @@ healthy idle gateway does not continuously advance that field. Do not revive
 that implementation from old handoffs without a new evidence-backed contract.
 
 Multi-profile monitoring is near-term product work but intentionally separate
-from these patches so it cannot widen the stabilization tasks.
+from these tasks. OA0 may record whether a candidate upstream seam is
+profile-aware, but it must not implement profile monitoring.
 
 ## Status
 

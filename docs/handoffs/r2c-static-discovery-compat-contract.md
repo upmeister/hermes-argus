@@ -1,15 +1,33 @@
 # R2c contract — bounded static discovery compatibility with current Hermes
 
-Status: **READY FOR IMPLEMENTATION AFTER R2a/R2b**
+Status: **QUEUED AFTER OA TRACK + R2a**
 
-## Problem
+## Authority note — auth subsection superseded
 
-Current Argus static discovery still reflects older Hermes configuration assumptions in a few places. Fresh upstream confirms two important drifts:
+The former R2c.3 credential/OAuth audit is superseded by:
 
-1. `fallback_providers` is the canonical ordered primary fallback chain; legacy `fallback_model` remains accepted for compatibility;
-2. Hermes auth/credential state increasingly uses credential pools and provider-specific storage, so a fixed list of OAuth singleton paths is not a complete model of all possible auth state.
+```text
+docs/handoffs/oa0-account-auth-discovery-research-contract.md
+```
 
-This task updates only the static metadata that has clear operational value. It does not attempt to recreate Hermes provider/runtime resolution.
+Reason: the old R2c.3 premise was that no supported-deployment auth identity had yet been demonstrated as invisible. That premise is no longer true: current Argus can miss a working OpenAI/Codex account because Hermes auth storage evolved beyond the old flat singleton assumption.
+
+Do not start a second auth-discovery design under R2c.
+
+Future account-auth implementation belongs to OA1/OA2 only after OA0 research and maintainer approval.
+
+## Problem retained by R2c
+
+Current Argus static discovery still reflects older Hermes configuration assumptions in a few non-auth places.
+
+The retained concrete drift is:
+
+1. `fallback_providers` is the canonical ordered primary fallback chain;
+2. legacy `fallback_model` remains accepted for compatibility;
+3. registry metadata is curated Argus check/catalog data, not complete Hermes runtime truth;
+4. auxiliary-role coverage should remain bounded to demonstrated operator value.
+
+This task updates only static metadata with clear operational value. It does not recreate Hermes provider/runtime resolution.
 
 ## Owner
 
@@ -44,18 +62,20 @@ Retain current roles and add another role only when one of these is true:
 
 This contract does not authorize a full mirror of Hermes auxiliary config.
 
-## R2c.3 — credential/OAuth discovery audit
+## R2c.3 — retired
 
-Before implementation, run a focused static-structure audit against the supported Hermes version:
+Credential/OAuth/account-auth work has moved to the OA track.
 
-- which currently used provider/auth identities are visible from redacted `config.yaml`, `.env` key names/presence, and `auth.json` structural metadata;
-- whether any integration actually used by the deployment is invisible/misclassified because it exists only in credential-pool state.
+See:
 
-If there is no current user-visible gap, stop at evidence/documentation and do not add code.
+```text
+OA0 research
+ -> maintainer decision
+ -> OA1 generic structural auth discovery
+ -> OA2 optional Hermes-owned status shadow/enrichment
+```
 
-If a gap exists, the maximum allowed implementation is a redacted structural reader for the minimum required credential-pool metadata (provider identity, credential entry count/type/source class where safely available). Never serialize credential payloads.
-
-Any need to call Hermes auth/provider resolution is a STOP.
+Do not add credential-pool parsing under R2c.
 
 ## Registry semantics
 
@@ -72,23 +92,24 @@ No registry redesign is required by this contract.
 - fixture with ordered `fallback_providers` produces stable ordered static metadata;
 - legacy `fallback_model` fixture remains supported;
 - secrets never appear in discovery output;
-- valid existing discovery semantics unrelated to fallback/auth remain unchanged;
+- valid existing discovery semantics unrelated to fallback remain unchanged;
 - no Hermes imports, provider/plugin execution, credential resolution, token refresh, network, or subprocess bridge;
-- credential-pool code is added only when the audit demonstrates an actual supported-deployment gap;
 - registry scope limitation is documented;
+- no account-auth/OAuth implementation is added here;
 - `argus-ci` green.
 
 ## Non-goals
 
 - runtime route truth;
+- account-auth discovery (OA track);
 - all auxiliary tasks;
 - all Hermes providers;
 - plugin provider execution;
 - auth validation during discovery;
 - C1 bridge revival;
-- multi-profile support (separate near-term backlog);
+- multi-profile support;
 - fallback-tracker rewrite.
 
 ## Stop condition
 
-Stop if “correct static discovery” begins to require upstream internal imports, provider registry execution, credential materialization, a new adapter framework, or broad schema migration. Report the uncovered semantic gap instead.
+Stop if “correct static discovery” begins to require upstream internal imports, provider registry execution, credential materialization, a new adapter framework, broad schema migration, or account-auth work already owned by OA0/OA1/OA2. Report the uncovered semantic gap instead.

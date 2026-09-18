@@ -1,6 +1,6 @@
 # R2a contract — fail-safe malformed YAML discovery
 
-Status: **READY FOR IMPLEMENTATION**
+Status: **QUEUED AFTER OA TRACK + R1c — NOT CURRENTLY SELECTED**
 
 ## Problem
 
