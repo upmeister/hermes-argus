@@ -65,10 +65,11 @@ def check_tg_getme(token: str, proxy: str) -> tuple[bool, str]:
     token (401/404 — fail fast, no retries) from network unavailability
     (000/timeout — retried 3x10s per repo conventions). Never prints the token."""
     try:
+        # Токен не в argv: URL уходит в curl через -K - (config на stdin)
         r = subprocess.run(
             ["curl", "-s", "-w", "\n%{http_code}", "--connect-timeout", "8",
-             "--max-time", "25", "--proxy", proxy,
-             f"https://api.telegram.org/bot{token}/getMe"],
+             "--max-time", "25", "--proxy", proxy, "-K", "-"],
+            input=f"url = https://api.telegram.org/bot{token}/getMe\n",
             capture_output=True, text=True, timeout=35)
         body, _, code = r.stdout.rpartition("\n")
         code = code.strip() or "000"

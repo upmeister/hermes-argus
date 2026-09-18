@@ -40,11 +40,14 @@ send_alert() {
     # а HTTPS_PROXY из .env (8445) умеет только opencode.ai
     local proxy="${TELEGRAM_PROXY:-http://127.0.0.1:8444}"
     local escaped=$(python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" <<< "$msg")
-    local resp=$(curl -s -m 10 -x "$proxy" -X POST "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" \
+    # Токен не в argv: URL уходит в curl через -K - (config на stdin)
+    local resp=$(printf 'url = %s\n' "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" | \
+        curl -s -m 10 -x "$proxy" -K - -X POST \
         -H "Content-Type: application/json" \
         -d "{\"chat_id\":\"${WATCHDOG_CHAT_ID:-@WATCHDOG_CHAT_ID@}\",\"text\":$escaped,\"disable_notification\":false}" 2>/dev/null)
     local mid=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',{}).get('message_id',''))" 2>/dev/null)
-    [ -n "$mid" ] && curl -s -m 10 -x "$proxy" -X POST "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/pinChatMessage" \
+    [ -n "$mid" ] && printf 'url = %s\n' "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/pinChatMessage" | \
+        curl -s -m 10 -x "$proxy" -K - -X POST \
         -H "Content-Type: application/json" \
         -d "{\"chat_id\":\"${WATCHDOG_CHAT_ID:-@WATCHDOG_CHAT_ID@}\",\"message_id\":$mid,\"disable_notification\":true}" -o /dev/null 2>/dev/null
     local status=$(echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print('OK' if d.get('ok') else d.get('error_code','ERR'))" 2>/dev/null || echo ERR)

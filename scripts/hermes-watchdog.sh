@@ -88,16 +88,19 @@ send_tg() {
         json="$json}"
         
         local response
-        response=$(curl -s -m 15 -x "$proxy" -X POST "${TELEGRAM_API}${BOT_TOKEN}/sendMessage" \
+        # Токен не в argv: URL уходит в curl через -K - (config на stdin)
+        response=$(printf 'url = %s\n' "${TELEGRAM_API}${BOT_TOKEN}/sendMessage" | \
+            curl -s -m 15 -x "$proxy" -K - -X POST \
             -H "Content-Type: application/json" \
             -d "$json" 2>&1)
-        
+
         # Закрепление сообщения (если запрошен pin и отправка успешна)
         if [[ "$opts" == *"pin"* ]]; then
             local msg_id
             msg_id=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',{}).get('message_id',''))" 2>/dev/null)
             if [ -n "$msg_id" ]; then
-                curl -s -m 15 -x "$proxy" -X POST "${TELEGRAM_API}${BOT_TOKEN}/pinChatMessage" \
+                printf 'url = %s\n' "${TELEGRAM_API}${BOT_TOKEN}/pinChatMessage" | \
+                    curl -s -m 15 -x "$proxy" -K - -X POST \
                     -H "Content-Type: application/json" \
                     -d "{\"chat_id\": \"$CHAT_ID\", \"message_id\": $msg_id, \"disable_notification\": true}" \
                     -o /dev/null 2>&1

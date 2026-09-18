@@ -15,10 +15,12 @@ if [ -z "${WATCHDOG_BOT_TOKEN:-}" ]; then
     exit 0
 fi
 
-python3 - "$WATCHDOG_BOT_TOKEN" "${TELEGRAM_PROXY:-http://127.0.0.1:8444}" <<'PYEOF'
-import json, sys, urllib.request
+# Токен не в argv python-ребёнка: читается из унаследованного окружения
+python3 - <<'PYEOF'
+import json, os, sys, urllib.request
 
-token, proxy = sys.argv[1], sys.argv[2]
+token = os.environ["WATCHDOG_BOT_TOKEN"]
+proxy = os.environ.get("TELEGRAM_PROXY") or "http://127.0.0.1:8444"
 commands = [
     {"command": "health", "description": "Статус сервисов и системы"},
     {"command": "watchdog", "description": "Статус стража Argus"},

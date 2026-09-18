@@ -17,7 +17,9 @@ send_tg() {
     local msg="$1"
     if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then
         local escaped=$(echo "$msg" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "\"$msg\"")
-        curl -s -X POST "${TG_API}${BOT_TOKEN}/sendMessage" \
+        # Токен не в argv: URL уходит в curl через -K - (config на stdin)
+        printf 'url = %s\n' "${TG_API}${BOT_TOKEN}/sendMessage" | \
+            curl -s -K - -X POST \
             -H "Content-Type: application/json" \
             -d "{\"chat_id\": \"$CHAT_ID\", \"text\": $escaped, \"parse_mode\": \"HTML\"}" -o /dev/null
     fi

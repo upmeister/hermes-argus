@@ -114,11 +114,13 @@ def send_alert(text, env, silent=False):
         pass
     import subprocess
     notify = "true" if silent else "false"
+    # Токен не в argv: URL уходит в curl через -K - (config на stdin)
     subprocess.run(["curl", "-s", *proxy_args, "--connect-timeout", "10", "--max-time", "15",
-                    "-X", "POST", f"https://api.telegram.org/bot{token}/sendMessage",
+                    "-X", "POST", "-K", "-",
                     "-d", f"chat_id={chat}", "--data-urlencode", f"text={text}",
                     "-d", f"disable_notification={notify}", "-o", "/dev/null"],
-                   capture_output=True)
+                   input=f"url = https://api.telegram.org/bot{token}/sendMessage\n",
+                   capture_output=True, text=True)
 
 
 def selftest():

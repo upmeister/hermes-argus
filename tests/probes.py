@@ -1044,6 +1044,413 @@ def probe_git_credential_helper_real(tmp: Path):
           f"rc={result.returncode} filled={filled} no_store={no_store}")
 
 
+# ── Пробы: R1b Telegram token-in-argv (shell + child curl) ──────────────────
+
+R1B_TOKEN = "ARGUS_CANARY_R1B"
+R1B_CHAT = "ARGUS_CHAT_R1B"
+
+
+def _install_curl_shim(shim_dir: Path, tmp: Path, tag: str, stdout: str = ""):
+    """curl shim: logs argv and stdin (config), then exits 0. Never touches the
+    network. stdout emulates what the caller parses (-w output / JSON body)."""
+    argv_log = tmp / f"{tag}-curl-argv.log"
+    stdin_log = tmp / f"{tag}-curl-stdin.log"
+    body = (f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
+            f'cat >> "{stdin_log.as_posix()}"\n'
+            f'printf \'\\n--\\n\' >> "{stdin_log.as_posix()}"\n')
+    if stdout:
+        body += f"printf '%s\\n' '{stdout}'\n"
+    body += "exit 0\n"
+    _write_argv_shim(shim_dir, "curl", body)
+    return argv_log, stdin_log
+
+
+def _read_or(log: Path) -> str:
+    return log.read_text(encoding="utf-8", errors="ignore") if log.exists() else ""
+
+
+def _extract_bash_fn(src: str, name: str) -> str:
+    """Verbatim function text from a real script (name() ... closing } at col 0)."""
+    lines = src.splitlines()
+    out, on = [], False
+    for line in lines:
+        if not on and (line.startswith(name + "() {") or line.startswith(name + "():")):
+            on = True
+        if on:
+            out.append(line)
+            if line == "}":
+                break
+    return "\n".join(out)
+
+
+def probe_curl_config_stdin_seam(tmp: Path):
+    """R1b: real curl parses `url = ...` from stdin config (-K -) and requests
+    exactly that URL (loopback server, no external network).
+
+    Negative control: empty config -> curl errors out and no request is made,
+    so the probe fails if the config-stdin delivery mechanism breaks."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    hits = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def _handle(self):
+            hits.append(self.path)
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        do_GET = _handle
+        do_POST = _handle
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    server.timeout = 3
+    url = f"http://127.0.0.1:{server.server_address[1]}/probe?token={R1B_TOKEN}"
+    threading.Thread(target=server.handle_request, daemon=True).start()
+    r = subprocess.run(["curl", "-sS", "-K", "-", "-m", "5", "-X", "POST",
+                        "-d", "chat_id=x"],
+                       input=f"url = {url}\n", capture_output=True, text=True,
+                       timeout=30)
+    # negative control: invalid (empty) config must fail, not silently skip
+    r_bad = subprocess.run(["curl", "-sS", "-K", "-", "-m", "5", "-X", "POST",
+                            "-d", "chat_id=x"],
+                           input="", capture_output=True, text=True, timeout=30)
+    server.server_close()
+    check("curl_config_stdin_seam",
+          r.returncode == 0 and hits == [f"/probe?token={R1B_TOKEN}"]
+          and r_bad.returncode != 0,
+          f"rc={r.returncode} hit={hits} bad_rc={r_bad.returncode} "
+          f"bad_err={(r_bad.stderr or '').strip()[:60]!r}")
+
+
+def probe_telegram_json_send_argv_canary(tmp: Path):
+    """R1b shape A (JSON sendMessage, response discarded), deployed-equivalent
+    send-monitoring-report.sh: token canary stays off curl argv, URL arrives on
+    curl stdin, request wiring (proxy/timeout/headers/payload) unchanged."""
+    home = tmp / "tg-json-home"
+    write(home / ".hermes" / ".env",
+          f"WATCHDOG_BOT_TOKEN={R1B_TOKEN}\nWATCHDOG_CHAT_ID={R1B_CHAT}\n")
+    # Deployed equivalent: deploy substitutes @WATCHDOG_CHAT_ID@ (R1a probes
+    # prove render parity); the probe copy applies the same substitution.
+    src = (REPO / "scripts" / "send-monitoring-report.sh").read_text(encoding="utf-8")
+    deployed = tmp / "send-monitoring-report.deployed.sh"
+    write(deployed, src.replace("@WATCHDOG_CHAT_ID@", R1B_CHAT))
+    shim = tmp / "shim-tgjson"
+    shim.mkdir()
+    argv_log, stdin_log = _install_curl_shim(shim, tmp, "json", stdout="HTTP 000")
+    env = _path_shim_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", "")})
+    result = subprocess.run(
+        ["bash", str(deployed), "probe msg", "silent"],
+        cwd=REPO, env=env, input=b"", capture_output=True, timeout=60)
+    argv = _read_or(argv_log)
+    stdin_data = _read_or(stdin_log)
+    check("telegram_json_send_argv_canary",
+          result.returncode == 0
+          and R1B_TOKEN not in argv
+          and f"url = https://api.telegram.org/bot{R1B_TOKEN}/sendMessage" in stdin_data
+          and "-H" in argv and "Content-Type: application/json" in argv
+          and "--max-time" in argv and "--proxy" in argv
+          and R1B_CHAT in argv,
+          f"rc={result.returncode} argv_leak={R1B_TOKEN in argv} "
+          f"stdin_url={'url = https://api.telegram.org' in stdin_data} "
+          f"wiring={'-H' in argv and '--proxy' in argv and R1B_CHAT in argv}")
+
+
+def probe_telegram_form_send_argv_canary(tmp: Path):
+    """R1b shape B (form-encoded sendMessage, recovery branch), real script
+    gateway-liveness.sh: canary off curl argv, URL on stdin, form payload and
+    silent flag preserved. pgrep shim keeps the process-alive precondition."""
+    home = tmp / "tg-form-home"
+    hermes = home / ".hermes"
+    write(hermes / ".env",
+          f"WATCHDOG_BOT_TOKEN={R1B_TOKEN}\nWATCHDOG_CHAT_ID={R1B_CHAT}\n")
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    write(hermes / "logs" / "agent.log",
+          f"{ts},000 INFO gateway: memory trim: reason=messaging gateway housekeeping\n")
+    state = hermes / "state" / "gateway-liveness.alerted"
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text("prefill", encoding="utf-8")
+    shim = tmp / "shim-tgform"
+    shim.mkdir()
+    argv_log, stdin_log = _install_curl_shim(shim, tmp, "form")
+    _write_argv_shim(shim, "pgrep", "exit 0\n")
+    env = _path_shim_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", "")})
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts" / "gateway-liveness.sh")],
+        cwd=REPO, env=env, input=b"", capture_output=True, timeout=60)
+    argv = _read_or(argv_log)
+    stdin_data = _read_or(stdin_log)
+    check("telegram_form_send_argv_canary",
+          result.returncode == 0
+          and R1B_TOKEN not in argv
+          and f"url = https://api.telegram.org/bot{R1B_TOKEN}/sendMessage" in stdin_data
+          and "chat_id=ARGUS_CHAT_R1B" in argv
+          and "--data-urlencode" in argv
+          and "disable_notification=true" in argv,
+          f"rc={result.returncode} argv_leak={R1B_TOKEN in argv} "
+          f"form_wiring={'chat_id=' in argv and '--data-urlencode' in argv}")
+
+
+def probe_telegram_json_pin_resp_canary(tmp: Path):
+    """R1b shape C (JSON sendMessage + pinChatMessage, message_id consumed):
+    verbatim send_alert() from network-guard.sh. Two curl invocations, both
+    token-free argv, both URLs on stdin, pin payload carries the message_id."""
+    home = tmp / "tg-pin-home"
+    write(home / ".hermes" / ".env",
+          f"WATCHDOG_BOT_TOKEN={R1B_TOKEN}\nWATCHDOG_CHAT_ID={R1B_CHAT}\n")
+    src = (REPO / "scripts" / "network-guard.sh").read_text(encoding="utf-8")
+    fn = _extract_bash_fn(src, "send_alert")
+    shim = tmp / "shim-tgpin"
+    shim.mkdir()
+    argv_log, stdin_log = _install_curl_shim(
+        shim, tmp, "pin", stdout='{"ok": true, "result": {"message_id": 123}}')
+    harness = tmp / "tg-pin-fn.sh"
+    write(harness, f"log() {{ :; }}\n{fn}\nsend_alert 'probe alert'\n")
+    env = _path_shim_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", "")})
+    result = subprocess.run(["bash", str(harness)], cwd=REPO, env=env,
+                            input=b"", capture_output=True, timeout=60)
+    argv = _read_or(argv_log)
+    stdin_data = _read_or(stdin_log)
+    check("telegram_json_pin_resp_canary",
+          result.returncode == 0
+          and R1B_TOKEN not in argv
+          and f"url = https://api.telegram.org/bot{R1B_TOKEN}/sendMessage" in stdin_data
+          and f"url = https://api.telegram.org/bot{R1B_TOKEN}/pinChatMessage" in stdin_data
+          and argv.count("-d") >= 2
+          and "message_id" in argv,
+          f"rc={result.returncode} argv_leak={R1B_TOKEN in argv} "
+          f"pin_url={'pinChatMessage' in stdin_data} "
+          f"mid_payload={'message_id' in argv}")
+
+
+def probe_telegram_getme_module_canary(hc, tmp: Path):
+    """R1b shape D (getMe via python-subprocess curl), health-check-v2
+    check_tg_getme: subprocess.run is faked (no network, no platform shim
+    fragility); asserts canary off argv, config-stdin delivery, wiring."""
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["argv"] = list(cmd)
+        captured["input"] = kwargs.get("input")
+        return type("R", (), {"returncode": 0, "stdout": '{"ok": true}\n200',
+                              "stderr": ""})()
+
+    real_run = hc.subprocess.run
+    hc.subprocess.run = fake_run
+    try:
+        ok, detail = hc.check_tg_getme(R1B_TOKEN, "http://127.0.0.1:8444")
+    finally:
+        hc.subprocess.run = real_run
+    argv = " ".join(captured.get("argv", []))
+    stdin_data = captured.get("input") or ""
+    check("telegram_getme_module_canary",
+          ok
+          and R1B_TOKEN not in argv
+          and f"url = https://api.telegram.org/bot{R1B_TOKEN}/getMe" in stdin_data
+          and "--proxy" in argv and "-K" in argv and "-" in argv.split(),
+          f"ok={ok} detail={detail!r} argv_leak={R1B_TOKEN in argv}")
+
+
+def probe_healthcheck_check_url_canary(tmp: Path):
+    """R1b shape D shell variant: verbatim check_url() from
+    health-check-integrations.sh (getMe caller) — canary off argv, URL on
+    stdin, proxy arg preserved, expected-code match still drives the verdict."""
+    src = (REPO / "scripts" / "health-check-integrations.sh").read_text(encoding="utf-8")
+    fn = _extract_bash_fn(src, "check_url")
+    shim = tmp / "shim-checkurl"
+    shim.mkdir()
+    argv_log, stdin_log = _install_curl_shim(shim, tmp, "checkurl", stdout="200")
+    harness = tmp / "checkurl-fn.sh"
+    write(harness,
+          "RETRIES=1\nTIMEOUT=5\nRETRY_DELAY=1\nFAILURES=''\n"
+          f"{fn}\n"
+          f"check_url 'probe' 'https://api.telegram.org/bot{R1B_TOKEN}/getMe' "
+          "'200' '' 'http://127.0.0.1:8444'\n")
+    env = _path_shim_env(tmp / "checkurl-home", {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", "")})
+    (tmp / "checkurl-home").mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(["bash", str(harness)], cwd=REPO, env=env,
+                            input=b"", capture_output=True, timeout=60)
+    argv = _read_or(argv_log)
+    stdin_data = _read_or(stdin_log)
+    check("healthcheck_check_url_canary",
+          result.returncode == 0
+          and R1B_TOKEN not in argv
+          and f"url = https://api.telegram.org/bot{R1B_TOKEN}/getMe" in stdin_data
+          and "--proxy" in argv and "-K" in argv,
+          f"rc={result.returncode} argv_leak={R1B_TOKEN in argv} "
+          f"proxy={'--proxy' in argv}")
+
+
+def probe_telegram_py_form_send_canary(ft, tmp: Path):
+    """R1b shape E (python-subprocess form sendMessage), fallback-tracker
+    send_alert: subprocess is faked via sys.modules (the module imports it
+    locally, so attribute patching would not apply); asserts canary off argv,
+    config-stdin delivery, form payload preserved. No network contact."""
+    captured = {}
+
+    class _FakeSubprocess:
+        @staticmethod
+        def run(cmd, **kwargs):
+            captured["argv"] = list(cmd)
+            captured["input"] = kwargs.get("input")
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    saved = sys.modules.get("subprocess")
+    sys.modules["subprocess"] = _FakeSubprocess
+    try:
+        ft.send_alert("probe text",
+                      {"WATCHDOG_BOT_TOKEN": R1B_TOKEN, "WATCHDOG_CHAT_ID": R1B_CHAT})
+    finally:
+        if saved is None:
+            sys.modules.pop("subprocess", None)
+        else:
+            sys.modules["subprocess"] = saved
+    argv = " ".join(captured.get("argv", []))
+    stdin_data = captured.get("input") or ""
+    check("telegram_py_form_send_canary",
+          R1B_TOKEN not in argv
+          and f"url = https://api.telegram.org/bot{R1B_TOKEN}/sendMessage" in stdin_data
+          and "chat_id=ARGUS_CHAT_R1B" in argv
+          and "text=probe text" in argv
+          and "-K" in argv and "-" in argv.split(),
+          f"argv_leak={R1B_TOKEN in argv} "
+          f"form_wiring={'chat_id=' in argv and '--data-urlencode' in argv}")
+
+
+def probe_telegram_static_audit_no_argv_leak(tmp: Path):
+    """R1b acceptance A: scripted repository audit over scripts/ (top level)
+    and modules/ (recursive).
+
+    Forbidden: a curl command line (or its continuation window) carrying the
+    token URL — literal or via the TG_API/TELEGRAM_API aliases — and any
+    standalone token-URL line that is not a config-stdin delivery line, alias
+    assignment, comment, check_url argument (its body is guarded by the
+    file-level delivery requirement), or in-process urllib Request.
+    Red-capable: every FIX file must keep its delivery line,
+    register-commands.sh must read the token from the environment (never
+    sys.argv), and the heartbeat workflow must keep the -K - delivery."""
+    import re
+    offenders = []
+    in_process_py = {"webhook.py", "monitoring-bot-poller.py", "register-commands.sh"}
+    scan = sorted((REPO / "scripts").glob("*.sh"))
+    scan += sorted((REPO / "scripts").glob("*.py"))
+    scan += [p for p in sorted((REPO / "modules").rglob("*"))
+             if p.suffix in (".yml", ".yaml", ".sh", ".py") and p.is_file()]
+    for path in scan:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        window = None  # continuation window: None | 'curl' | 'fn'
+        for i, line in enumerate(text.splitlines(), 1):
+            stripped = line.strip()
+            ends_cont = line.rstrip().endswith("\\")
+            has_url = "api.telegram.org/bot" in line
+            # aliases: braced and unbraced forms
+            has_alias = bool(re.search(r"\$\{?TG_API\}?", line)
+                             or re.search(r"\$\{?TELEGRAM_API\}?", line))
+            # токен как аргумент python-ребёнка (env-чтение в коде это не спасает)
+            python_token_argv = ("python" in line
+                                 and re.search(r"\$\{?(WATCHDOG_BOT_TOKEN|"
+                                               r"TELEGRAM_BOT_TOKEN|BOT_TOKEN)\}?", line)
+                                 and "printf 'url = " not in line)
+            curl_start = window is None and (
+                stripped.startswith("curl") or "| curl" in line)
+            fn_start = window is None and "check_url " in stripped
+            if window == "curl" or curl_start:
+                mode = "curl"
+            elif window == "fn" or fn_start:
+                mode = "fn"
+            else:
+                mode = None
+            if has_url or has_alias or python_token_argv:
+                if "printf 'url = " in line:
+                    pass
+                elif 'input=f"url = ' in line:
+                    pass
+                elif stripped.startswith("#"):
+                    pass
+                elif (not has_alias and not python_token_argv
+                      and re.match(r"^\s*(export\s+)?(TG_API|TELEGRAM_API)=", line)):
+                    pass
+                elif path.name in in_process_py and "curl" not in line and has_url:
+                    pass
+                elif mode == "fn":
+                    pass
+                else:
+                    # URL внутри curl-команды или вне разрешённых форм — утечка
+                    offenders.append(f"{path.relative_to(REPO).as_posix()}:{i}")
+            # команда продолжается, пока строки кончаются на "\"
+            window = mode if ends_cont else None
+    required = {
+        "scripts/auto-remediate.sh": "printf 'url = ",
+        "scripts/check-updates.sh": "printf 'url = ",
+        "scripts/watchdog-health.sh": "printf 'url = ",
+        "scripts/ssl-expiry-check.sh": "printf 'url = ",
+        "scripts/send-monitoring-report.sh": "printf 'url = ",
+        "scripts/integration-discover-wrapper.sh": "printf 'url = ",
+        "scripts/health-check-v2-wrapper.sh": "printf 'url = ",
+        "scripts/dashboard-liveness.sh": "printf 'url = ",
+        "scripts/gateway-liveness.sh": "printf 'url = ",
+        "scripts/network-guard.sh": "printf 'url = ",
+        "scripts/hermes-watchdog.sh": "printf 'url = ",
+        "scripts/health-check-integrations.sh": "printf 'url = ",
+        "scripts/health-check-v2.py": 'input=f"url = https://api.telegram.org',
+        "scripts/fallback-tracker-v2.py": 'input=f"url = https://api.telegram.org',
+        "modules/gh-heartbeat/heartbeat-alert.yml": "printf 'url = ",
+    }
+    missing = []
+    for rel, marker in required.items():
+        if marker not in (REPO / rel).read_text(encoding="utf-8", errors="ignore"):
+            missing.append(rel)
+    reg = (REPO / "scripts" / "register-commands.sh").read_text(
+        encoding="utf-8", errors="ignore")
+    reg_env_ok = ('os.environ["WATCHDOG_BOT_TOKEN"]' in reg
+                  and "sys.argv" not in reg)
+    check("telegram_static_audit_no_argv_leak",
+          not offenders and not missing and reg_env_ok,
+          f"offenders={offenders[:5]} missing_fix={missing[:5]} "
+          f"reg_env_ok={reg_env_ok}")
+
+
+def probe_register_commands_env_token_canary(tmp: Path):
+    """R1b remediation: register-commands.sh hands the token to the python
+    child via inherited environment, never via argv. python3 shim captures
+    argv and the env-provided canary."""
+    home = tmp / "tg-reg-home"
+    (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
+    write(home / ".hermes" / ".env",
+          f"WATCHDOG_BOT_TOKEN={R1B_TOKEN}\nWATCHDOG_CHAT_ID={R1B_CHAT}\n")
+    shim = tmp / "shim-reg"
+    shim.mkdir()
+    argv_log = tmp / "reg-py-argv.log"
+    env_log = tmp / "reg-py-env.log"
+    _write_argv_shim(shim, "python3",
+                     f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
+                     f'printf \'%s\\n\' "${{WATCHDOG_BOT_TOKEN:-}}" >> "{env_log.as_posix()}"\n'
+                     'exit 0\n')
+    env = _path_shim_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", "")})
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts" / "register-commands.sh")],
+        cwd=REPO, env=env, input=b"", capture_output=True, timeout=60)
+    argv = _read_or(argv_log)
+    env_token = _read_or(env_log)
+    check("register_commands_env_token_canary",
+          result.returncode == 0
+          and R1B_TOKEN not in argv
+          and R1B_TOKEN in env_token,
+          f"rc={result.returncode} argv_leak={R1B_TOKEN in argv} "
+          f"env_ok={R1B_TOKEN in env_token}")
+
+
 # ── Пробы: D0a schema v2 (envelope, projection, dual-read) ──────────────────
 
 # Explicit environment allowlist for wrapper subprocesses (review pass):
@@ -1712,6 +2119,16 @@ def main() -> int:
     probe_deploy_gh_secret_failure_gates_deploy(tmp)
     probe_gh_secret_stdin_flag_supported(tmp)
     probe_git_credential_helper_real(tmp)
+
+    probe_curl_config_stdin_seam(tmp)
+    probe_telegram_json_send_argv_canary(tmp)
+    probe_telegram_form_send_argv_canary(tmp)
+    probe_telegram_json_pin_resp_canary(tmp)
+    probe_telegram_getme_module_canary(hc, tmp)
+    probe_healthcheck_check_url_canary(tmp)
+    probe_telegram_py_form_send_canary(ft, tmp)
+    probe_telegram_static_audit_no_argv_leak(tmp)
+    probe_register_commands_env_token_canary(tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:
