@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   heartbeat repo push authenticates through an in-memory credential helper
   instead of a token-bearing URL. A failed `gh secret set` now aborts the
   deploy with a clear error instead of reporting the heartbeat ready.
+- Make swap monitoring pressure-aware: high swap occupancy alone is
+  informational; alerts now require low `MemAvailable` plus swap activity or
+  memory PSI, with two-cycle alert and recovery hysteresis.
+- Stop swap-triggered page-cache remediation, serialize watchdog/remediation/
+  heartbeat cron runs with non-blocking locks, and canonicalize `~` versus
+  absolute paths when deduplicating generated cron entries.
 - Resolve the Honcho health target with profile-aware host/workspace/base-URL
   precedence compatible with current upstream Hermes, and require the queue
   endpoint to declare `application/json` before schema validation.
