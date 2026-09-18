@@ -1,8 +1,8 @@
 # 2026-09-17 next-steps execution baseline
 
-Status: **ACTIVE EXECUTION BASELINE — UPDATED 2026-09-18**
+Status: **ACTIVE EXECUTION BASELINE — UPDATED 2026-09-19**
 
-This document translates the stabilization roadmap into bounded repository work. It is deliberately narrower than a product roadmap: agents may perform only the named task currently assigned by the maintainer.
+This document translates the stabilization roadmap into bounded repository work. Agents may perform only the named task currently assigned by the maintainer.
 
 ## Architecture invariant
 
@@ -11,216 +11,243 @@ Hermes owns runtime truth.
 Argus observes externally, verifies independently where useful, and makes failures loud.
 ```
 
-Prefer, in order:
+Prefer:
 
-1. stable externally observable status owned by Hermes when its semantics and effects are proven;
-2. static user-visible configuration/state files;
-3. stable Hermes CLI output where no machine-readable interface exists;
-4. log events already required for Argus's product behavior.
+1. proven stable external status owned by Hermes;
+2. static user-visible configuration/state;
+3. stable Hermes CLI output where no machine interface exists;
+4. logs already required for product behavior.
 
-Do not introduce a Hermes runtime-import bridge to make discovery more complete.
+Do not introduce a Hermes runtime-import bridge.
 
-A proposed upstream seam must be verified against actual supported-version semantics before it becomes monitoring authority. The deferred `gateway_state.json.updated_at` liveness idea remains the cautionary example.
+## Exact current baseline
+
+```text
+Argus main = c8c3b66c26913481e2fef54195678490f2a96e96
+OA0 / PR #33 = merged
+OA0 decision = STATIC ONLY
+
+Hermes stable authority = v2026.9.14 / v0.21.3
+stable commit = 345cd2b057a452236de401d3534b8502a7465e8d
+
+2026-09-19 upstream warning source:
+Hermes main = 1e4952ddba1bc585416ad43438d60183380035cd
+latest stable remains v2026.9.14
+```
 
 ## Current execution order
 
 ```text
-R1a deploy secret-in-argv                     DONE / PR #29
-R1b Telegram child-argv secret exposure       DONE / PR #31
+OA1 generic static account-auth discovery     NOW
+ -> OA-close exact-main acceptance
+ -> OA PHASE COMPLETE
 
-OA0 account-auth discovery research            NOW / RESEARCH ONLY
- -> maintainer decision
- -> OA1 generic structural auth discovery      FUTURE / NOT YET AUTHORIZED
- -> OA2 Hermes status shadow/enrichment        CONDITIONAL / NOT YET AUTHORIZED
+OA2 Hermes status shadow                      CLOSED / UPSTREAM-GATED
 
 then:
-R1c demonstrated Authorization-header argv debt
- -> R2a malformed YAML degradation
- -> R2c bounded static discovery compatibility
+R1c Authorization-header argv debt
+ -> R2a malformed YAML
+ -> R2c bounded static compatibility
  -> R3 cleanup/stabilization
 ```
 
-Deferred:
+R2b gateway liveness remains deferred.
+
+Multi-profile remains separate.
+
+## OA0 decision now authoritative
+
+PR #33 demonstrated:
+
+- working OpenAI/Codex can be invisible to current Argus;
+- nested `providers.<id>.tokens.*` and OAuth `credential_pool.<id>[]` are
+  useful static evidence surfaces;
+- static evidence can be stale and cannot prove login/health;
+- `GET /api/providers/oauth` is not suitable for Argus polling on supported
+  v0.21.3;
+- OA production direction is `STATIC ONLY`.
+
+Research report:
 
 ```text
-R2b gateway liveness redesign — research only until a stable external seam is proven
+docs/research/oa0-account-auth-discovery-research.md
 ```
 
-Multi-profile support is intentionally separate. OA0 may record profile-aware properties of a candidate Hermes seam because they affect future architectural fit, but must not implement profile monitoring.
+## 2026-09-19 upstream watch
 
-## Why OA0 moved ahead of the queued fixes
+Latest stable remains v0.21.3, so the supported compatibility authority did
+not move.
 
-Current Argus account-auth discovery has a demonstrated product false negative.
+Fresh `main` is 602 commits ahead of the OA0-observed `d177b119...` and
+partially improves one OA2 blocker:
 
-`scripts/integration-discover.py` uses a fixed `OAUTH_FLOWS` list and expects `auth.json.providers.<id>.access_token`.
+- pool-first OAuth status now uses credential-pool `peek()` as an observation
+  and explicitly avoids the older select/bench behavior.
 
-Modern supported Hermes can store OpenAI/Codex auth under nested provider token state and/or `credential_pool.openai-codex`. Therefore a working primary Codex account can be absent from Argus integration inventory.
+OA2 still stays closed because on fresh `main`:
 
-That concrete gap is more important to current integration correctness than the remaining queued cleanup fixes and is bounded enough for a research-first task.
+- Codex status can still reach `resolve_codex_runtime_credentials()`;
+- expiring Codex credentials can still refresh and successful refresh persists
+  rotated tokens;
+- Qwen status still refresh-validates;
+- OAuth responses still include `token_preview`;
+- `/api/providers/oauth` is still not registered on the machine bearer-token
+  route;
+- plugin/account provider universe remains bounded by upstream catalog rules.
 
-OA0 is not permission to rebuild Hermes auth semantics. It exists to select the smallest durable observation seam.
+Other Argus external seams remain intact:
 
-## Task ownership map
+- fallback activation marker unchanged;
+- primary restore marker unchanged;
+- `hermes mcp test` still prints `Connected (...ms)` and
+  `Tools discovered: N`.
 
-| Task | Status | Primary owner/surface | Allowed adjacent surfaces |
-|---|---|---|---|
-| R1a deploy argv | DONE | `deploy.sh` | no follow-up without demonstrated regression |
-| R1b Telegram argv | DONE | prior active notifier surfaces | no follow-up without demonstrated regression |
-| OA0 account-auth discovery | NOW / RESEARCH | current Argus parser + exact supported Hermes auth/provider sources + isolated throwaway probes | research docs/fixtures only; no production parser implementation |
-| OA1 generic static auth discovery | FUTURE | likely `scripts/integration-discover.py` | only after OA0 decision + separate contract |
-| OA2 Hermes status shadow | CONDITIONAL | external Hermes status seam if OA0 proves it bounded | only after OA0 decision + separate contract |
-| R1c auth-header argv | QUEUED | demonstrated active Authorization-header child argv paths | focused probes/docs; contract still to be written |
-| R2a malformed YAML | QUEUED | `scripts/integration-discover.py` | wrapper/tests only if required |
-| R2b gateway liveness | DEFERRED | research only | no implementation contract active |
-| R2c fallback/static inventory | QUEUED | `scripts/integration-discover.py` | registry docs/generator wording; auth subsection superseded by OA track |
-| R3 reduction | LATER | actual dead/duplicate paths | deletion/simplification preferred |
+Fresh `main` also added credential-pool reclaim behavior for live sessions
+after quota cooldown, reinforcing that cooldown state is Hermes runtime state,
+not an Argus health verdict.
 
 ## Current selected contract
 
-The only selected task is:
-
 ```text
-docs/handoffs/oa0-account-auth-discovery-research-contract.md
+docs/handoffs/oa1-static-account-auth-discovery-contract.md
 ```
 
-OA0 is **research only**.
+OA1 is the only authorized production task.
 
-Do not implement OA1 or OA2 in the OA0 PR even if the research result appears obvious.
+## OA1 ownership
 
-## OA0 boundary
-
-The research question is:
+Primary:
 
 ```text
-How should Argus discover all Hermes model/account authentication providers
-without recreating Hermes credential resolution?
+scripts/integration-discover.py
 ```
 
-In scope:
+Necessary adjacent surface:
 
-- model/inference account providers;
-- singleton auth state;
-- credential-pool auth state;
-- externally managed provider accounts insofar as Hermes includes them in its account/provider catalog;
-- the supported-version `GET /api/providers/oauth` seam as a candidate external status source.
+```text
+scripts/health-check-v2.py
+```
 
-Out of scope:
+Reason: current health code turns every static `oauth` snapshot entity into
+`ok / logged in`. Extending discovery without correcting that projection
+would create new false greens and directly violate OA0.
 
-- MCP OAuth;
-- Spotify/tool OAuth;
-- memory-provider OAuth;
-- dashboard/user identity;
-- connector/session auth;
-- production runtime imports;
-- token refresh;
-- credential materialization;
-- multi-profile implementation.
+Preferred health projection for evidence-only OAuth rows is an existing
+schema-v2 non-green result such as `skipped`, with a truthful detail that
+login/health is not verified.
 
-The research must distinguish static "credential evidence present" from Hermes "logged in/connected" status and from independent health.
+## OA1 product boundary
+
+OA1 should:
+
+- detect provider-state flat/nested OAuth evidence;
+- detect generic pool rows with persisted `auth_type=oauth`;
+- preserve a bounded legacy fallback only where justified;
+- preserve `oauth:<id>` identity and existing Copilot behavior;
+- keep equivalent singleton/pool storage movement from creating noisy changes;
+- emit no secret-derived fields;
+- keep static auth evidence non-green.
+
+OA1 should not:
+
+- ingest `auth_type=api_key` pool rows into `oauth:*`;
+- read external CLI/keychain/cloud credential stores;
+- normalize provider aliases;
+- rename/migrate schema-v2;
+- call Hermes, network or OAuth endpoints;
+- implement OA2;
+- implement profiles.
+
+## OA2 authority
+
+OA2 is not queued implementation.
+
+Use:
+
+```text
+docs/handoffs/oa2-hermes-status-shadow-reopen-gate.md
+```
+
+It may be reconsidered only after a stable/tagged upstream version satisfies
+the documented refresh-free/no-write/no-network, headless-auth and no-secret
+response conditions.
+
+## OA closeout
+
+After OA1 merges, run:
+
+```text
+docs/handoffs/oa-close-account-auth-acceptance-contract.md
+```
+
+Closeout is expected to be docs/acceptance only. It does not authorize a second
+auth implementation project.
+
+Successful closeout sets R1c as the next selected task.
 
 ## Global non-goals
 
-The following are NOT implied by this baseline:
-
-- C1/C1a/C1b runtime bridge revival;
-- production provider/plugin imports for discovery;
-- credential resolution or token refresh during Argus discovery;
-- historical Hermes revision pinning;
-- integrity/sandbox/worktree/interpreter verification;
-- generalized notification transport framework;
+- runtime bridge revival;
+- provider/plugin execution for discovery;
+- credential resolution or refresh in Argus;
+- universal credential inventory;
+- external CLI/keychain/cloud auth probing;
 - generalized auth adapter framework;
-- multi-profile implementation inside OA/R1/R2;
-- support for every Hermes auxiliary model role;
-- flattening MCP/tool/memory OAuth into model-provider auth;
-- replacing all static discovery with Hermes internals;
-- treating `gateway_state.json.updated_at` freshness as a liveness contract without new evidence.
-
-## R2c auth subsection
-
-The prior R2c.3 credential/OAuth audit is superseded by OA0 because its premise ("no demonstrated current gap") is false.
-
-R2c retains only its bounded fallback/auxiliary/registry responsibilities after the OA track and R2a.
-
-Do not run a second independent auth-discovery design under R2c.
+- OA2 polling;
+- multi-profile implementation inside OA1;
+- gateway timestamp liveness revival.
 
 ## Required agent loop
 
-For OA0:
-
 ```text
-one research contract
- -> exact-source audit
- -> bounded isolated probes
- -> one committed research report
+one assigned contract
+ -> one implementation pass
+ -> focused tests
  -> one focused adversarial review
  -> at most one remediation by default
  -> exact-head reread
- -> maintainer architecture decision
+ -> merge recommendation OR blocker
 ```
 
-For later implementation tasks, the normal implementation loop remains unchanged.
-
-A reviewer finding outside the assigned contract is recorded as a finding. It does not authorize fixing it.
-
-If an additional remediation is genuinely required after the normal budget, STOP and request a maintainer decision with the exact blocker.
-
-## Stop conditions
-
-Stop and return to the maintainer if OA0 or a queued task requires:
-
-- a new subsystem;
-- a new dependency;
-- a new persistent state format;
-- broad changes outside the named owner surface;
-- a second remediation cycle without explicit approval;
-- execution/import of Hermes internals as a production dependency;
-- credential resolution/refresh merely to discover provider identity;
-- real account login/logout or credential rotation;
-- a new security boundary/sandbox;
-- redesign of discovery into a general compatibility framework.
-
-Research-only isolated execution of the supported Hermes version is allowed when required to understand behavior. It does not authorize that mechanism for Argus production code.
+Out-of-scope findings are recorded, not automatically fixed.
 
 ## Evidence rule
 
-Every task must state:
+Every implementation PR states:
 
 ```text
-problem -> evidence -> smallest useful seam -> preserved semantics -> explicit non-goals
+problem -> evidence -> smallest patch -> preserved semantics -> explicit non-goals
 ```
 
-OA0 must distinguish:
+For OA1, tests must specifically prove the secret boundary and the
+non-green/static-evidence health semantics, not just entity appearance.
 
-```text
-source evidence
-vs
-isolated empirical evidence
-vs
-unknown/unproven behavior
-```
-
-Before final review, refresh the PR body/evidence receipt so it describes the exact candidate head and exact supported Hermes source revision used.
+Before merge recommendation, refresh the PR body to the exact candidate head.
 
 ## Canonical task contracts
 
 Current:
 
-- `oa0-account-auth-discovery-research-contract.md`
+- `oa1-static-account-auth-discovery-contract.md`
 
-Queued / future:
+After OA1:
+
+- `oa-close-account-auth-acceptance-contract.md`
+
+Closed:
+
+- `oa2-hermes-status-shadow-reopen-gate.md`
+
+Completed:
+
+- `oa0-account-auth-discovery-research-contract.md`
+- R1 contracts
+
+Queued:
 
 - `r2a-malformed-yaml-contract.md`
-- `r2c-static-discovery-compat-contract.md` — auth subsection superseded by OA0
-- OA1/OA2 contracts do not yet exist and are not authorized
-- R1c contract does not yet exist
-
-Completed/history:
-
-- `r1-secret-in-argv-contract.md`
-- `r1b-telegram-secret-argv-contract.md`
+- `r2c-static-discovery-compat-contract.md`
 
 Deferred:
 
 - `r2b-gateway-liveness-contract.md`
-
-The maintainer must explicitly select one active contract before implementation begins.
