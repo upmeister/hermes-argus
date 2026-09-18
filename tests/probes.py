@@ -777,6 +777,309 @@ def probe_discover_url_shape_and_literals(disc, tmp: Path):
           f"custom={custom.geturl()} literal={literal.geturl()}")
 
 
+# ── Пробы: OA1 — структурный account-auth discovery + skipped-семантика ─────
+
+def _oa1_auth(auth: dict) -> str:
+    return json.dumps(auth, ensure_ascii=False)
+
+
+def _oa1_fixture(providers: dict | None = None, pool: dict | None = None,
+                 active: str | None = None) -> dict:
+    auth: dict = {"version": 2}
+    if providers is not None:
+        auth["providers"] = providers
+    if pool is not None:
+        auth["credential_pool"] = pool
+    if active is not None:
+        auth["active_provider"] = active
+    return auth
+
+
+def _oa1_discover(disc, tmp: Path, auth, env_text: str = "") -> dict:
+    """extract_entities на синтетическом HERMES_DIR (auth.json = фикстура:
+    dict → JSON, str → сырое содержимое для malformed-кейсов)."""
+    raw = auth if isinstance(auth, str) else json.dumps(auth, ensure_ascii=False)
+    disc.AUTH_JSON = write(tmp / "auth.json", raw)
+    disc.CONFIG = write(tmp / "config.yaml", "")
+    disc.ENV_FILE = write(tmp / "no.env", env_text)
+    disc.REGISTRY = tmp / "no-registry.yaml"
+    disc.SNAPSHOT = tmp / "snap.json"
+    entities, _env = disc.extract_entities()
+    return entities
+
+
+def probe_oa1_discovery_fixtures(disc, tmp: Path):
+    """OA1 acceptance: flat control, nested Codex, pool-only, generic future
+    id, dedupe, api-key/unknown/bare negative controls, active marker."""
+    # 1. flat positive control (nous: access_token + refresh_token)
+    ents = _oa1_discover(disc, tmp, _oa1_fixture(
+        providers={"nous": {"access_token": "OA1_CANARY_A",
+                            "refresh_token": "OA1_CANARY_B"}}, active="nous"))
+    check("oa1_flat_positive_control",
+          ents.get("oauth:nous") == {"type": "oauth", "name": "nous", "active": True},
+          f"got {ents.get('oauth:nous')!r}")
+
+    # 2. nested Codex singleton (tokens.*)
+    ents = _oa1_discover(disc, tmp, _oa1_fixture(providers={
+        "openai-codex": {"tokens": {"access_token": "OA1_CANARY_C",
+                                    "refresh_token": "OA1_CANARY_D"},
+                         "last_refresh": "x", "auth_mode": "chatgpt"}}))
+    check("oa1_nested_codex_singleton",
+          ents.get("oauth:openai-codex") == {"type": "oauth", "name": "openai-codex",
+                                             "active": False},
+          f"got {ents.get('oauth:openai-codex')!r}")
+
+    # 3. pool-only Codex (auth_type=oauth)
+    ents = _oa1_discover(disc, tmp, _oa1_fixture(pool={
+        "openai-codex": [{"id": "r1", "label": "L", "auth_type": "oauth",
+                          "priority": 0, "source": "device_code",
+                          "access_token": "OA1_CANARY_E",
+                          "refresh_token": "OA1_CANARY_F"}]}))
+    check("oa1_pool_only_codex",
+          ents.get("oauth:openai-codex") == {"type": "oauth", "name": "openai-codex",
+                                             "active": False},
+          f"got {ents.get('oauth:openai-codex')!r}")
+
+    # 4. generic future provider id — без правки ростера
+    ents = _oa1_discover(disc, tmp, _oa1_fixture(pool={
+        "synthetic-future-provider": [{"auth_type": "oauth", "access_token": "x"}]}))
+    check("oa1_generic_future_pool_provider",
+          ents.get("oauth:synthetic-future-provider") == {
+              "type": "oauth", "name": "synthetic-future-provider", "active": False},
+          f"got {ents.get('oauth:synthetic-future-provider')!r}")
+
+    # 5. same-id dedupe (singleton + pool = одна сущность)
+    ents = _oa1_discover(disc, tmp, _oa1_fixture(
+        providers={"openai-codex": {"tokens": {"access_token": "a", "refresh_token": "r"}}},
+        pool={"openai-codex": [{"auth_type": "oauth", "access_token": "b"}]}))
+    codex_keys = [k for k in ents if k.startswith("oauth:openai-codex")]
+    check("oa1_same_id_dedupe", codex_keys == ["oauth:openai-codex"], f"keys={codex_keys}")
+
+    # 7. негативные контролы: явный api_key, неизвестный auth_type,
+    #    bare access_token (pool и flat) — НЕ account-auth свидетельства
+    ents = _oa1_discover(disc, tmp, _oa1_fixture(
+        providers={"api-key-blob": {"access_token": "OA1_CANARY_G"}},
+        pool={"keyed": [{"auth_type": "api_key", "access_token": "OA1_CANARY_H",
+                         "refresh_token": "OA1_CANARY_I"}],
+              "weird": [{"auth_type": "totp", "refresh_token": "OA1_CANARY_J"}],
+              "bare": [{"access_token": "OA1_CANARY_K"}]}))
+    leftovers = [k for k in ents if k.startswith("oauth:")]
+    check("oa1_apikey_negative_control", leftovers == [], f"leaked={leftovers}")
+
+    # 10. active marker: точное совпадение id, без alias-нормализации
+    ents = _oa1_discover(disc, tmp, _oa1_fixture(
+        pool={"xai-oauth": [{"auth_type": "oauth", "access_token": "a"}]}, active="xai"))
+    check("oa1_active_marker_exact_id",
+          ents.get("oauth:xai-oauth", {}).get("active") is False,
+          f"got {ents.get('oauth:xai-oauth')!r}")
+    ents = _oa1_discover(disc, tmp, _oa1_fixture(
+        pool={"xai-oauth": [{"auth_type": "oauth", "access_token": "a"}]},
+        active="xai-oauth"))
+    check("oa1_active_marker_match",
+          ents.get("oauth:xai-oauth", {}).get("active") is True,
+          f"got {ents.get('oauth:xai-oauth')!r}")
+
+
+def probe_oa1_storage_shape_stability(disc, tmp: Path):
+    """OA1 acceptance 6: singleton-only vs pool-only vs both для того же id
+    дают идентичную сущность (без provenance-шума)."""
+    singleton = _oa1_discover(disc, tmp, _oa1_fixture(
+        providers={"openai-codex": {"tokens": {"access_token": "a", "refresh_token": "r"}}}))
+    pooled = _oa1_discover(disc, tmp, _oa1_fixture(
+        pool={"openai-codex": [{"auth_type": "oauth", "access_token": "a",
+                                "refresh_token": "r"}]}))
+    both = _oa1_discover(disc, tmp, _oa1_fixture(
+        providers={"openai-codex": {"tokens": {"access_token": "a", "refresh_token": "r"}}},
+        pool={"openai-codex": [{"auth_type": "oauth", "access_token": "a"}]}))
+    e1 = singleton.get("oauth:openai-codex")
+    e2 = pooled.get("oauth:openai-codex")
+    e3 = both.get("oauth:openai-codex")
+    check("oa1_storage_shape_stability", e1 is not None and e1 == e2 == e3,
+          f"singleton={e1!r} pool={e2!r} both={e3!r}")
+
+
+def probe_oa1_malformed_ignored(disc, tmp: Path):
+    """OA1 acceptance 8: битые структуры auth.json не роняют дискавери."""
+    cases = {
+        "corrupt_json": "{not json",
+        "json_null": "null",
+        "json_list": "[]",
+        "providers_not_dict": _oa1_auth({"providers": ["nous"]}),
+        "pool_not_dict": _oa1_auth({"credential_pool": {"x": "oops"}}),
+        "rows_not_list": _oa1_auth({"credential_pool": {"x": {"auth_type": "oauth"}}}),
+        "row_not_dict": _oa1_auth({"credential_pool": {"x": ["oauth", 5, None]}}),
+        "tokens_not_dict": _oa1_auth({"providers": {"x": {"tokens": "oauth"}}}),
+        "refresh_not_str": _oa1_auth({"providers": {"x": {"refresh_token": ["r"]}},
+                                      "credential_pool": {"y": [{"auth_type": None,
+                                                                 "refresh_token": 7}]}}),
+        "auth_type_int": _oa1_auth({"credential_pool": {"x": [{"auth_type": 5,
+                                                               "access_token": "a"}]}}),
+    }
+    results = {}
+    for name, raw in cases.items():
+        try:
+            ents = _oa1_discover(disc, tmp, raw)
+            results[name] = sorted(k for k in ents if k.startswith("oauth:"))
+        except Exception as e:  # noqa: BLE001 — проба ловит любой краш
+            results[name] = f"CRASH: {e}"
+    bad = {k: v for k, v in results.items() if v != []}
+    check("oa1_malformed_ignored", not bad, f"{bad}")
+
+
+def probe_oa1_copilot_compat(disc, tmp: Path):
+    """OA1 acceptance 9: Copilot env-канал не изменился (token vs PAT-only)."""
+    ents = _oa1_discover(disc, tmp, _oa1_fixture(), env_text="COPILOT_GITHUB_TOKEN=x\n")
+    check("oa1_copilot_token_entity",
+          ents.get("oauth:copilot") == {"type": "oauth", "name": "copilot", "active": False},
+          f"got {ents.get('oauth:copilot')!r}")
+    ents = _oa1_discover(disc, tmp, _oa1_fixture(), env_text="GITHUB_TOKEN=x\n")
+    check("oa1_copilot_pat_only",
+          ents.get("oauth:copilot") == {"type": "oauth", "name": "copilot",
+                                        "active": False, "status": "pat-only"},
+          f"got {ents.get('oauth:copilot')!r}")
+
+
+def probe_oa1_secret_canary_scan(tmp: Path):
+    """OA1 secret boundary: canary во всех секретных полях фикстуры не
+    появляется в snapshot, discover report/stdout/stderr и health-report."""
+    home = tmp / "oa1-home"
+    canaries = {
+        "flat_access": "OA1_CANARY_FLAT_ACCESS",
+        "flat_refresh": "OA1_CANARY_FLAT_REFRESH",
+        "nested_access": "OA1_CANARY_NESTED_ACCESS",
+        "nested_refresh": "OA1_CANARY_NESTED_REFRESH",
+        "pool_access": "OA1_CANARY_POOL_ACCESS",
+        "pool_refresh": "OA1_CANARY_POOL_REFRESH",
+        "fingerprint": "OA1_CANARY_FINGERPRINT",
+        "label": "OA1_CANARY_LABEL",
+        "row_id": "OA1_CANARY_ROWID",
+    }
+    auth = {
+        "version": 2, "active_provider": "nous",
+        "providers": {
+            "nous": {"access_token": canaries["flat_access"],
+                     "refresh_token": canaries["flat_refresh"]},
+            "openai-codex": {"tokens": {"access_token": canaries["nested_access"],
+                                        "refresh_token": canaries["nested_refresh"]},
+                             "last_refresh": "2026-01-01T00:00:00Z",
+                             "auth_mode": "chatgpt"},
+        },
+        "credential_pool": {
+            "openai-codex": [{"id": canaries["row_id"], "label": canaries["label"],
+                              "auth_type": "oauth", "priority": 0,
+                              "source": "device_code",
+                              "access_token": canaries["pool_access"],
+                              "refresh_token": canaries["pool_refresh"],
+                              "secret_fingerprint": canaries["fingerprint"]}],
+            "keyed": [{"id": "k", "auth_type": "api_key",
+                       "access_token": canaries["pool_access"],
+                       "secret_fingerprint": canaries["fingerprint"]}],
+        },
+    }
+    write(home / "auth.json", _oa1_auth(auth))
+    write(home / "config.yaml", "")
+    write(home / ".env", "")
+    env = dict(os.environ, HERMES_DIR=str(home),
+               DISCOVER_REPORT=str(tmp / "oa1-report.json"))
+    outs = []
+    for _ in range(2):  # baseline-прогон + diff-прогон
+        r = subprocess.run(["python3", str(REPO / "scripts" / "integration-discover.py")],
+                           cwd=REPO, env=env, capture_output=True, timeout=60)
+        outs.append((r.stdout.decode(errors="ignore"), r.stderr.decode(errors="ignore")))
+    snapshot_text = (home / "state" / "integration-snapshot.json").read_text(encoding="utf-8")
+    report_path = tmp / "oa1-report.json"
+    report_text = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
+    registry = write(tmp / "oa1-registry.yaml", "kit_entries: []\n")
+    hc_out = tmp / "oa1-health-report.json"
+    hc = subprocess.run(
+        ["python3", str(REPO / "scripts" / "health-check-v2.py"),
+         "--registry", str(registry),
+         "--snapshot", str(home / "state" / "integration-snapshot.json"),
+         "--env", str(home / ".env"), "--out", str(hc_out)],
+        cwd=REPO, capture_output=True, timeout=120)
+    hc_report = hc_out.read_text(encoding="utf-8") if hc_out.exists() else ""
+    blob = "\n".join([snapshot_text, report_text, hc_report, hc.stdout.decode(errors="ignore"),
+                      hc.stderr.decode(errors="ignore"),
+                      *(part for pair in outs for part in pair)])
+    leaks = sorted({name for name, value in canaries.items() if value in blob})
+    check("oa1_secret_canary_scan", not leaks, f"leaked_canaries={leaks}")
+
+
+def probe_oa1_health_static_evidence_non_green(hc, tmp: Path):
+    """OA1 acceptance 11-13: статическая oauth-сущность = skipped/не-зелёная,
+    никогда ok/'logged in'."""
+    registry = write(tmp / "oa1-reg.yaml", "kit_entries: []\n")
+    snapshot = write(tmp / "oa1-snap.json", json.dumps({
+        "updated": "2026-09-19T00:00:00Z",
+        "entities": {"oauth:openai-codex": {"type": "oauth", "name": "openai-codex",
+                                            "active": True}},
+        "env_keys": []}))
+    envf = write(tmp / "oa1.env", "")
+    out = tmp / "oa1-health.json"
+    rc = hc.run(["--registry", str(registry), "--snapshot", str(snapshot),
+                 "--env", str(envf), "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    rows = [c for c in report["checks"] if c.get("id") == "oauth:openai-codex"]
+    c = rows[0] if rows else {}
+    ok = (rc == 0
+          and c.get("status") == "skipped"
+          and c.get("verdict") == "skipped"
+          and "logged" not in (c.get("detail") or "").lower()
+          and report["summary"]["healthy"] == 0
+          and report["summary"]["skipped"] == 1)
+    check("oa1_health_static_evidence_non_green", ok,
+          f"rc={rc} status={c.get('status')} verdict={c.get('verdict')} "
+          f"detail={c.get('detail')!r} summary={report.get('summary')}")
+
+
+def probe_oa1_health_pat_only_unconfigured(hc, tmp: Path):
+    """OA1 acceptance 14: pat-only остаётся unconfigured (не skipped)."""
+    registry = write(tmp / "oa1-reg3.yaml", "kit_entries: []\n")
+    snapshot = write(tmp / "oa1-snap3.json", json.dumps({
+        "updated": "2026-09-19T00:00:00Z",
+        "entities": {"oauth:copilot": {"type": "oauth", "name": "copilot",
+                                       "active": False, "status": "pat-only"}},
+        "env_keys": []}))
+    envf = write(tmp / "oa3.env", "")
+    out = tmp / "oa1-health3.json"
+    rc = hc.run(["--registry", str(registry), "--snapshot", str(snapshot),
+                 "--env", str(envf), "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    rows = [c for c in report["checks"] if c.get("id") == "oauth:copilot"]
+    c = rows[0] if rows else {}
+    check("oa1_health_pat_only_unconfigured",
+          rc == 0 and c.get("status") == "unconfigured"
+          and report["summary"]["unconfigured"] == 1,
+          f"rc={rc} status={c.get('status')} summary={report.get('summary')}")
+
+
+def probe_oa1_quick_report_not_green(wh):
+    """OA1 acceptance 15: quick-рендер не зелёный на skipped-only отчёте."""
+    report = {
+        "schema": 2, "updated": "2026-09-19T00:00:00+00:00", "total": 1,
+        "summary": {"total": 1, "healthy": 0, "failed": 0, "unknown": 0,
+                    "unconfigured": 0, "skipped": 1},
+        "checks": [{"id": "oauth:openai-codex", "entity_id": "oauth:openai-codex",
+                    "status": "skipped", "verdict": "skipped",
+                    "label": "oauth openai-codex",
+                    "detail": "persisted credential evidence present; "
+                              "login/health not verified"}],
+    }
+    text = wh._render_integrations_quick(report)
+    check("oa1_quick_report_not_green",
+          "всё в порядке" not in text and "⏸" in text, f"text={text!r}")
+
+
+def probe_oa1_helpers_are_pure():
+    """OA1 §8: хелперы дискавери — чистая структурная логика, без I/O-поверхности."""
+    src = (REPO / "scripts" / "integration-discover.py").read_text(encoding="utf-8")
+    body = src[src.index("def _nonempty_credential"):src.index("def load_registry")]
+    banned = ("subprocess", "urllib", "requests", "socket", "curl", "hermes",
+              "os.system", "popen", "open(", "read_text", "write_text")
+    hits = sorted({b for b in banned if b in body})
+    check("oa1_helpers_are_pure", not hits, f"hits={hits}")
+
+
 def probe_deploy_cron_profile(tmp: Path):
     """Minimal cron profile runs deploy and excludes noisy core jobs."""
     home = tmp / "deploy-home"
@@ -2113,6 +2416,17 @@ def main() -> int:
 
     probe_discover_url_secret_leak(disc, tmp)
     probe_discover_url_shape_and_literals(disc, tmp)
+
+    # OA1: структурный account-auth discovery + не-зелёная health-семантика
+    probe_oa1_discovery_fixtures(disc, tmp)
+    probe_oa1_storage_shape_stability(disc, tmp)
+    probe_oa1_malformed_ignored(disc, tmp)
+    probe_oa1_copilot_compat(disc, tmp)
+    probe_oa1_secret_canary_scan(tmp)
+    probe_oa1_health_static_evidence_non_green(hc, tmp)
+    probe_oa1_health_pat_only_unconfigured(hc, tmp)
+    probe_oa1_quick_report_not_green(wh)
+    probe_oa1_helpers_are_pure()
     probe_deploy_cron_profile(tmp)
     probe_deploy_secret_not_in_argv(tmp)
     probe_deploy_gh_heartbeat_secret_not_in_argv(tmp)

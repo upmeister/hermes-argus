@@ -18,10 +18,72 @@ SNAPSHOT = STATE_DIR / "integration-snapshot.json"
 REGISTRY = STATE_DIR / "registry.yaml"
 AUTH_JSON = HERMES_DIR / "auth.json"
 
-# OAuth provider flows stored in auth.json providers.<flow> (hermes_cli/auth.py).
-# Detection is STATIC (field names / expiry only) — never call `hermes auth
-# status`: it rotates refresh tokens as a side effect (research 2026-09-07).
-OAUTH_FLOWS = ("nous", "openai-codex", "xai-oauth", "qwen-oauth", "minimax-oauth")
+# ── OA1: структурные свидетельства account-auth из auth.json (только static) ──
+# Детект — статическая структура, никаких вызовов `hermes auth status`: он
+# ротирует refresh-токены как сайд-эффект (research 2026-09-07). OA1-дискавери
+# генерик (без ростера провайдеров): providers.<id> — свидетельство account/
+# OAuth, когда несёт refresh_token (flat; формы nous/minimax) или вложенный
+# блок tokens.{access_token,refresh_token} (формы Codex/xAI);
+# credential_pool.<id>[] — строки с persisted auth_type "oauth" (или legacy
+# строки без auth_type, но с refresh_token). Голый access_token сам по себе —
+# НЕ свидетельство: blob в форме access_token может быть API-key креденшалом
+# (таксономия OA0). Явные auth_type "api_key" строки — вне OA1. Значения
+# никогда не попадают в вывод; наличие свидетельства — НЕ login/health
+# (health-check-v2 проецирует oauth-сущности в skipped).
+
+def _nonempty_credential(value) -> bool:
+    """Учётное поле креденшала — только непустая строка (значение не используется)."""
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _provider_state_is_account_auth(state) -> bool:
+    if not isinstance(state, dict):
+        return False
+    if _nonempty_credential(state.get("refresh_token")):
+        return True
+    tokens = state.get("tokens")
+    return isinstance(tokens, dict) and (
+        _nonempty_credential(tokens.get("access_token"))
+        or _nonempty_credential(tokens.get("refresh_token")))
+
+
+def _pool_rows_are_account_auth(rows) -> bool:
+    if not isinstance(rows, list):
+        return False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        auth_type = row.get("auth_type")
+        if isinstance(auth_type, str):
+            # "oauth" — сильное свидетельство; любой другой persisted auth_type
+            # (api_key, неизвестный) — вне OA1.
+            if auth_type.strip().lower() == "oauth":
+                return True
+            continue
+        if auth_type:
+            continue
+        # Legacy-строка: auth_type отсутствует, но есть refresh_token.
+        if _nonempty_credential(row.get("refresh_token")):
+            return True
+    return False
+
+
+def _account_auth_ids(auth) -> list:
+    """Отсортированные id провайдеров с persisted account/OAuth
+    свидетельствами. Тот же id в providers и credential_pool даёт одну
+    идентичность; битые секции/строки игнорируются (не роняют дискавери)."""
+    if not isinstance(auth, dict):
+        return []
+    ids = set()
+    providers = auth.get("providers")
+    if isinstance(providers, dict):
+        ids.update(str(pid) for pid, state in providers.items()
+                   if _provider_state_is_account_auth(state))
+    pool = auth.get("credential_pool")
+    if isinstance(pool, dict):
+        ids.update(str(pid) for pid, rows in pool.items()
+                   if _pool_rows_are_account_auth(rows))
+    return sorted(ids)
 
 
 def load_registry():
@@ -195,26 +257,24 @@ def extract_entities():
         for role in ("vision", "compression"):
             model_ref(f"model:{role}", role, aux.get(role) or {})
 
-    # ── Discover v2, layer 4: OAuth / web-token providers ───────────────────
-    # Tokens live in auth.json providers.<flow> (nous portal, codex, xai/qwen/
-    # minimax oauth) and .env (Copilot). Status is expiry-only — token values
-    # are never read or emitted. Copilot nuance: classic GitHub PATs are
-    # REJECTED by copilot (validate_copilot_token) — the real OAuth token lands
-    # in .env as COPILOT_GITHUB_TOKEN via the device flow.
+    # ── Discover v2, layer 4: account-auth evidence (OA1, static) ───────────
+    # Генерик-чтение auth.json без ростера (хелперы OA1 выше): identity = ключ
+    # стора, один entity на id даже при свидетельствах в обеих секциях, без
+    # provenance-поля — переезд идентичности между singleton и pool не должен
+    # создавать changed-шум. Copilot нюанс: classic GitHub PAT отвергается
+    # copilot (validate_copilot_token) — настоящий OAuth-токен попадает в .env
+    # как COPILOT_GITHUB_TOKEN через device flow.
     try:
         auth = json.loads(AUTH_JSON.read_text()) if AUTH_JSON.exists() else {}
     except (json.JSONDecodeError, OSError):
         auth = {}
-    auth_provs = auth.get("providers") or {}
-    for flow in OAUTH_FLOWS:
-        p = auth_provs.get(flow)
-        if isinstance(p, dict) and p.get("access_token"):
-            # expires_at is deliberately NOT stored: auth.json rotates on every
-            # refresh — a stored expiry produced "changed: oauth nous" noise
-            # (Vlad, 2026-09-07).
-            entities[f"oauth:{flow}"] = {
-                "type": "oauth", "name": flow,
-                "active": auth.get("active_provider") == flow}
+    for pid in _account_auth_ids(auth):
+        # expires_at сознательно НЕ сохраняем: auth.json ротируется при каждом
+        # refresh — сохранённый expiry давал шум "changed: oauth nous"
+        # (Vlad, 2026-09-07).
+        entities[f"oauth:{pid}"] = {
+            "type": "oauth", "name": pid,
+            "active": auth.get("active_provider") == pid}
     if env.get("COPILOT_GITHUB_TOKEN", False):
         entities["oauth:copilot"] = {"type": "oauth", "name": "copilot",
                                      "active": False}
