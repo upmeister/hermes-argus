@@ -1,6 +1,16 @@
 # OA1 contract — generic static account-auth discovery
 
-Status: **NOW / READY FOR IMPLEMENTATION**
+Status: **DONE / MERGED IN PR #35**
+
+Final reviewed/merged receipt:
+
+```text
+reviewed PR head = abb7ceecd805fe4c4ffc1f90248a562be88de051
+merged main      = cfa6c535518e3d3ad9b78c20d442335f48e84fd6
+CI run #61       = success
+```
+
+The four changed blobs match exactly between reviewed head and merged main.
 
 Baseline:
 
