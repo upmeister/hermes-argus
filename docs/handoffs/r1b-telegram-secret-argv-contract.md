@@ -2,7 +2,9 @@
 
 Status: **DONE / MERGED IN PR #31 — HISTORY / EXECUTION EVIDENCE**
 
-Original baseline: `main` after merged R1a PR #29 (`02777a9506c6ccaa09d0b2972c0ccf13fb8e9a36`).\n\nFinal R1b merge baseline: `main = 2238928c64b9751a0cb5c8be33b7765c5c228dfd` after PR #31. No further R1b implementation is authorized without a demonstrated regression.
+Original baseline: `main` after merged R1a PR #29 (`02777a9506c6ccaa09d0b2972c0ccf13fb8e9a36`).
+
+Final R1b merge baseline: `main = 2238928c64b9751a0cb5c8be33b7765c5c228dfd` after PR #31. No further R1b implementation is authorized without a demonstrated regression.
 
 Read first:
 
