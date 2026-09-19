@@ -2,16 +2,16 @@
 
 ## Purpose and boundary
 
-`hermes-argus` is the registry-driven monitoring and watchdog kit for Hermes
-Agent integrations. It owns discovery, integration health checks, fallback
-tracking, watchdog modules, and their deployment manifests. Hermes Agent source
-and user secrets are outside this repository.
+`hermes-argus` is an external watchdog and observability layer for Hermes
+Agent. It owns discovery orchestration, integration health verification,
+fallback observation, watchdog policy/state, alerts and deployment manifests.
+Hermes Agent source and user secrets are outside this repository.
 
-Ownership split: Hermes owns interpretation of its runtime configuration —
-provider routing, profile selection, credential resolution, and
-protocol-specific runtime semantics. Argus owns discovery orchestration,
-independent external verification policy, watchdog state, hysteresis/alerts,
-and reporting.
+Ownership split: Hermes owns interpretation of runtime configuration — provider
+routing, profile selection, credential resolution/rotation and
+protocol-specific runtime semantics. Argus owns external observation,
+independent verification where useful, watchdog state, hysteresis/alerts and
+operator reporting.
 
 Argus is not a second Hermes runtime, a generic Hermes compatibility layer, or
 an application-level sandbox around a trusted local Hermes installation.
@@ -73,8 +73,6 @@ one implementation pass
 -> merge decision OR stop and return blockers to maintainer
 ```
 
-Do not use instructions such as "remediate through as many loops as needed".
-
 ### Threat model
 
 Assume the local OS account, intentionally installed Hermes checkout/venv, and
@@ -88,7 +86,6 @@ activity, and ordinary programming/deployment mistakes.
 Do not attempt to defend Argus against a malicious same-user Hermes
 installation, hostile native extensions, deliberate filesystem tampering by an
 actor with write access to the user's home, or compromised local dependencies.
-Those require OS-level isolation under a separately approved project.
 
 ### Work admission and complexity budget
 
@@ -104,75 +101,91 @@ evidence that the design is wrong and STOP for maintainer review.
 
 ## Source of truth and deployment
 
-- Repository scripts, module manifests, `registry.yaml`, and `deploy.sh` are
-  the source templates.
-- `deploy.sh` installs the selected modules into the user's Hermes home and
-  scripts directory (`$HOME/.hermes/` and `$HOME/scripts/`).
-- Generated `registry.yaml` is produced by `scripts/gen-registry.py`; do not
+- Repository scripts, module manifests, `registry.yaml`, `install.sh` and
+  `deploy.sh` are source templates.
+- `deploy.sh` installs selected modules into the user's Hermes home and scripts
+  directory.
+- Generated `registry.yaml` comes from `scripts/gen-registry.py`; do not
   hand-edit generated entries.
-- Runtime copies must be compared with the repository templates after a deploy.
+- Runtime copies must be compared with repository templates after deploy.
 
 ## Invariants
 
 - Secrets stay in protected runtime environment/secret files. Never commit,
-  print, or persist credential values, Authorization headers, or provider
-  response bodies.
-- Integration statuses remain distinct: `ok`, `fail`, `unconfigured`, and
-  `skipped` (legacy projection), with canonical verdicts `healthy`, `failed`,
-  `unknown`, `unconfigured`, `skipped` per ADR 0001. Presence of a key is not
-  proof that an external API works. A passing check must state which evidence
-  claims it proved; transport, key presence, anonymous responses, `404`s, or
-  rate limits are never promoted into authentication or semantic success
-  without an explicit contract. `unknown`, `unconfigured`, and `skipped` never
-  reset a failure counter.
-- Authenticated semantic checks must declare their method, expected status,
-  content type/schema, and safe side-effect boundary. Regular checks are
-  read-only; deep/active checks are separate.
-- Honcho checks use the configured workspace queue route and must reject path
-  injection, non-JSON success responses, invalid credentials, and rate limits.
+  print, persist, or place credential values/Authorization headers in child
+  process argv.
+- Integration statuses remain distinct: `ok`, `fail`, `unconfigured`,
+  `skipped` with canonical schema-v2 verdicts. Presence of a key is not proof
+  that an external API works.
+- Authenticated semantic checks declare their method, expected status,
+  content/schema and safe side-effect boundary.
+- Regular monitoring is read-only with respect to credential state.
+- Static account-auth evidence is inventory evidence, not runtime login health.
+- Unknown/unconfigured/skipped never reset a failure counter.
 - Deployment templates must not leave unresolved `@MARKER@` placeholders.
 
 ## Verification commands
+
+At minimum:
 
 ```bash
 python3 -m py_compile scripts/health-check-v2.py scripts/gen-registry.py tests/probes.py
 bash -n deploy.sh
 python3 tests/probes.py
+python3 tests/test_watchdog_swap.py
 git diff --check
 ```
 
-The GitHub Actions `argus-ci` job is the required remote regression check for
-`main` and pull requests.
+Task contracts may require additional syntax/proc/installer checks.
+
+The GitHub Actions `argus-ci` job is required for pull requests and `main`.
 
 ## Secret and operational boundary
 
-`config.env` and Hermes `.env` files are local/runtime configuration, not
-repository configuration. Do not place API keys, bot tokens, chat IDs, private
-hostnames, or production response data in source, tests, changelog, PR text, or
-reports. Production deployment and branch-protection changes require explicit
-maintainer authorization and read-back verification.
+`config.env` and Hermes `.env` are local/runtime configuration. Do not place
+API keys, bot tokens, chat IDs, private hostnames, or production response data
+in source, tests, changelog, PR text, or reports.
+
+Production deployment, service restart, public release/tag publication and
+branch-protection changes require explicit maintainer authorization.
 
 ## Known traps
 
 - `hermes mcp test` can return exit code zero for a failed connection; parse
   its output markers.
-- API roots may return `404` by design; use an authenticated semantic route
-  rather than treating an API-root response as a health proof.
-- Systemd `.path` units need an explicit `Unit=` when the triggered service
-  name differs from the path unit name.
-- After deployment, inspect installed files and service state; a successful
-  shell command alone is not deployment evidence.
+- API roots may return `404` by design; use authenticated semantic routes.
+- Systemd `.path` units need explicit `Unit=` when the service name differs.
+- After deployment, inspect installed files and service state; successful shell
+  exit alone is not deployment evidence.
+- `health-check-integrations.sh` already uses stdin for secret-bearing curl
+  config; R1c must not create competing stdin consumers and regress R1b.
+
+## Current release direction
+
+Public release path:
+
+```text
+R1c
+ -> R2a
+ -> R2c.1
+ -> installer/dependency/managed-cron hardening
+ -> runtime i18n (en + ru)
+ -> release acceptance
+ -> v0.1.0-rc.1
+```
+
+Public docs remain English-only. Runtime English/Russian localization is a
+release-readiness task, not permission to duplicate documentation.
 
 ## References
 
-- `docs/adr/0001-integration-evidence-policy.md` — evidence claims, canonical
-  verdicts, and side-effect policy.
-- `docs/adr/0002-hermes-discovery-sync-boundary.md` — historical Hermes
-  discovery/sync architecture record. Its production bridge migration is
-  superseded by the 2026-09-17 stabilization plan unless explicitly reopened.
-- `README.md` — user-facing product and module overview.
-- `CHANGELOG.md` — user-facing changes in Keep a Changelog format.
+- `README.md` — public product/status overview.
+- `docs/ROADMAP.md` — public release roadmap.
+- `docs/handoffs/README.md` — active implementation authority.
+- `docs/adr/0001-integration-evidence-policy.md` — evidence/verdict policy.
+- `docs/adr/0002-hermes-discovery-sync-boundary.md` — historical bridge record.
+- `CHANGELOG.md` — Keep a Changelog user-facing history.
 - `scripts/gen-registry.py` — registry generation contract.
-- `tests/probes.py` — fixture-driven regression and security probes.
-- Canonical active roadmap in the Obsidian vault:
-  `projects/hermes-argus/plans/2026-09-17-architecture-reset-and-stabilization-plan.md`.
+- `tests/probes.py` — regression/security probes.
+- Canonical planning roadmap in the Obsidian vault:
+  `projects/hermes-argus/plans/2026-09-20-public-release-roadmap.md`.
