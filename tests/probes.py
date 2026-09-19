@@ -1182,10 +1182,12 @@ def probe_oa1b_full_oauth_line_survives_cap(wh):
 def probe_oa1b_full_failure_survives_cap(wh):
     """OA1b remediation 2 (Pytna P2): cap 4000 не удаляет реальную ❌-строку
     провала — с хвоста падают только информационные строки; провал и
-    OAuth-свидетельство доезжают целиком (сценарий ревьюера: длинные
-    healthy-метки + kit failure + oauth evidence)."""
-    long_label = "provider " + "q" * 276
-    rows = [_oa1b_row(f"provider:fill{i}", long_label, "ok", "env")
+    OAuth-свидетельство доезжают целиком. Наполнители лежат в ТОМ же
+    kit:watchdog-bucket, что и провал, и идут ПЕРЕД ним: на старом слепом
+    cap-е рубка попадает в наполнители, и провал исчезает из вывода
+    (проба красная на 3ff88370)."""
+    long_label = "kit " + "k" * 280
+    rows = [_oa1b_row(f"kit:fill{i}", long_label, "ok", "env")
             for i in range(15)]
     rows.append(_oa1b_row("kit:failure", "kit failure", "fail", "http",
                           "HTTP 500"))
