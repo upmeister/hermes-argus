@@ -1,6 +1,6 @@
 # Handoffs and implementation contracts
 
-This directory contains both active implementation contracts and historical
+This directory contains active implementation contracts and historical
 handoffs. **Old handoff presence is not implementation authority.**
 
 Repository `AGENTS.md` scope-control rules apply to every document here.
@@ -14,7 +14,7 @@ Read in this order:
 
 Current selected task:
 
-- (none yet — R1c contract to be authored when the maintainer selects the task)
+- `r1c-authorization-header-argv-contract.md` — **NOW / READY**
 
 Completed:
 
@@ -23,93 +23,66 @@ Completed:
 - OA0 account-auth research — **DONE / PR #33 / STATIC ONLY**
 - OA1 generic static account-auth discovery — **DONE / PR #35**
 - OA1b OAuth evidence rendering — **DONE / PR #39**
-- OA-close acceptance — **DONE / OA PHASE COMPLETE**
+- OA-close acceptance — **DONE / PR #40 / OA PHASE COMPLETE**
 
-OA phase:
+Closed/upstream-gated:
 
-```text
-OA0 DONE
-OA1 DONE
-OA1b DONE
-OA-close DONE
-OA2 CLOSED / UPSTREAM-GATED
+- `oa2-hermes-status-shadow-reopen-gate.md`
 
-OA PHASE COMPLETE
- -> R1c (next)
-```
-
-Queued after the OA phase:
-
-- R1c demonstrated non-Telegram Authorization-header argv debt;
-- R2a malformed YAML;
-- R2c bounded static compatibility excluding account-auth;
-- R3 stabilization/reduction.
-
-Deferred:
-
-- `r2b-gateway-liveness-contract.md`
-
-## OA1 accepted baseline
+## Release-oriented execution order
 
 ```text
-reviewed PR head = abb7ceecd805fe4c4ffc1f90248a562be88de051
-merged main      = cfa6c535518e3d3ad9b78c20d442335f48e84fd6
-PR #35           = merged
-CI #61           = success
+R1c NOW
+ -> R2a malformed YAML
+ -> R2c.1 fallback_providers compatibility
+ -> RR1 installer/dependency/managed-cron
+ -> RR2 runtime i18n: en + ru
+ -> RR3 release acceptance
+ -> v0.1.0-rc.1
+ -> soak
+ -> v0.1.0
 ```
 
-The four changed file blobs are identical between reviewed PR head and merged
-main.
-
-OA1 preserves the required semantic boundary:
+After the RC:
 
 ```text
-persisted credential evidence present
-!= logged in
-!= healthy
+R2c.2 bounded auxiliary coverage
+ -> R3 reduction/stabilization
 ```
 
-Static account-auth entities now project to a non-green skipped result; Copilot
-PAT-only remains unconfigured.
+Deferred/separate:
 
-## OA1b accepted baseline
+- R2b gateway-liveness redesign;
+- MP0-MP5 multi-profile track;
+- OA2 dynamic account-status shadow.
+
+## Current upstream authority
 
 ```text
-reviewed head = a58075f7cbf21dc2b629e71749dadbe2b3e8972f (PASS-TO-MERGE,
-verification run_607ed84e)
-merged main   = 12739f8c4fbd597606653281a6c4b1898a2b00a4
-PR #39        = merged
-probes        = 109 pass / 0 fail
+Hermes stable = v2026.9.14 / v0.21.3
+stable commit = 345cd2b057a452236de401d3534b8502a7465e8d
+warning-source main = f88c6fc46e1c1c61ae8fdc0d7fb10ec8ad949aab
 ```
 
-OAuth auth-evidence renders as informational
-(`🔐 … — учётные данные обнаружены · runtime-статус не проверяется`) in both
-bot views; generic skipped rows keep `⏸`; the full-view 4000-character cap
-cuts whole lines and never drops failure/unknown rows or the OAuth evidence
-block (red-capable probes committed).
+The 2026-09-20 watch found meaningful movement toward refresh-free account
+observation (Codex read-only status, Nous local snapshot, xAI non-refresh
+status), but OA2 remains closed because Qwen still refresh-validates, the OAuth
+response still carries token previews, the required machine-auth route is
+absent, and stable has not moved.
 
-## OA2 status
-
-OA2 is closed and upstream-gated.
-
-See:
-
-```text
-oa2-hermes-status-shadow-reopen-gate.md
-```
-
-Latest stable remains Hermes v0.21.3 / `v2026.9.14`. Fresh main is
-`00570550f37e9082676955d50f65c7d9ba846cc9` (+927 since the previous watch);
-`auth_codex.py` / `web_routers/oauth.py` changed upstream (partial refresh-free
-improvement for nous listing), but `token_preview`, refresh and persist paths
-remain and no stable release satisfies the reopen conditions. OA2 remains
-closed.
+Fallback activation/restore markers and `hermes mcp test` output remain
+compatible.
 
 ## Current contracts
 
 Current:
 
-- (none yet — R1c contract to be authored when the maintainer selects the task)
+- `r1c-authorization-header-argv-contract.md`
+
+Queued:
+
+- `r2a-malformed-yaml-contract.md`
+- `r2c-static-discovery-compat-contract.md` (take R2c.1 before RC; R2c.2 after)
 
 Completed:
 
@@ -123,11 +96,6 @@ Closed/upstream-gated:
 
 - `oa2-hermes-status-shadow-reopen-gate.md`
 
-Queued:
-
-- `r2a-malformed-yaml-contract.md`
-- `r2c-static-discovery-compat-contract.md`
-
 Deferred:
 
 - `r2b-gateway-liveness-contract.md`
@@ -136,16 +104,15 @@ Deferred:
 
 ```text
 one selected contract
- -> one implementation/research/acceptance pass
+ -> one implementation/research pass
  -> one focused review
  -> at most one remediation by default
- -> exact-tree reread
+ -> exact-head reread
  -> merge/decision OR blocker
 ```
 
-Closeout and acceptance passes stay docs/acceptance only. If they discover a
-functional regression, stop and return it to the maintainer instead of
-silently turning an acceptance pass into another implementation PR.
+A reviewer finding outside the active contract is recorded, not automatically
+implemented.
 
 Before merge recommendation, refresh the PR body/evidence receipt to the exact
 candidate head.
