@@ -10,7 +10,9 @@ Closeout executed on exact main `12739f8c4fbd597606653281a6c4b1898a2b00a4`
 
 ## Exact baselines
 - Argus merged main: 12739f8c4fbd597606653281a6c4b1898a2b00a4
-- closeout candidate head: (closeout docs PR head, recorded in its receipt)
+- closeout evidence head: ce1e956dac68eee4c7e35f229b395dd66a9126f1
+- closeout candidate head (AF-001/AF-002 docs remediation): f2768f96ab89daeee24fd158449031fe1548b159
+  (final PR head = that head plus this receipt line; immutable PR metadata: PR #40)
 - Hermes stable: v2026.9.14 / v0.21.3 (commit 345cd2b057a452236de401d3534b8502a7465e8d)
 - Hermes warning-source main: 00570550f37e9082676955d50f65c7d9ba846cc9
   (+927 commits since the 03c9fc89 watch; hermes_cli/auth_codex.py and
