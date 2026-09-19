@@ -584,13 +584,34 @@ def _load_integrations_report() -> tuple[dict, str]:
     return report, ""
 
 
+def _oauth_evidence_rows(checks: list, is_v2: bool, st_key: str) -> list:
+    """OA1b: строки статических OAuth-свидетельств schema-v2 — канонический
+    verdict=skipped И структурное primitive=oauth. Только презентационная
+    классификация: семантика отчёта не меняется (ADR 0001)."""
+    if not is_v2:
+        return []
+    return [c for c in checks
+            if c.get(st_key) == "skipped" and c.get("primitive") == "oauth"]
+
+
+def _oauth_evidence_line(rows: list) -> str:
+    """Одна компактная informational-строка для OAuth-свидетельств."""
+    names = [str(c.get("label", "")).removeprefix("oauth ") or "?"
+             for c in rows]
+    shown = ", ".join(names) if len(names) <= 6 else f"{len(names)} провайдеров"
+    return (f"🔐 OAuth: {shown} — учётные данные обнаружены · "
+            "runtime-статус не проверяется")
+
+
 def _render_integrations_quick(report: dict) -> str:
     """Quick /integrations view of a validated report (v1 or v2).
 
     D0a dual-read: schema-2 reports are judged by the canonical ADR 0001
     verdict; legacy reports keep the v1 status field. A skipped-only report is
     never rendered green: skipped means policy did not check, not health.
-    """
+    OA1b: статические OAuth-свидетельства (skipped + primitive=oauth) идут
+    отдельной informational-строкой и не попадают ни в зелёный вывод, ни в
+    generic «пропущены политикой»."""
     is_v2 = report.get("schema") == 2
     st_key = "verdict" if is_v2 else "status"
     fail_val = "failed" if is_v2 else "fail"
@@ -598,13 +619,15 @@ def _render_integrations_quick(report: dict) -> str:
     fails = [c for c in checks if c.get(st_key) == fail_val]
     unknowns = [c for c in checks if c.get(st_key) == "unknown"] if is_v2 else []
     skipped_n = sum(1 for c in checks if c.get(st_key) == "skipped") if is_v2 else 0
+    oauth_ev = _oauth_evidence_rows(checks, is_v2, st_key)
+    generic_skipped_n = skipped_n - len(oauth_ev)
     summary = report.get("summary") or {}
     ok_count = summary.get("healthy", report.get("ok", 0)) if is_v2 \
         else report.get("ok", 0)
     age = datetime.fromisoformat(report["updated"]).astimezone().strftime("%H:%M")
     head = (f"🩺 Интеграции (отчёт {age}): "
             f"{ok_count}/{report.get('total', 0)} ok")
-    if not fails and not unknowns and not skipped_n:
+    if not fails and not unknowns and not generic_skipped_n and not oauth_ev:
         return f"✅ Argus: {head} — всё в порядке"
     probs = [f"❌ {c.get('label')}: {c.get('detail')}" for c in fails[:8]]
     room = 8 - len(probs)
@@ -612,11 +635,13 @@ def _render_integrations_quick(report: dict) -> str:
         probs.extend(f"⚠️ {c.get('label')}: {c.get('detail')}"
                      for c in unknowns[:room])
         room -= min(len(unknowns), room)
-    if room > 0 and skipped_n:
-        probs.append(f"⏸ {skipped_n} проверок пропущены политикой")
+    if room > 0 and generic_skipped_n:
+        probs.append(f"⏸ {generic_skipped_n} проверок пропущены политикой")
     extra = len(fails) + len(unknowns) - 8
     if extra > 0:
         probs.append(f"…и ещё {extra}")
+    if oauth_ev:
+        probs.append(_oauth_evidence_line(oauth_ev))
     return head + "\n" + "\n".join(probs)
 
 
@@ -681,6 +706,16 @@ def handle_integrations_all() -> str:
             registry = yaml.safe_load(f) or {}
     except Exception:
         registry = {}
+    return _render_integrations_full(report, registry)
+
+
+def _render_integrations_full(report: dict, registry: dict) -> str:
+    """Full grouped view of a validated report (v1 or v2) + registry.
+
+    Чистый рендер без I/O (registry читает handle_integrations_all). OA1b:
+    статические OAuth-свидетельства (skipped + primitive=oauth) рендерятся
+    informational-строкой вместо generic «пропущено»; их счётчик не смешивается
+    с generic-skipped."""
     kit_group = {k.get("key"): k.get("group", "watchdog")
                  for k in registry.get("kit_entries", []) if isinstance(k, dict)}
     inventory = report.get("inventory") or {}
@@ -712,7 +747,11 @@ def handle_integrations_all() -> str:
         elif is_v2 and st == "unknown":
             line = f"⚠️ {label} — {detail}"
         elif is_v2 and st == "skipped":
-            line = f"⏸ {label} — пропущено"
+            if c.get("primitive") == "oauth":
+                line = (f"🔐 {label} — учётные данные обнаружены · "
+                        "runtime-статус не проверяется")
+            else:
+                line = f"⏸ {label} — пропущено"
         elif st == "unconfigured":
             line = f"⚪ {label} — не настроено (опционально)"
         else:
@@ -757,13 +796,16 @@ def handle_integrations_all() -> str:
         unconf_n = summary.get("unconfigured", 0)
         unknown_n = summary.get("unknown", 0)
         skipped_n = summary.get("skipped", 0)
+        oauth_ev_n = len(_oauth_evidence_rows(checks, is_v2, st_key))
+        skipped_n = max(skipped_n - oauth_ev_n, 0)
     else:
         ok_n, fail_n, unconf_n = (report.get("ok", 0), report.get("fail", 0),
                                   report.get("unconfigured", 0))
-        unknown_n = skipped_n = 0
+        unknown_n = skipped_n = oauth_ev_n = 0
     counts = (f"✅ {ok_n} · ❌ {fail_n} · ⚪ {unconf_n}"
               + (f" · ⚠️ {unknown_n}" if unknown_n else "")
               + (f" · ⏸ {skipped_n}" if skipped_n else "")
+              + (f" · 🔐 {oauth_ev_n}" if oauth_ev_n else "")
               + f" из {report.get('total', 0)}")
     lines = [f"👁 Argus наблюдает — интеграции (отчёт {age})" if age else "👁 Argus наблюдает — интеграции",
              counts]

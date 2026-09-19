@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential evidence present; login/health not verified") because presence of
   persisted credentials is not proof of login or health. Copilot PAT-only
   remains `unconfigured`.
+- Render static OAuth auth-evidence rows in the Telegram integration views as
+  informational ("🔐 … — учётные данные обнаружены · runtime-статус не
+  проверяется") instead of the generic skipped "⏸ … — пропущено": credentials
+  were found, runtime login/health was intentionally not verified. The
+  rendered generic-skipped count now excludes OAuth evidence rows (a separate
+  neutral 🔐 count is shown), and the quick view no longer summarizes
+  unverified OAuth rows as "пропущены политикой" or claims "всё в порядке"
+  over them. Canonical verdicts, report schema, and summary JSON are
+  unchanged.
 - Keep Telegram bot tokens out of child-process argv in every active shell and
   Python notifier: token-bearing URLs are delivered to `curl` via stdin config
   (`curl -K -`) instead of being expanded into the command line. Request
