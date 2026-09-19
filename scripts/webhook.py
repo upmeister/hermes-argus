@@ -603,19 +603,21 @@ def _oauth_evidence_line(rows: list) -> str:
             "runtime-статус не проверяется")
 
 
-def _cap_full_view(lines: list, evidence: set, cap: int = 4000) -> str:
+def _cap_full_view(lines: list, protected: set, cap: int = 4000) -> str:
     """OA1b P2 (Pytna): слепой срез [:cap] резал строку OAuth-свидетельства
     посреди обязательного заявления «runtime-статус не проверяется» или
-    отбрасывал её целиком на границе. Режем по целым строкам с конца; строки
-    evidence-блока не удаляются никогда. Жёсткий cap остаётся только для
-    недостижимого случая, когда переполнение создают сами evidence-строки."""
+    отбрасывал её целиком на границе; первая версия фикса могла удалить и
+    реальную ❌-строку провала. Режем по целым строкам с конца, удаляя только
+    информационные строки; защищённые (❌/⚠️ и evidence-блок) не удаляются
+    никогда. Жёсткий cap остаётся только для недостижимого случая, когда
+    переполнение создают сами защищённые строки."""
     total = sum(len(l) for l in lines) + max(len(lines) - 1, 0)
     if total <= cap:
         return "\n".join(lines)
     out = list(lines)
     while out and total > cap:
         for i in range(len(out) - 1, -1, -1):
-            if out[i] not in evidence:
+            if out[i] not in protected:
                 total = max(total - len(out[i]) - 1, 0)
                 del out[i]
                 break
@@ -754,7 +756,7 @@ def _render_integrations_full(report: dict, registry: dict) -> str:
     ids = {c.get("id") for c in checks}
     root_ok = {c["id"][:-5]: c.get("detail", "") for c in checks
                if c.get("id", "").endswith("#http") and c.get(st_key) == ok_val}
-    evidence: set = set()
+    protected: set = set()
     buckets: dict[str, list[str]] = {}
     for c in checks:
         cid, st = c.get("id", ""), c.get(st_key, "?")
@@ -766,13 +768,15 @@ def _render_integrations_full(report: dict, registry: dict) -> str:
         detail = c.get("detail", "")
         if st == fail_val:
             line = f"❌ {label} — {detail}"
+            protected.add(line)  # OA1b: реальные провалы не удаляются cap'ом
         elif is_v2 and st == "unknown":
             line = f"⚠️ {label} — {detail}"
+            protected.add(line)
         elif is_v2 and st == "skipped":
             if c.get("primitive") == "oauth":
                 line = (f"🔐 {label} — учётные данные обнаружены · "
                         "runtime-статус не проверяется")
-                evidence.add(line)
+                protected.add(line)
             else:
                 line = f"⏸ {label} — пропущено"
         elif st == "unconfigured":
@@ -849,8 +853,8 @@ def _render_integrations_full(report: dict, registry: dict) -> str:
             lines.append(f"…и ещё {len(items) - 20}")
     if buckets.get("oauth"):
         # Блок OAuth-свидетельств защищён целиком: заголовок + строки (P2).
-        evidence.add(titles["oauth"])
-    return _cap_full_view(lines, evidence)
+        protected.add(titles["oauth"])
+    return _cap_full_view(lines, protected)
 
 
 def handle_deep_check() -> str:

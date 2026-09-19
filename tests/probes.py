@@ -1179,6 +1179,34 @@ def probe_oa1b_full_oauth_line_survives_cap(wh):
           f"healthy_left={healthy_left}")
 
 
+def probe_oa1b_full_failure_survives_cap(wh):
+    """OA1b remediation 2 (Pytna P2): cap 4000 не удаляет реальную ❌-строку
+    провала — с хвоста падают только информационные строки; провал и
+    OAuth-свидетельство доезжают целиком (сценарий ревьюера: длинные
+    healthy-метки + kit failure + oauth evidence)."""
+    long_label = "provider " + "q" * 276
+    rows = [_oa1b_row(f"provider:fill{i}", long_label, "ok", "env")
+            for i in range(15)]
+    rows.append(_oa1b_row("kit:failure", "kit failure", "fail", "http",
+                          "HTTP 500"))
+    rows.append(_oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"))
+    text = wh._render_integrations_full(_oa1b_report(rows), {})
+    evidence_line = ("🔐 oauth nous — учётные данные обнаружены · "
+                     "runtime-статус не проверяется")
+    fail_line = "❌ kit failure — HTTP 500"
+    out_lines = text.split("\n")
+    healthy_left = sum(1 for l in out_lines if l == "✅ " + long_label)
+    ok = (len(text) <= 4000
+          and fail_line in out_lines
+          and evidence_line in out_lines
+          and healthy_left < 15
+          and "🛡 Watchdog kit" in out_lines)
+    check("oa1b_full_failure_survives_cap", ok,
+          f"len={len(text)} failure={fail_line in out_lines} "
+          f"evidence_complete={evidence_line in out_lines} "
+          f"healthy_left={healthy_left}")
+
+
 def probe_oa1b_quick_oauth_only_not_blank_green(wh):
     """OA1b §7.3: quick view на healthy+OAuth-only — не «всё в порядке», не
     «пропущены политикой», имена видны, runtime-статус заявлен непроверенным."""
@@ -2605,6 +2633,7 @@ def main() -> int:
     probe_oa1b_full_generic_skipped_control(wh)
     probe_oa1b_full_counts_split(wh)
     probe_oa1b_full_oauth_line_survives_cap(wh)
+    probe_oa1b_full_failure_survives_cap(wh)
     probe_oa1b_quick_oauth_only_not_blank_green(wh)
     probe_oa1b_quick_mixed_failure_and_oauth(wh)
     probe_oa1b_report_not_mutated(wh)
