@@ -1,143 +1,325 @@
 # hermes-argus
 
-**Always-watching guardian for [Hermes Agent](https://github.com/NousResearch/hermes-agent).**
+**External watchdog and observability layer for [Hermes Agent](https://github.com/NousResearch/hermes-agent).**
 
-Argus keeps every tool and integration your Hermes relies on in working order —
-and tells you the moment something degrades. Hermes itself fails silently: a
-provider switches to fallback without a word, an MCP server dies, a self-hosted
-service disappears — and the agent keeps running without it. Argus makes those
-failures loud.
+Hermes can keep running while part of its environment has silently degraded: a
+provider falls back, an MCP server disappears, an API key stops working, a
+gateway becomes unhealthy, or a dependency starts returning the wrong thing.
+Argus exists to make those failures visible.
 
-## What it does
+It discovers the integrations a Hermes deployment depends on, verifies what can
+be checked safely from the outside, tracks fallback/runtime failures, watches
+the host and Hermes services, and reports operator-facing degradation without
+trying to become a second Hermes runtime.
 
-- **Integration discovery** — watches `config.yaml` (systemd.path + cron safety
-  net); when you add or remove a key/provider/MCP server, Argus notices and
-  alerts. No restart needed.
-- **Fallback cascade tracking** — parses agent logs and alerts on the first
-  primary-model failure, on reaching a free-tier model, and on recovery.
-- **Watchdog & liveness** — binary checks every 2–5 min (systemd units, disk,
-  swap, cron integrity) with auto-restart on hangs and Telegram alerts.
-- **Memory limits via systemd drop-ins** — MemoryHigh/Max/SwapMax presets so a
-  runaway agent never kills the whole VM.
-- **Dead-man's switch** — external heartbeat (GitHub Actions / Dead Man's
-  Snitch / Cronping) so a dead VM still gets noticed.
+> **Project status:** pre-release, actively used in maintainer production. The
+> monitoring core and clean-VM bootstrap have both been exercised, but the
+> public distribution contract is still being hardened. The current release
+> path targets a GitHub `v0.1.0-rc.1` after the remaining security,
+> fail-safe, installer and localization gates are closed.
 
-## Requirements
+## Why this exists
 
-- Linux VPS (any size — "weak VPS" is where it shines, but power is irrelevant)
-- Hermes Agent installed
-- A Telegram bot for alerts (Discord support planned)
+Hermes already owns the hard runtime decisions:
 
-## Quick start
+- provider/model routing;
+- credential resolution and rotation;
+- fallback selection;
+- profile/session state;
+- protocol-specific runtime behavior.
 
-```bash
-git clone https://github.com/upmeister/hermes-argus.git
-cd hermes-argus
-cp config/config.env.template config.env   # fill in your values
-./deploy.sh
-```
+Argus deliberately does not duplicate those internals. Instead it answers the
+operator questions Hermes runtime success alone cannot answer:
 
-See the Modules section below. Deploy installs only what you enable — anything
-requiring external services is off by default.
+- Did an integration disappear from configuration?
+- Is the credential present but not actually verified?
+- Did the primary model fall back without the operator noticing?
+- Is the gateway/service alive but operationally stuck?
+- Did a self-hosted dependency stop serving the expected route/schema?
+- Is the host approaching a memory/swap failure mode?
+- Did the monitoring host itself disappear?
 
-## Modules
-
-`deploy.sh` deploys by explicit manifests, filtered by `MODULE_*` flags in
-`config.env` (see `config/config.env.template`):
-
-| Flag | Installs | Default |
-|------|----------|---------|
-| `MODULE_CORE` | watchdog, liveness checks, auto-remediate, network-guard, ssl-expiry, check-updates | ON |
-| `MODULE_INTEGRATIONS` | integration discovery (+ systemd.path watcher), fallback cascade tracker | ON |
-| `MODULE_TG_BOT` | interactive Telegram control-plane bot (poller + webhook) | OFF |
-| `MODULE_ANALYZER` | L3 health-analyzer ecosystem (LLM log analysis) | OFF |
-| `MODULE_HEARTBEAT` | external dead-man's switch (Dead Man's Snitch / GitHub) | OFF |
-
-Cron lines for enabled modules are generated to `/tmp/hermes-argus-crontab.txt`
-— merge them into your crontab, deploy never touches it directly.
-
-## Development baseline
-
-Argus is in a stabilization-first phase. C1a runtime-bridge productionization
-remains stopped.
-
-Completed:
+The boundary is:
 
 ```text
-R1a / PR #29 = DONE
-R1b / PR #31 = DONE
-OA0 / PR #33 = DONE / STATIC ONLY
-OA1 / PR #35 = DONE / MERGED
-OA1b / PR #39 = DONE / MERGED
-OA-close = DONE — OA PHASE COMPLETE
+Hermes owns runtime truth.
+Argus observes externally, verifies independently where useful, and makes failures loud.
 ```
 
-OA1 fixed the demonstrated OpenAI/Codex inventory false negative with generic
-static auth-store discovery and also removed the false-green projection that
-treated persisted OAuth evidence as "logged in". OA1b renders that static
-evidence as informational ("credentials found; runtime status not verified")
-instead of generic skipped, without changing canonical verdicts or schema.
-
-The next queued task is **R1c: Authorization-header argv debt**. No contract is
-currently selected: per `AGENTS.md` the maintainer selects the task, and its
-contract is authored/activated at that point.
+## Architecture
 
 ```text
-OA PHASE COMPLETE
- -> R1c Authorization-header argv debt
- -> R2a malformed YAML
- -> R2c bounded static compatibility
- -> R3 cleanup/stabilization
-
-OA2 = CLOSED / UPSTREAM-GATED
+                    Hermes Agent
+        config / auth state / logs / services
+                       |
+                       v
+                 hermes-argus
+        +--------------+---------------+
+        |              |               |
+        v              v               v
+    discovery       health          watchdog
+    + change        + evidence       + liveness
+      tracking        checks           + remediation
+        |              |               |
+        +--------------+---------------+
+                       |
+                       v
+              operator surfaces
+          Telegram / reports / alerts
+                       |
+                       +--> optional external heartbeat
 ```
 
-Current Argus main:
+Argus reads stable external artifacts and performs bounded independent checks.
+It does not import Hermes runtime provider logic in production, refresh OAuth
+credentials, execute plugin discovery to build inventory, or claim complete
+knowledge of every upstream plugin/provider.
+
+## Current capabilities
+
+### Integration discovery
+
+Argus builds an inventory from the deployment surfaces that are safe to inspect
+statically and tracks added/removed/changed entities.
+
+Current coverage includes:
+
+- configured providers and model routes;
+- environment-backed integrations;
+- MCP servers;
+- selected auxiliary/runtime dependencies;
+- static persisted account-auth evidence, including modern OpenAI/Codex nested
+  and credential-pool storage.
+
+Static credential evidence is intentionally **not** reported as runtime login
+health:
 
 ```text
-12739f8c4fbd597606653281a6c4b1898a2b00a4
-```
-
-OA1b reviewed PR head:
-
-```text
-a58075f7cbf21dc2b629e71749dadbe2b3e8972f (PASS-TO-MERGE)
-```
-
-The OA semantic boundary remains:
-
-```text
-persisted credential evidence present
+credential evidence present
 != logged in
 != healthy
 ```
 
-Latest supported Hermes stable remains v0.21.3 / `v2026.9.14`. Fresh upstream
-`main` moved to `00570550f37e9082676955d50f65c7d9ba846cc9` and changed
-`auth_codex.py` / `web_routers/oauth.py` (partial refresh-free improvement for
-nous listing), but `token_preview`, refresh and persist paths remain and no
-stable release satisfies the OA2 reopen gate. OA2 remains closed.
+### Integration health
 
-Before contributing work, read:
+The health engine keeps evidence classes separate instead of collapsing
+everything into green/red.
 
-1. `AGENTS.md`;
-2. `docs/handoffs/README.md`;
-3. `docs/handoffs/2026-09-17-next-steps-execution-baseline.md`;
-4. exactly one maintainer-selected task contract.
+Canonical outcomes include:
 
-Current contract:
+- healthy;
+- failed;
+- unknown;
+- unconfigured;
+- skipped / policy-blocked.
 
-```text
-R1c contract (to be selected/added by the maintainer)
+Checks can verify HTTP status, authenticated routes, response content
+type/schema, local service state and selected MCP behavior. Deep model checks
+are separate from the regular low-side-effect monitoring path.
+
+### Fallback observation
+
+Argus watches Hermes runtime logs for provider/model fallback transitions and
+primary recovery. It makes silent fallback cascades visible without trying to
+reimplement Hermes' own fallback engine.
+
+### Host and service watchdog
+
+The core watchdog covers areas such as:
+
+- Hermes gateway/dashboard liveness;
+- process/systemd state;
+- network reachability;
+- disk and memory/swap pressure;
+- cron integrity;
+- bounded auto-remediation;
+- SSL expiry and update checks.
+
+Systemd memory-limit drop-ins can protect small VPS deployments from runaway
+memory pressure.
+
+### Operator control plane
+
+The optional Telegram module provides interactive monitoring/status commands
+and alert delivery.
+
+A Discord module exists as an optional/experimental control-plane surface, but
+Telegram is the maintained reference operator UI today.
+
+### External dead-man heartbeat
+
+Optional backends can detect the failure mode Argus cannot report from the dead
+host itself.
+
+Current integrations include:
+
+- Cronping;
+- Dead Man's Snitch;
+- an optional GitHub Actions heartbeat workflow.
+
+## Modules
+
+`deploy.sh` uses explicit manifests and installs only enabled modules.
+
+| Flag | Purpose | Default |
+| --- | --- | --- |
+| `MODULE_CORE` | watchdog, liveness, remediation, resource/network checks | ON |
+| `MODULE_INTEGRATIONS` | discovery, fallback tracking, health-check v2 | ON |
+| `MODULE_TG_BOT` | Telegram monitoring/control bot | OFF |
+| `MODULE_ANALYZER` | L3/LLM-assisted health analysis | OFF |
+| `MODULE_HEARTBEAT` | external dead-man heartbeat client | OFF |
+| `MODULE_GH_HEARTBEAT` | GitHub heartbeat repo/workflow provisioning | OFF |
+| `MODULE_DISCORD_BOT` | Discord control plane | OFF |
+
+External-service modules are off by default.
+
+## Installation today
+
+The current bootstrap targets **Ubuntu 24.04** and expects Hermes Agent to
+already be installed for the same user.
+
+```bash
+git clone https://github.com/upmeister/hermes-argus.git
+cd hermes-argus
+bash install.sh
 ```
 
-Multi-profile remains a separate track.
+`install.sh` installs the current base dependencies, creates `config.env`,
+runs the module-aware deploy, enables the config watcher and performs
+post-deploy checks.
 
-## Status
+This is still a **pre-release installation path**. In the current tree, the
+generated Argus cron entries still require a manual merge step, and dependency /
+upgrade / uninstall ownership is being hardened before the first public RC.
+Do not treat today's `main` bootstrap as the final one-command release
+installer.
 
-Pre-release, under active development. Breaking changes expected before v0.1.
+For manual/development deployment, see `config/config.env.template` and
+`deploy.sh`.
+
+## Safety and evidence rules
+
+Argus is conservative by design.
+
+- Secret values must not be committed, logged, rendered into reports or placed
+  in child process argv.
+- A configured key is not proof that an external API works.
+- An anonymous `200`, API-root `404`, rate limit or transport success is not
+  silently promoted into authentication/semantic success.
+- Unknown/unconfigured/skipped checks do not reset failure hysteresis.
+- Regular monitoring avoids credential refresh/mutation.
+- Static auth inventory does not pretend to validate OAuth sessions.
+- Runtime copies are deployed from explicit repository manifests rather than
+  wildcard-copying a user's Hermes directories.
+
+The local OS account and intentionally installed Hermes code are trusted.
+Argus is designed to catch operational mistakes and silent degradation, not to
+sandbox a malicious same-user Hermes installation.
+
+## Localization
+
+The maintainer production deployment currently uses a Russian operator UI and
+that experience will remain supported.
+
+The public-release target is:
+
+```text
+runtime/operator UI: English + Russian
+machine-readable schema/markers: language-neutral
+README and project documentation: English only
+```
+
+Existing Russian installations must not silently switch language during an
+upgrade. The localization work belongs to the release-readiness phase; it is not
+implemented by duplicating the documentation tree.
+
+## Compatibility and Hermes upstream
+
+Argus follows supported Hermes releases first and watches upstream `main` for
+drift.
+
+Current supported research baseline:
+
+- Hermes Agent v0.21.3 / `v2026.9.14`;
+- Linux/systemd-oriented personal-server deployment;
+- Ubuntu 24.04 is the current installer test target.
+
+Hermes upstream is moving toward safer read-only account-status surfaces, but
+Argus still keeps OAuth runtime-status integration upstream-gated: some provider
+status paths can still refresh, the dashboard OAuth response still exposes
+token previews, and there is not yet a suitable stable machine-authenticated
+no-secret endpoint for Argus.
+
+That is intentional. Argus prefers a stable upstream observation seam over
+becoming a second credential resolver.
+
+## Roadmap
+
+The current path to the first public release is intentionally bounded:
+
+```text
+R1c  Authorization headers out of child argv
+ -> R2a  malformed YAML fail-safe
+ -> R2c.1  canonical fallback_providers inventory
+ -> installer/dependency/managed-cron hardening
+ -> runtime i18n: English + Russian
+ -> clean install / upgrade / uninstall acceptance
+ -> v0.1.0-rc.1
+ -> soak
+ -> v0.1.0
+```
+
+Broader auxiliary discovery, cleanup/reduction and multi-profile monitoring are
+separate follow-up tracks.
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the detailed public plan.
+
+## Tests and development
+
+The repository has a required GitHub Actions `argus-ci` check plus local
+regression probes.
+
+Typical gates:
+
+```bash
+python3 -m py_compile scripts/health-check-v2.py scripts/gen-registry.py tests/probes.py
+bash -n deploy.sh
+python3 tests/probes.py
+python3 tests/test_watchdog_swap.py
+git diff --check
+```
+
+Behavioral/security fixes should add focused regression coverage, preferably a
+test that demonstrably fails on the prior implementation and passes on the
+candidate.
+
+Before changing behavior, read [AGENTS.md](AGENTS.md) and the single active
+contract under [docs/handoffs/](docs/handoffs/).
+
+## Documentation
+
+- [Public roadmap](docs/ROADMAP.md)
+- [Project/agent contract](AGENTS.md)
+- [Integration evidence policy](docs/adr/0001-integration-evidence-policy.md)
+- [Hermes discovery boundary ADR](docs/adr/0002-hermes-discovery-sync-boundary.md)
+- [Implementation handoffs](docs/handoffs/README.md)
+- [Changelog](CHANGELOG.md)
+
+Historical handoffs remain useful research records, but their presence does not
+make them current implementation authority.
+
+## Release model
+
+The planned public distribution is a **versioned GitHub Release** with an
+installer pinned to the release tag.
+
+`main` will remain the development/edge channel rather than silently changing
+what an existing release installer downloads.
+
+The first public artifact is expected to be a pre-release (`v0.1.0-rc.1`),
+followed by stable `v0.1.0` after a short real-world soak.
 
 ## License
 
-MIT — see LICENSE. Independent community project, not affiliated with or
-endorsed by Nous Research.
+MIT. Independent community project; not affiliated with or endorsed by Nous
+Research.
