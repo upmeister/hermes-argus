@@ -345,7 +345,7 @@ if [ -s "$CRON_TMP" ]; then
     echo ""
     echo "📁 Cron-строки сгенерированы: $CRON_FILE"
     echo "   ⚠️  НЕ заменяй весь crontab! Добавь строки к существующим (без дублей):"
-    echo "      (crontab -l; grep -v '^#' $CRON_FILE) | awk '!seen[\$0]++' | crontab -"
+    echo "      (crontab -l 2>/dev/null || true; grep -v '^#' $CRON_FILE) | awk -v home=\"$HOME_DIR\" 'NF { line=\$0; gsub(/~\//, home \"/\", line); if (!seen[line]++) print }' | crontab -"
 else
     rm -f "$CRON_TMP"
 fi
