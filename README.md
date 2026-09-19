@@ -68,23 +68,26 @@ R1a / PR #29 = DONE
 R1b / PR #31 = DONE
 OA0 / PR #33 = DONE / STATIC ONLY
 OA1 / PR #35 = DONE / MERGED
+OA1b / PR #39 = DONE / MERGED
+OA-close = DONE — OA PHASE COMPLETE
 ```
 
 OA1 fixed the demonstrated OpenAI/Codex inventory false negative with generic
 static auth-store discovery and also removed the false-green projection that
-treated persisted OAuth evidence as "logged in".
+treated persisted OAuth evidence as "logged in". OA1b renders that static
+evidence as informational ("credentials found; runtime status not verified")
+instead of generic skipped, without changing canonical verdicts or schema.
 
-The current selected task is **OA1b: OAuth evidence rendering semantics**.
-After OA1 deployed successfully, production exposed a presentation bug: the
-correct conservative `skipped` verdict is shown to users as bare
-`⏸ ... — пропущено`, losing the distinction that credentials were actually
-found but runtime login/health was intentionally not verified.
+The next queued task is **R1c: Authorization-header argv debt**. No contract is
+currently selected: per `AGENTS.md` the maintainer selects the task, and its
+contract is authored/activated at that point.
 
 ```text
-OA1b NOW
- -> OA-close
- -> OA PHASE COMPLETE
+OA PHASE COMPLETE
  -> R1c Authorization-header argv debt
+ -> R2a malformed YAML
+ -> R2c bounded static compatibility
+ -> R3 cleanup/stabilization
 
 OA2 = CLOSED / UPSTREAM-GATED
 ```
@@ -92,17 +95,14 @@ OA2 = CLOSED / UPSTREAM-GATED
 Current Argus main:
 
 ```text
-cfa6c535518e3d3ad9b78c20d442335f48e84fd6
+12739f8c4fbd597606653281a6c4b1898a2b00a4
 ```
 
-OA1 reviewed PR head:
+OA1b reviewed PR head:
 
 ```text
-abb7ceecd805fe4c4ffc1f90248a562be88de051
+a58075f7cbf21dc2b629e71749dadbe2b3e8972f (PASS-TO-MERGE)
 ```
-
-All four OA1 changed blobs are identical between that reviewed head and merged
-main. PR-head CI run #61 passed static checks and regression probes.
 
 The OA semantic boundary remains:
 
@@ -113,9 +113,10 @@ persisted credential evidence present
 ```
 
 Latest supported Hermes stable remains v0.21.3 / `v2026.9.14`. Fresh upstream
-`main` moved to `03c9fc892f5cf3f2e02aa4a4888a30ae292d256d`,
-but the account-status/auth surfaces relevant to the OA2 reopen gate have not
-changed since the previous watch. OA2 remains closed.
+`main` moved to `00570550f37e9082676955d50f65c7d9ba846cc9` and changed
+`auth_codex.py` / `web_routers/oauth.py` (partial refresh-free improvement for
+nous listing), but `token_preview`, refresh and persist paths remain and no
+stable release satisfies the OA2 reopen gate. OA2 remains closed.
 
 Before contributing work, read:
 
@@ -127,7 +128,7 @@ Before contributing work, read:
 Current contract:
 
 ```text
-docs/handoffs/oa1b-oauth-evidence-rendering-contract.md
+R1c contract (to be selected/added by the maintainer)
 ```
 
 Multi-profile remains a separate track.

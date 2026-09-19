@@ -1,6 +1,23 @@
 # OA1b contract — OAuth evidence rendering semantics
 
-Status: **NOW / READY FOR IMPLEMENTATION**
+Status: **DONE / MERGED IN PR #39**
+
+Final reviewed/merged receipt:
+
+```text
+reviewed head      = 67464ebe755f1ac47c36b8e6aaa30734d76e1ae1 (REMEDIATE: 1×P2 cap truncation)
+remediation 1      = 3ff88370 (run_111c01029: REMEDIATE — new P2, cap could delete a real ❌ row)
+remediation 2      = 0f41a9a1 + red-capability completion a58075f7
+verification 3     = run_607ed84e (PASS-TO-MERGE on exact head a58075f7)
+merged main        = 12739f8c4fbd597606653281a6c4b1898a2b00a4
+probes             = 109 pass / 0 fail on merged main
+```
+
+Two maintainer-authorized remediation passes were used (second authorized
+explicitly by the maintainer after the verification run found a regression
+introduced by remediation 1). The reviewer's red-capability gate is met: the
+committed `oa1b_full_failure_survives_cap` probe fails on the pre-fix renderer
+(3ff88370: `failure=False`) and passes on the merged head.
 
 Baseline:
 

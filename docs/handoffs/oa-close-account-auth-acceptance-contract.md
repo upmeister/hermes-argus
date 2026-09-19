@@ -1,16 +1,75 @@
 # OA-close contract — account-auth phase acceptance and handoff
 
-Status: **PAUSED — RESUME AFTER OA1b OAUTH EVIDENCE RENDERING FIX**
+Status: **DONE — OA PHASE COMPLETE / NEXT = R1c**
 
-A production UX finding after OA1 temporarily pauses closeout. The bot renders
-static OAuth evidence as bare "⏸ ... — пропущено", which obscures the intended
-meaning "credential evidence found; runtime status not verified".
+Closeout executed on exact main `12739f8c4fbd597606653281a6c4b1898a2b00a4`
+(after OA1b / PR #39). Final receipt:
 
-Fix first under `oa1b-oauth-evidence-rendering-contract.md`, then resume this
-final OA-phase acceptance/docs task. It is deliberately smaller
-than OA1 and is **not** a second auth implementation project.
+```markdown
+# OA-close outcome
 
-## Exact starting baseline
+## Exact baselines
+- Argus merged main: 12739f8c4fbd597606653281a6c4b1898a2b00a4
+- closeout evidence head: ce1e956dac68eee4c7e35f229b395dd66a9126f1
+- closeout candidate head (AF-001/AF-002 docs remediation): f2768f96ab89daeee24fd158449031fe1548b159
+  (final PR head = that head plus this receipt line; immutable PR metadata: PR #40)
+- Hermes stable: v2026.9.14 / v0.21.3 (commit 345cd2b057a452236de401d3534b8502a7465e8d)
+- Hermes warning-source main: 00570550f37e9082676955d50f65c7d9ba846cc9
+  (+927 commits since the 03c9fc89 watch; hermes_cli/auth_codex.py and
+  hermes_cli/web_routers/oauth.py changed upstream — partial refresh-free
+  improvement for nous listing, but token_preview, refresh and persist paths
+  remain; latest stable unchanged)
+
+## OA1 exact-main acceptance
+- nested Codex singleton: PASS (probe fixtures + prod snapshot oauth:openai-codex)
+- pool-only Codex: PASS (probe fixtures)
+- generic future id: PASS (probe fixture)
+- API-key / malformed negatives: PASS (probe fixtures, incl. auth_type=falsey)
+- storage-shape stability: PASS (probe fixture)
+- Copilot PAT-only: PASS (probe fixture + prod report "не настроено (опционально)")
+
+## Secret boundary
+- canary scan: PASS (probe_oa1_secret_canary_scan across snapshot/discover
+  report/stdout/stderr ×2 runs + health report/output)
+
+## Health truthfulness
+- static oauth status/verdict: skipped / skipped, reason_code policy_blocked
+- healthy count: unchanged (probe_oa1_health_static_evidence_non_green;
+  prod: 40/44 ok, 0 fail, 2 unconfigured, 2 skipped)
+- quick renderer: never "всё в порядке" over skipped OAuth (OA1 + OA1b probes)
+
+## No-effects review
+- Hermes/runtime calls: none (helpers purity probe)
+- network: none
+- refresh: none
+- auth-store writes: none
+
+## Full suite / CI
+- probes: 109 pass / 0 fail on exact merged main
+- static checks: py_compile (all scripts), bash -n deploy.sh — clean
+- diff check: clean
+- CI: argus-ci green on every reviewed head incl. OA1b a58075f7
+
+## OA2 gate
+CLOSED — stable/tagged authority unchanged (v2026.9.14). Fresh main moved and
+touched two gate-relevant files, but no stable release satisfies the reopen
+conditions (token_preview, refresh/persist paths persist upstream).
+
+## Known limitations retained
+alias drift (xai vs xai-oauth), external CLI/keychain-only auth, Vertex ADC /
+Bedrock IAM / Azure Entra ambient chains, universal API-key inventory,
+`oauth` entity naming debt, multi-profile.
+
+## Production actions
+Deploy of main (OA0+OA1+OA1b) authorized separately by the maintainer;
+read-only prod observation (oauth:openai-codex appears; skipped projection)
+recorded during the 2026-09-19 deploy of 0e4c085.
+
+## Final recommendation
+OA PHASE COMPLETE -> R1c
+```
+
+Baseline at activation (historical):
 
 ```text
 Argus main = cfa6c535518e3d3ad9b78c20d442335f48e84fd6

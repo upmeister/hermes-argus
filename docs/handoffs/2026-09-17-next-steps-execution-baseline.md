@@ -18,19 +18,15 @@ Do not introduce a Hermes runtime-import bridge to improve discovery.
 ## Exact current baseline
 
 ```text
-Argus main = cfa6c535518e3d3ad9b78c20d442335f48e84fd6
+Argus main = 12739f8c4fbd597606653281a6c4b1898a2b00a4
 
 R1a / PR #29 = DONE
 R1b / PR #31 = DONE
 OA0 / PR #33 = DONE / STATIC ONLY
 OA1 / PR #35 = DONE / MERGED
-
-OA1 reviewed head = abb7ceecd805fe4c4ffc1f90248a562be88de051
-OA1 CI run #61 = SUCCESS
+OA1b / PR #39 = DONE / MERGED (reviewed head a58075f7, PASS-TO-MERGE)
+OA-close = DONE — OA PHASE COMPLETE
 ```
-
-All four OA1 changed file blobs match exactly between the reviewed PR head and
-merged main.
 
 Supported Hermes authority:
 
@@ -39,31 +35,30 @@ v2026.9.14 / v0.21.3
 stable commit = 345cd2b057a452236de401d3534b8502a7465e8d
 ```
 
-2026-09-19 warning-source watch:
+2026-09-20 warning-source watch:
 
 ```text
-Hermes main = 03c9fc892f5cf3f2e02aa4a4888a30ae292d256d
+Hermes main = 00570550f37e9082676955d50f65c7d9ba846cc9 (+927 since 03c9fc89)
 latest stable remains v2026.9.14
 ```
 
-The account-auth/OAuth router/provider catalog/dashboard token-auth sources
-relevant to OA2 are unchanged from the previous
-`1e4952ddba1bc585416ad43438d60183380035cd` watch. OA2 is still closed.
+Upstream changed `hermes_cli/auth_codex.py` and `hermes_cli/web_routers/oauth.py`
+(partial refresh-free improvement for nous listing), but `token_preview`,
+refresh and persist paths remain and no stable release satisfies the reopen
+conditions. OA2 is still closed.
 
 ## Current execution order
 
 ```text
-OA1b OAuth evidence rendering                NOW
- -> OA-close exact-main acceptance
- -> OA PHASE COMPLETE
- -> R1c Authorization-header argv debt
+R1c Authorization-header argv debt           NEXT (maintainer selects contract)
  -> R2a malformed YAML
  -> R2c bounded static compatibility
  -> R3 cleanup/stabilization
 
+OA phase                                     COMPLETE
 OA2 Hermes status shadow                     CLOSED / UPSTREAM-GATED
 R2b gateway liveness                         DEFERRED
-MP*                                           SEPARATE
+MP*                                          SEPARATE
 ```
 
 ## OA1 final maintainer gate
@@ -92,31 +87,21 @@ when that function is next touched.
 
 ## Current selected contract
 
-```text
-docs/handoffs/oa1b-oauth-evidence-rendering-contract.md
-```
+None yet: the OA phase is complete and R1c (demonstrated non-Telegram
+Authorization-header argv debt) is the next task. The maintainer selects the
+task and its contract is authored/activated at that point.
 
-OA-close is paused pending OA1b. Production confirmed that the conservative
-`skipped` verdict is rendered misleadingly as bare "пропущено" for OAuth
-evidence. OA1b fixes only presentation; canonical health semantics remain
-unchanged.
+## OA-close acceptance (executed 2026-09-20)
 
-## OA-close acceptance
+Executed on exact main `12739f8c4fbd597606653281a6c4b1898a2b00a4`:
 
-Required outcome:
-
-1. re-read exact merged main;
-2. run the focused OA1 acceptance fixtures and full regression suite against
-   that exact tree;
-3. confirm secret-canary and false-green properties;
-4. confirm OA2 reopen gate remains closed under latest stable/upstream watch;
-5. update authority docs to:
-   `OA PHASE COMPLETE -> R1c`.
-
-If any functional OA1 acceptance item fails, stop and return an OA1 regression
-to the maintainer. Do not silently patch production code inside closeout.
-
-No production deploy/restart/login/logout/credential mutation is authorized.
+1. exact merged main re-read — done;
+2. focused OA1 fixtures and full regression suite — 109 pass / 0 fail;
+3. secret-canary and false-green properties — confirmed (see
+   `oa-close-account-auth-acceptance-contract.md` receipt);
+4. OA2 reopen gate — CLOSED under latest stable v2026.9.14; fresh main watch
+   recorded in the receipt;
+5. authority docs updated to `OA PHASE COMPLETE -> R1c`.
 
 ## OA2 authority
 
@@ -156,10 +141,12 @@ If closeout requires production code, stop to maintainer.
 
 Current:
 
-- `oa-close-account-auth-acceptance-contract.md`
+- (none — R1c contract to be authored when the maintainer selects the task)
 
 Completed:
 
+- `oa-close-account-auth-acceptance-contract.md`
+- `oa1b-oauth-evidence-rendering-contract.md`
 - `oa1-static-account-auth-discovery-contract.md`
 - `oa0-account-auth-discovery-research-contract.md`
 
@@ -176,7 +163,7 @@ Deferred:
 
 - `r2b-gateway-liveness-contract.md`
 
-## OA1b production finding
+## OA1b production finding (resolved)
 
 Observed after deploy:
 
@@ -185,14 +172,13 @@ Observed after deploy:
 ⏸ oauth openai-codex — пропущено
 ```
 
-This is not an auth failure. It is a renderer bug: OAuth persisted evidence is
-correctly canonical `skipped` because runtime health is unverified, but the
-bot displays the generic skipped label without the evidence context.
+This was not an auth failure. It was a renderer bug: OAuth persisted evidence is
+correctly canonical `skipped` because runtime health is unverified, but the bot
+displayed the generic skipped label without the evidence context.
 
-Current contract:
-
-```text
-docs/handoffs/oa1b-oauth-evidence-rendering-contract.md
-```
-
-OA-close resumes only after OA1b passes.
+Resolved by `oa1b-oauth-evidence-rendering-contract.md` — **DONE / PR #39**
+(reviewed head `a58075f7`, PASS-TO-MERGE). OAuth evidence now renders as
+informational (`🔐 … — учётные данные обнаружены · runtime-статус не
+проверяется`) and the full-view cap never drops failure/unknown rows or the
+OAuth evidence block. OA-close resumed after OA1b and completed — see the
+receipt in `oa-close-account-auth-acceptance-contract.md`.
