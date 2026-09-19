@@ -11,13 +11,12 @@ supported Hermes stable = v2026.9.14 / v0.21.3
 stable commit = 345cd2b057a452236de401d3534b8502a7465e8d
 ```
 
-Latest upstream watch recorded 2026-09-19:
+Latest upstream watch recorded 2026-09-20:
 
 ```text
 latest stable = v2026.9.14 / v0.21.3
-Hermes main = 03c9fc892f5cf3f2e02aa4a4888a30ae292d256d
-previous OA watch main = 1e4952ddba1bc585416ad43438d60183380035cd
-latest stable = unchanged
+Hermes main = f88c6fc46e1c1c61ae8fdc0d7fb10ec8ad949aab
+stable unchanged
 ```
 
 ## Decision
@@ -40,49 +39,71 @@ monitoring dependency on v0.21.3:
 
 but:
 
-- status resolution can refresh credentials and access the network;
-- the exact-tag degraded/expired Codex path was empirically reproduced writing
-  credential cooldown state into `auth.json`;
-- Qwen status refresh-validates by design;
+- provider status behavior was not uniformly refresh-free;
+- Qwen refresh-validates by design;
 - response cards contain `token_preview`;
 - the production-style public-bind auth gate has no supported headless machine
   route registered for `/api/providers/oauth`.
 
 A monitor must not mutate or refresh the credential state it is observing.
 
-## 2026-09-19 upstream watch
+## 2026-09-20 upstream convergence
 
-Fresh `main` partially improves one OA0 blocker.
+Fresh `main` has moved materially toward the seam Argus wants.
 
-Current `_pool_first_oauth_status` now documents and uses pool `peek()` as an
-observation instead of credential `select()`. Upstream explicitly notes that
-speculative status refresh/benching previously caused persisted cooldown
-problems and moves that behavior away from the pool observation path.
+### Codex
 
-This is useful upstream progress, but it does **not** reopen OA2:
+`get_codex_auth_status()` is now explicitly documented:
 
-1. `get_codex_auth_status()` still falls through to
-   `resolve_codex_runtime_credentials()` when pool observation cannot return a
-   usable entry;
-2. the resolver still defaults to `refresh_if_expiring=True`;
-3. successful Codex refresh still writes the rotated credential pair;
-4. `get_qwen_auth_status()` still calls its runtime resolver with
-   `refresh_if_expiring=True`;
-5. OAuth response cards still include `token_preview`;
-6. the generic dashboard bearer-token seam exists, but
-   `/api/providers/oauth` is not registered as a token-authable route;
-7. the latest stable release remains v0.21.3, so the supported Argus target has
-   none of the fresh-main improvement anyway.
+```text
+Read-only by contract: status/doctor must never adopt, refresh or persist a credential.
+```
 
-Therefore the OA0 production decision remains `STATIC ONLY`.
+It calls the Codex resolver with `read_only=True`.
 
-### Follow-up watch after OA1
+This closes a major **fresh-main** concern from the original OA0 experiment.
 
-From `1e4952dd...` to `03c9fc89...`, Hermes main advanced another 185
-commits. The account-auth files that define the OA2 gate
-(`auth_nous.py`, `auth_codex.py`, `auth_qwen.py`, OAuth router,
-provider catalog, dashboard token-auth seam) are unchanged. No OA2 reopen
-trigger was found.
+### Nous
+
+Hermes now exposes `get_nous_auth_status_local()`, explicitly described as a
+refresh-free snapshot for read-only display surfaces.
+
+### xAI
+
+The current xAI status path resolves with
+`refresh_if_expiring=False`.
+
+These are meaningful architectural convergence signals.
+
+## Why OA2 is still closed
+
+The full gate is not satisfied.
+
+1. **Stable authority has not moved.**
+   The supported stable release is still v0.21.3 / `v2026.9.14`.
+
+2. **Qwen still refresh-validates.**
+   `get_qwen_auth_status()` calls its runtime resolver with
+   `refresh_if_expiring=True`.
+
+3. **The OAuth response still contains token previews.**
+   `/api/providers/oauth` builds status cards containing `token_preview`.
+
+4. **The required machine-auth route is still absent.**
+   The generic machine/dashboard bearer-token machinery does not currently
+   register `/api/providers/oauth` as the narrow supported machine status
+   endpoint Argus needs.
+
+5. **Provider-wide no-side-effect proof is incomplete.**
+   Progress on Codex/Nous/xAI does not establish the required invariant for
+   every surfaced account provider.
+
+Therefore:
+
+```text
+OA2 remains CLOSED.
+Fresh-main convergence is tracked as upstream progress, not implementation authority.
+```
 
 ## Reopen conditions
 
@@ -100,41 +121,31 @@ The account-status read used by Argus must not:
 - change cooldown/dead/exhausted state;
 - write `auth.json` or provider-owned credential files.
 
-This must hold for every provider surfaced by the endpoint, not just Nous or
-Codex.
-
-A helper explicitly analogous to the current local/refresh-free Nous snapshot
-for all relevant account providers would satisfy the architectural direction.
+This must hold for every provider surfaced by the endpoint.
 
 ### 2. Supported headless authentication
 
 A local/non-interactive Argus process must have an upstream-supported machine
-authentication path on the production public-bind deployment shape.
+authentication path for the status surface.
 
 Acceptable examples:
 
 - the route is explicitly registered on Hermes' machine-token auth seam;
-- a documented local control-socket/machine endpoint exposes the same
+- a documented local control socket/machine endpoint exposes the same
   refresh-free data.
 
 Not acceptable:
 
-- scraping/holding dashboard cookies;
+- dashboard-cookie automation;
 - borrowing an interactive browser session;
-- reading a dashboard session token that the public-bind gate ignores;
 - weakening the dashboard gate;
-- adding an Argus patch inside Hermes.
+- an Argus patch inside Hermes.
 
 ### 3. No-secret response contract
 
-A dedicated machine/status response should not include token material or token
-previews.
+The machine/status response must not include token material or token previews.
 
-If the general dashboard response still carries those fields, OA2 must have an
-upstream-provided narrower response or prove that the Argus caller cannot
-receive/retain them.
-
-Minimum useful fields would be:
+Minimum useful fields:
 
 ```text
 provider id
@@ -143,20 +154,19 @@ stable source class, if useful
 profile identity, when requested
 ```
 
-No access token, refresh token, preview, fingerprint, account email or
-credential id is needed by Argus.
+Argus does not need access/refresh tokens, previews, fingerprints, account email
+or credential IDs.
 
 ### 4. Isolated regression proof
 
-Before OA2 implementation is authorized, run a small supported-version probe
-with synthetic credentials proving repeated reads across:
+Before OA2 implementation is authorized, repeated synthetic reads across:
 
-- healthy/non-expiring state;
-- expired credential state;
+- healthy/non-expiring;
+- expired;
 - provider/network failure;
 - pool-only credential state;
 
-cause:
+must prove:
 
 ```text
 0 auth-store writes
@@ -165,27 +175,22 @@ cause:
 0 subprocess/external CLI materialization
 ```
 
-Unknown is not sufficient for a polling dependency.
-
 ### 5. Stable provider-universe semantics
 
 The endpoint must have a documented account-provider universe useful to Argus.
-
-If plugin/account providers remain excluded by upstream picker/catalog rules,
-that limitation must be explicit. OA2 must not claim universal provider
-coverage.
+Plugin/provider limitations must be explicit.
 
 ## Upstream-watch triggers
 
-Revisit this gate when any of these change in a stable release:
+Revisit this gate when a stable release changes:
 
 - `get_codex_auth_status` / `_pool_first_oauth_status`;
-- Qwen account-status behavior;
+- Nous/Qwen/xAI account-status behavior;
 - `GET /api/providers/oauth`;
-- dashboard token-route registration for the OAuth status endpoint;
+- machine token-route registration;
 - a new machine-readable refresh-free auth/account endpoint.
 
-Fresh `main` changes are warning signals only.
+Fresh `main` changes are warning/research signals only.
 
 ## Non-goals
 
@@ -201,7 +206,5 @@ This gate does not authorize:
 
 ## Current action
 
-Finish OA1 static discovery.
-
-After OA1 passes final acceptance, close the OA phase and return to the queued
-stabilization track.
+OA phase is complete. Continue the release-oriented stabilization path beginning
+with R1c. OA2 remains a passive upstream watch.
