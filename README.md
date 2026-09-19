@@ -74,11 +74,15 @@ OA1 fixed the demonstrated OpenAI/Codex inventory false negative with generic
 static auth-store discovery and also removed the false-green projection that
 treated persisted OAuth evidence as "logged in".
 
-The current selected task is **OA-close**: an exact-main acceptance/docs pass,
-not another auth implementation.
+The current selected task is **OA1b: OAuth evidence rendering semantics**.
+After OA1 deployed successfully, production exposed a presentation bug: the
+correct conservative `skipped` verdict is shown to users as bare
+`⏸ ... — пропущено`, losing the distinction that credentials were actually
+found but runtime login/health was intentionally not verified.
 
 ```text
-OA-close NOW
+OA1b NOW
+ -> OA-close
  -> OA PHASE COMPLETE
  -> R1c Authorization-header argv debt
 
@@ -123,7 +127,7 @@ Before contributing work, read:
 Current contract:
 
 ```text
-docs/handoffs/oa-close-account-auth-acceptance-contract.md
+docs/handoffs/oa1b-oauth-evidence-rendering-contract.md
 ```
 
 Multi-profile remains a separate track.

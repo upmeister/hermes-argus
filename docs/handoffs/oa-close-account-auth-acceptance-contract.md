@@ -1,8 +1,13 @@
 # OA-close contract — account-auth phase acceptance and handoff
 
-Status: **NOW / READY — CLOSEOUT ONLY**
+Status: **PAUSED — RESUME AFTER OA1b OAUTH EVIDENCE RENDERING FIX**
 
-This is the final OA-phase acceptance/docs task. It is deliberately smaller
+A production UX finding after OA1 temporarily pauses closeout. The bot renders
+static OAuth evidence as bare "⏸ ... — пропущено", which obscures the intended
+meaning "credential evidence found; runtime status not verified".
+
+Fix first under `oa1b-oauth-evidence-rendering-contract.md`, then resume this
+final OA-phase acceptance/docs task. It is deliberately smaller
 than OA1 and is **not** a second auth implementation project.
 
 ## Exact starting baseline
