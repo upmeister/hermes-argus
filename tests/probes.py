@@ -1084,6 +1084,195 @@ def probe_oa1_quick_report_not_green(wh):
           "всё в порядке" not in text and "⏸" in text, f"text={text!r}")
 
 
+# ── Пробы OA1b: презентационная семантика OAuth-свидетельств ───────────────
+
+def _oa1b_row(cid: str, label: str, status: str, primitive: str | None = None,
+              detail: str = "x") -> dict:
+    verdict = {"ok": "healthy", "fail": "failed"}.get(status, status)
+    row = {"id": cid, "entity_id": cid, "label": label, "status": status,
+           "verdict": verdict, "detail": detail, "category": "",
+           "reason_code": "", "claims": {}, "effects": {}, "evidence": {}}
+    if primitive is not None:
+        row["primitive"] = primitive
+    return row
+
+
+def _oa1b_report(rows: list) -> dict:
+    verdicts = [r["verdict"] for r in rows]
+    return {
+        "schema": 2, "updated": "2026-09-19T12:00:00+00:00", "total": len(rows),
+        "summary": {"total": len(rows), "healthy": verdicts.count("healthy"),
+                    "failed": verdicts.count("failed"),
+                    "unknown": verdicts.count("unknown"),
+                    "unconfigured": verdicts.count("unconfigured"),
+                    "skipped": verdicts.count("skipped")},
+        "checks": rows, "inventory": {},
+    }
+
+
+def probe_oa1b_full_oauth_evidence(wh):
+    """OA1b §7.1: OAuth-свидетельство в full view — informational-строка без
+    ⏸/✅/«пропущено»."""
+    report = _oa1b_report([
+        _oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"),
+        _oa1b_row("oauth:openai-codex", "oauth openai-codex", "skipped", "oauth"),
+    ])
+    text = wh._render_integrations_full(report, {})
+    row = next(l for l in text.split("\n") if "oauth nous" in l)
+    ok = ("🔐" in row and "учётные данные обнаружены" in row
+          and "runtime-статус не проверяется" in row
+          and "⏸" not in row and "✅" not in row and "пропущено" not in row)
+    check("oa1b_full_oauth_evidence", ok, f"row={row!r}")
+
+
+def probe_oa1b_full_generic_skipped_control(wh):
+    """OA1b §7.2: generic skipped (не oauth) в full view — прежний ⏸-рендер."""
+    report = _oa1b_report([
+        _oa1b_row("kit:tg-auth", "kit tg-auth", "skipped", "env"),
+    ])
+    text = wh._render_integrations_full(report, {})
+    row = next(l for l in text.split("\n") if "kit tg-auth" in l)
+    check("oa1b_full_generic_skipped_control",
+          "⏸" in row and "пропущено" in row and "🔐" not in row,
+          f"row={row!r}")
+
+
+def probe_oa1b_full_counts_split(wh):
+    """OA1b §5/§7.5: счётчик ⏸ считает только generic-skipped; OAuth-свидетельства
+    идут отдельным нейтральным 🔐-счётчиком."""
+    report = _oa1b_report([
+        _oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"),
+        _oa1b_row("kit:tg-auth", "kit tg-auth", "skipped", "env"),
+        _oa1b_row("provider:dummy", "provider dummy", "ok", "env"),
+    ])
+    text = wh._render_integrations_full(report, {})
+    counts = text.split("\n")[1]
+    check("oa1b_full_counts_split",
+          "⏸ 1" in counts and "🔐 1" in counts and "⏸ 2" not in counts
+          and "✅ 1" in counts,
+          f"counts={counts!r}")
+
+
+def probe_oa1b_full_oauth_line_survives_cap(wh):
+    """OA1b remediation (Pytna P2): лимит 4000 символов full view не режет и
+    не отбрасывает строку OAuth-свидетельства — обязательное заявление
+    «runtime-статус не проверяется» доезжает целиком; резка идёт по целым
+    строкам (сценарий ревьюера: 16 healthy-меток по 250 символов)."""
+    long_label = "provider " + "p" * 241
+    rows = [_oa1b_row(f"provider:fill{i}", long_label, "ok", "env")
+            for i in range(16)]
+    rows.append(_oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"))
+    text = wh._render_integrations_full(_oa1b_report(rows), {})
+    evidence_line = ("🔐 oauth nous — учётные данные обнаружены · "
+                     "runtime-статус не проверяется")
+    out_lines = text.split("\n")
+    complete = {evidence_line, "✅ " + long_label, "🤖 AI-провайдеры (custom)",
+                "🔐 OAuth-провайдеры", ""}
+    healthy_left = sum(1 for l in out_lines if l == "✅ " + long_label)
+    ok = (len(text) <= 4000
+          and evidence_line in out_lines
+          and healthy_left < 16
+          and all(l in complete or l.startswith(("👁 ", "✅ 1"))
+                  for l in out_lines))
+    check("oa1b_full_oauth_line_survives_cap", ok,
+          f"len={len(text)} evidence_complete={evidence_line in out_lines} "
+          f"healthy_left={healthy_left}")
+
+
+def probe_oa1b_full_failure_survives_cap(wh):
+    """OA1b remediation 2 (Pytna P2): cap 4000 не удаляет реальную ❌-строку
+    провала — с хвоста падают только информационные строки; провал и
+    OAuth-свидетельство доезжают целиком. Наполнители лежат в ТОМ же
+    kit:watchdog-bucket, что и провал, и идут ПЕРЕД ним: на старом слепом
+    cap-е рубка попадает в наполнители, и провал исчезает из вывода
+    (проба красная на 3ff88370)."""
+    long_label = "kit " + "k" * 280
+    rows = [_oa1b_row(f"kit:fill{i}", long_label, "ok", "env")
+            for i in range(15)]
+    rows.append(_oa1b_row("kit:failure", "kit failure", "fail", "http",
+                          "HTTP 500"))
+    rows.append(_oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"))
+    text = wh._render_integrations_full(_oa1b_report(rows), {})
+    evidence_line = ("🔐 oauth nous — учётные данные обнаружены · "
+                     "runtime-статус не проверяется")
+    fail_line = "❌ kit failure — HTTP 500"
+    out_lines = text.split("\n")
+    healthy_left = sum(1 for l in out_lines if l == "✅ " + long_label)
+    ok = (len(text) <= 4000
+          and fail_line in out_lines
+          and evidence_line in out_lines
+          and healthy_left < 15
+          and "🛡 Watchdog kit" in out_lines)
+    check("oa1b_full_failure_survives_cap", ok,
+          f"len={len(text)} failure={fail_line in out_lines} "
+          f"evidence_complete={evidence_line in out_lines} "
+          f"healthy_left={healthy_left}")
+
+
+def probe_oa1b_quick_oauth_only_not_blank_green(wh):
+    """OA1b §7.3: quick view на healthy+OAuth-only — не «всё в порядке», не
+    «пропущены политикой», имена видны, runtime-статус заявлен непроверенным."""
+    report = _oa1b_report([
+        _oa1b_row("provider:dummy", "provider dummy", "ok", "env"),
+        _oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"),
+        _oa1b_row("oauth:openai-codex", "oauth openai-codex", "skipped", "oauth"),
+    ])
+    text = wh._render_integrations_quick(report)
+    ok = ("всё в порядке" not in text
+          and "пропущены политикой" not in text and "⏸" not in text
+          and "nous" in text and "openai-codex" in text
+          and "учётные данные обнаружены" in text
+          and "runtime-статус не проверяется" in text)
+    check("oa1b_quick_oauth_only_not_blank_green", ok, f"text={text!r}")
+
+
+def probe_oa1b_quick_mixed_failure_and_oauth(wh):
+    """OA1b §7.4: реальный провал виден, OAuth-свидетельство — informational-
+    контекст, зелёного заявления нет; generic-skipped quick-контроль прежний."""
+    fail_report = _oa1b_report([
+        _oa1b_row("provider:dummy#http", "provider dummy root", "fail", "http",
+                  "HTTP 503"),
+        _oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"),
+    ])
+    text = wh._render_integrations_quick(fail_report)
+    mixed_ok = ("❌" in text and "provider dummy root" in text
+                and "учётные данные обнаружены" in text
+                and "всё в порядке" not in text)
+    generic_report = _oa1b_report([
+        _oa1b_row("kit:tg-auth", "kit tg-auth", "skipped", "env"),
+    ])
+    generic_text = wh._render_integrations_quick(generic_report)
+    generic_ok = "⏸ 1 проверок пропущены политикой" in generic_text
+    check("oa1b_quick_mixed_failure_and_oauth",
+          mixed_ok and generic_ok, f"mixed={text!r} generic={generic_text!r}")
+
+
+def probe_oa1b_report_not_mutated(wh):
+    """OA1b §7.5: рендер не мутирует канонический отчёт (JSON summary неизменен)."""
+    report = _oa1b_report([
+        _oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"),
+        _oa1b_row("kit:tg-auth", "kit tg-auth", "skipped", "env"),
+        _oa1b_row("provider:dummy", "provider dummy", "ok", "env"),
+    ])
+    before = json.loads(json.dumps(report))
+    wh._render_integrations_full(report, {})
+    wh._render_integrations_quick(report)
+    check("oa1b_report_not_mutated", report == before, "report changed")
+
+
+def probe_oa1b_helpers_are_pure():
+    """OA1b §4: OAuth-свидетельства классифицируются по структурным полям
+    (verdict + primitive) — без имён провайдеров и без сравнения detail-текста."""
+    src = (REPO / "scripts" / "webhook.py").read_text(encoding="utf-8")
+    banned = ('"nous"', '"codex"', '"openai-codex"', '"xai"', '"minimax"',
+              'get("detail") ==')
+    hits = sorted({b for b in banned if b in src})
+    classified = ('_oauth_evidence_rows' in src
+                  and src.count('get("primitive") == "oauth"') >= 2)
+    check("oa1b_helpers_are_pure", not hits and classified,
+          f"hits={hits} classified={classified}")
+
+
 def probe_oa1_helpers_are_pure():
     """OA1 §8: хелперы дискавери — чистая структурная логика, без I/O-поверхности."""
     src = (REPO / "scripts" / "integration-discover.py").read_text(encoding="utf-8")
@@ -2441,6 +2630,16 @@ def main() -> int:
     probe_oa1_health_pat_only_unconfigured(hc, tmp)
     probe_oa1_quick_report_not_green(wh)
     probe_oa1_helpers_are_pure()
+    # OA1b: презентационная семантика OAuth-свидетельств (webhook-рендер)
+    probe_oa1b_full_oauth_evidence(wh)
+    probe_oa1b_full_generic_skipped_control(wh)
+    probe_oa1b_full_counts_split(wh)
+    probe_oa1b_full_oauth_line_survives_cap(wh)
+    probe_oa1b_full_failure_survives_cap(wh)
+    probe_oa1b_quick_oauth_only_not_blank_green(wh)
+    probe_oa1b_quick_mixed_failure_and_oauth(wh)
+    probe_oa1b_report_not_mutated(wh)
+    probe_oa1b_helpers_are_pure()
     probe_deploy_cron_profile(tmp)
     probe_deploy_secret_not_in_argv(tmp)
     probe_deploy_gh_heartbeat_secret_not_in_argv(tmp)
