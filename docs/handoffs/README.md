@@ -5,7 +5,7 @@ handoffs. **Old handoff presence is not implementation authority.**
 
 Repository `AGENTS.md` scope-control rules apply to every document here.
 
-## Active baseline — updated 2026-09-19
+## Active baseline — updated 2026-09-20
 
 Read in this order:
 
@@ -14,7 +14,7 @@ Read in this order:
 
 Current selected task:
 
-- `oa1b-oauth-evidence-rendering-contract.md` — **NOW / READY**
+- (none yet — R1c contract to be authored when the maintainer selects the task)
 
 Completed:
 
@@ -22,21 +22,23 @@ Completed:
 - R1b Telegram child-argv secret exposure — **DONE / PR #31**
 - OA0 account-auth research — **DONE / PR #33 / STATIC ONLY**
 - OA1 generic static account-auth discovery — **DONE / PR #35**
+- OA1b OAuth evidence rendering — **DONE / PR #39**
+- OA-close acceptance — **DONE / OA PHASE COMPLETE**
 
 OA phase:
 
 ```text
 OA0 DONE
 OA1 DONE
+OA1b DONE
+OA-close DONE
 OA2 CLOSED / UPSTREAM-GATED
 
-OA1b NOW — OAuth evidence rendering fix
- -> OA-close
- -> OA PHASE COMPLETE
- -> R1c
+OA PHASE COMPLETE
+ -> R1c (next)
 ```
 
-Queued after successful OA close:
+Queued after the OA phase:
 
 - R1c demonstrated non-Telegram Authorization-header argv debt;
 - R2a malformed YAML;
@@ -70,9 +72,25 @@ persisted credential evidence present
 Static account-auth entities now project to a non-green skipped result; Copilot
 PAT-only remains unconfigured.
 
+## OA1b accepted baseline
+
+```text
+reviewed head = a58075f7cbf21dc2b629e71749dadbe2b3e8972f (PASS-TO-MERGE,
+verification run_607ed84e)
+merged main   = 12739f8c4fbd597606653281a6c4b1898a2b00a4
+PR #39        = merged
+probes        = 109 pass / 0 fail
+```
+
+OAuth auth-evidence renders as informational
+(`🔐 … — учётные данные обнаружены · runtime-статус не проверяется`) in both
+bot views; generic skipped rows keep `⏸`; the full-view 4000-character cap
+cuts whole lines and never drops failure/unknown rows or the OAuth evidence
+block (red-capable probes committed).
+
 ## OA2 status
 
-OA2 is **not** part of closeout implementation.
+OA2 is closed and upstream-gated.
 
 See:
 
@@ -81,21 +99,22 @@ oa2-hermes-status-shadow-reopen-gate.md
 ```
 
 Latest stable remains Hermes v0.21.3 / `v2026.9.14`. Fresh main is
-`03c9fc892f5cf3f2e02aa4a4888a30ae292d256d`; no account-auth surface relevant
-to the reopen gate changed since the previous watch. OA2 remains closed.
+`00570550f37e9082676955d50f65c7d9ba846cc9` (+927 since the previous watch);
+`auth_codex.py` / `web_routers/oauth.py` changed upstream (partial refresh-free
+improvement for nous listing), but `token_preview`, refresh and persist paths
+remain and no stable release satisfies the reopen conditions. OA2 remains
+closed.
 
 ## Current contracts
 
 Current:
 
-- `oa1b-oauth-evidence-rendering-contract.md`
-
-Paused until OA1b:
-
-- `oa-close-account-auth-acceptance-contract.md`
+- (none yet — R1c contract to be authored when the maintainer selects the task)
 
 Completed:
 
+- `oa-close-account-auth-acceptance-contract.md`
+- `oa1b-oauth-evidence-rendering-contract.md`
 - `oa1-static-account-auth-discovery-contract.md`
 - `oa0-account-auth-discovery-research-contract.md`
 - R1a/R1b contracts
@@ -124,19 +143,9 @@ one selected contract
  -> merge/decision OR blocker
 ```
 
-OA-close is expected to be docs/acceptance only. If it discovers a functional
-OA1 regression, stop and return it to the maintainer instead of silently
-turning closeout into another implementation PR.
+Closeout and acceptance passes stay docs/acceptance only. If they discover a
+functional regression, stop and return it to the maintainer instead of
+silently turning an acceptance pass into another implementation PR.
 
 Before merge recommendation, refresh the PR body/evidence receipt to the exact
 candidate head.
-
-## Production UX finding after OA1
-
-The first production deployment found that OAuth evidence rows are rendered as
-`⏸ ... — пропущено`. The underlying `skipped` verdict is intentionally
-conservative, but the renderer loses the distinction between "static auth
-evidence found; runtime status not verified" and a genuinely skipped policy
-check.
-
-OA1b owns only this presentation correction. OA-close resumes afterwards.
