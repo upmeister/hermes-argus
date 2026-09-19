@@ -78,7 +78,9 @@ treated persisted OAuth evidence as "logged in". OA1b renders that static
 evidence as informational ("credentials found; runtime status not verified")
 instead of generic skipped, without changing canonical verdicts or schema.
 
-The current selected task is **R1c: Authorization-header argv debt**.
+The next queued task is **R1c: Authorization-header argv debt**. No contract is
+currently selected: per `AGENTS.md` the maintainer selects the task, and its
+contract is authored/activated at that point.
 
 ```text
 OA PHASE COMPLETE

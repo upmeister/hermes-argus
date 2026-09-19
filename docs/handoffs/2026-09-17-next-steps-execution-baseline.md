@@ -163,7 +163,7 @@ Deferred:
 
 - `r2b-gateway-liveness-contract.md`
 
-## OA1b production finding
+## OA1b production finding (resolved)
 
 Observed after deploy:
 
@@ -172,14 +172,13 @@ Observed after deploy:
 ⏸ oauth openai-codex — пропущено
 ```
 
-This is not an auth failure. It is a renderer bug: OAuth persisted evidence is
-correctly canonical `skipped` because runtime health is unverified, but the
-bot displays the generic skipped label without the evidence context.
+This was not an auth failure. It was a renderer bug: OAuth persisted evidence is
+correctly canonical `skipped` because runtime health is unverified, but the bot
+displayed the generic skipped label without the evidence context.
 
-Current contract:
-
-```text
-docs/handoffs/oa1b-oauth-evidence-rendering-contract.md
-```
-
-OA-close resumes only after OA1b passes.
+Resolved by `oa1b-oauth-evidence-rendering-contract.md` — **DONE / PR #39**
+(reviewed head `a58075f7`, PASS-TO-MERGE). OAuth evidence now renders as
+informational (`🔐 … — учётные данные обнаружены · runtime-статус не
+проверяется`) and the full-view cap never drops failure/unknown rows or the
+OAuth evidence block. OA-close resumed after OA1b and completed — see the
+receipt in `oa-close-account-auth-acceptance-contract.md`.
