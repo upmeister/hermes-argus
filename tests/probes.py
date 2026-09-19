@@ -1153,6 +1153,32 @@ def probe_oa1b_full_counts_split(wh):
           f"counts={counts!r}")
 
 
+def probe_oa1b_full_oauth_line_survives_cap(wh):
+    """OA1b remediation (Pytna P2): лимит 4000 символов full view не режет и
+    не отбрасывает строку OAuth-свидетельства — обязательное заявление
+    «runtime-статус не проверяется» доезжает целиком; резка идёт по целым
+    строкам (сценарий ревьюера: 16 healthy-меток по 250 символов)."""
+    long_label = "provider " + "p" * 241
+    rows = [_oa1b_row(f"provider:fill{i}", long_label, "ok", "env")
+            for i in range(16)]
+    rows.append(_oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"))
+    text = wh._render_integrations_full(_oa1b_report(rows), {})
+    evidence_line = ("🔐 oauth nous — учётные данные обнаружены · "
+                     "runtime-статус не проверяется")
+    out_lines = text.split("\n")
+    complete = {evidence_line, "✅ " + long_label, "🤖 AI-провайдеры (custom)",
+                "🔐 OAuth-провайдеры", ""}
+    healthy_left = sum(1 for l in out_lines if l == "✅ " + long_label)
+    ok = (len(text) <= 4000
+          and evidence_line in out_lines
+          and healthy_left < 16
+          and all(l in complete or l.startswith(("👁 ", "✅ 1"))
+                  for l in out_lines))
+    check("oa1b_full_oauth_line_survives_cap", ok,
+          f"len={len(text)} evidence_complete={evidence_line in out_lines} "
+          f"healthy_left={healthy_left}")
+
+
 def probe_oa1b_quick_oauth_only_not_blank_green(wh):
     """OA1b §7.3: quick view на healthy+OAuth-only — не «всё в порядке», не
     «пропущены политикой», имена видны, runtime-статус заявлен непроверенным."""
@@ -2578,6 +2604,7 @@ def main() -> int:
     probe_oa1b_full_oauth_evidence(wh)
     probe_oa1b_full_generic_skipped_control(wh)
     probe_oa1b_full_counts_split(wh)
+    probe_oa1b_full_oauth_line_survives_cap(wh)
     probe_oa1b_quick_oauth_only_not_blank_green(wh)
     probe_oa1b_quick_mixed_failure_and_oauth(wh)
     probe_oa1b_report_not_mutated(wh)

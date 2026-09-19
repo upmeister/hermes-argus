@@ -603,6 +603,27 @@ def _oauth_evidence_line(rows: list) -> str:
             "runtime-статус не проверяется")
 
 
+def _cap_full_view(lines: list, evidence: set, cap: int = 4000) -> str:
+    """OA1b P2 (Pytna): слепой срез [:cap] резал строку OAuth-свидетельства
+    посреди обязательного заявления «runtime-статус не проверяется» или
+    отбрасывал её целиком на границе. Режем по целым строкам с конца; строки
+    evidence-блока не удаляются никогда. Жёсткий cap остаётся только для
+    недостижимого случая, когда переполнение создают сами evidence-строки."""
+    total = sum(len(l) for l in lines) + max(len(lines) - 1, 0)
+    if total <= cap:
+        return "\n".join(lines)
+    out = list(lines)
+    while out and total > cap:
+        for i in range(len(out) - 1, -1, -1):
+            if out[i] not in evidence:
+                total = max(total - len(out[i]) - 1, 0)
+                del out[i]
+                break
+        else:
+            return "\n".join(out)[:cap]
+    return "\n".join(out)
+
+
 def _render_integrations_quick(report: dict) -> str:
     """Quick /integrations view of a validated report (v1 or v2).
 
@@ -733,6 +754,7 @@ def _render_integrations_full(report: dict, registry: dict) -> str:
     ids = {c.get("id") for c in checks}
     root_ok = {c["id"][:-5]: c.get("detail", "") for c in checks
                if c.get("id", "").endswith("#http") and c.get(st_key) == ok_val}
+    evidence: set = set()
     buckets: dict[str, list[str]] = {}
     for c in checks:
         cid, st = c.get("id", ""), c.get(st_key, "?")
@@ -750,6 +772,7 @@ def _render_integrations_full(report: dict, registry: dict) -> str:
             if c.get("primitive") == "oauth":
                 line = (f"🔐 {label} — учётные данные обнаружены · "
                         "runtime-статус не проверяется")
+                evidence.add(line)
             else:
                 line = f"⏸ {label} — пропущено"
         elif st == "unconfigured":
@@ -824,7 +847,10 @@ def _render_integrations_full(report: dict, registry: dict) -> str:
         lines.extend(items[:20])
         if len(items) > 20:
             lines.append(f"…и ещё {len(items) - 20}")
-    return "\n".join(lines)[:4000]
+    if buckets.get("oauth"):
+        # Блок OAuth-свидетельств защищён целиком: заголовок + строки (P2).
+        evidence.add(titles["oauth"])
+    return _cap_full_view(lines, evidence)
 
 
 def handle_deep_check() -> str:

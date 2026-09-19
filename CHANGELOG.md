@@ -30,7 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rendered generic-skipped count now excludes OAuth evidence rows (a separate
   neutral 🔐 count is shown), and the quick view no longer summarizes
   unverified OAuth rows as "пропущены политикой" or claims "всё в порядке"
-  over them. Canonical verdicts, report schema, and summary JSON are
+  over them. The full view's 4000-character cap now cuts at whole lines and
+  never drops or splits the OAuth evidence block (title and rows survive
+  complete). Canonical verdicts, report schema, and summary JSON are
   unchanged.
 - Keep Telegram bot tokens out of child-process argv in every active shell and
   Python notifier: token-bearing URLs are delivered to `curl` via stdin config
