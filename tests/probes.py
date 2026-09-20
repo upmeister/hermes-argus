@@ -2160,34 +2160,44 @@ def probe_r1c_curl_config_header_seam(tmp: Path):
         env = _probe_subprocess_env(tmp / "r1c-seam-home", {
             "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
         })
+        # Через bash -c: bash сам резолвит PATH (shim → tee → реальный curl).
+        # Прямой CreateProcess-вызов из python на Windows игнорирует PATH
+        # ребёнка и молча берёт реальный curl — capture был бы вакуумным.
+        curl_via_bash = 'exec curl -s -o /dev/null -w "%{http_code}" -K -'
         positive = subprocess.run(
-            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-K", "-"],
+            ["bash", "-c", curl_via_bash],
             input=f'url = {url}\nheader = "Authorization: Bearer {R1C_TOKEN}"\n'.encode(),
             env=env, capture_output=True, timeout=30)
         # Негативный контроль 1: БЕЗ header-строки Authorization не уходит.
         negative = subprocess.run(
-            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-K", "-"],
+            ["bash", "-c", curl_via_bash],
             input=f"url = {url}\n".encode(),
             env=env, capture_output=True, timeout=30)
         # Негативный контроль 2 (ловушка R1c): НЕциклованный header = значение
         # реальный curl молча не отправляет — проба красная, если сценарий
         # вернётся к непроцитованной форме.
         unquoted = subprocess.run(
-            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-K", "-"],
+            ["bash", "-c", curl_via_bash],
             input=f"url = {url}\nheader = Authorization: Bearer {R1C_TOKEN}\n".encode(),
             env=env, capture_output=True, timeout=30)
         argv_text = _read_or(argv_log)
         pos_header = received[0][1] if received else None
         neg_header = received[1][1] if len(received) > 1 else "missing-call"
         unq_header = received[2][1] if len(received) > 2 else "missing-call"
+        captured = len([l for l in argv_text.splitlines() if l.strip()])
         ok = (positive.stdout.decode().strip() == "200"
               and pos_header == f"Bearer {R1C_TOKEN}"
               and neg_header in (None, "")
               and unq_header in (None, "")
-              and R1C_TOKEN not in argv_text)
+              and R1C_TOKEN not in argv_text
+              # fail-closed: capture-механизм обязан видеть все 3 вызова
+              and captured == 3)
+        # §7.6: canary не печатается — только булевы исходы проверки.
         check("r1c_curl_config_header_seam", ok,
-              f"pos_auth={pos_header!r} neg_auth={neg_header!r} "
-              f"unquoted_auth={unq_header!r} secret_in_argv={R1C_TOKEN in argv_text}")
+              f"pos_auth_ok={pos_header == f'Bearer {R1C_TOKEN}'} "
+              f"neg_absent={neg_header in (None, '')} "
+              f"unquoted_dropped={unq_header in (None, '')} "
+              f"secret_in_argv={R1C_TOKEN in argv_text}")
     finally:
         server.shutdown()
 
@@ -2301,15 +2311,26 @@ def probe_r1c_deep_check_post_not_in_argv(tmp: Path):
 
 
 def probe_r1c_artifact_boundary(tmp: Path):
-    """R1c §7.6: canary отсутствует во всех stdout/stderr-артефактах R1c-проб
-    (shim stdin-логи — каналы доставки, не отчёты, и секрет там ожидаем)."""
+    """R1c §7.6: canary присутствует ТОЛЬКО в stdin-логах доставки
+    (*-stdin.log — канал, по которому секрет уходит в curl) и отсутствует во
+    всех остальных r1c-артефактах (stdout/stderr-снимки, argv-логи). Печать
+    canary в check()-detail не допускается инвариантом проекта; suite-stdout
+    чистота обеспечивается булевыми detail-строками и внешним аудитом ревью."""
     canaries = (R1C_TOKEN, R1C_TG, R1C_GH)
     leaked = []
-    for p in sorted(tmp.glob("r1c-*-out.txt")) + sorted(tmp.glob("r1c-*-err.txt")):
+    delivery = 0
+    for p in sorted(tmp.glob("r1c-*")):
+        if not p.is_file():
+            continue
         text = _read_or(p)
-        if any(c in text for c in canaries):
+        has = any(c in text for c in canaries)
+        if p.name.endswith("-stdin.log"):
+            delivery += int(has)
+        elif has:
             leaked.append(p.name)
-    check("r1c_artifact_boundary", not leaked, f"leaked={leaked}")
+    ok = not leaked and delivery >= 3
+    check("r1c_artifact_boundary", ok,
+          f"leaked={leaked} delivery_channels_with_canary={delivery}")
 
 
 @contextmanager
