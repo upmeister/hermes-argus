@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep Authorization values out of child-process argv in the remaining
+  demonstrated owners (R1c): the integration shell checker now delivers both
+  token-bearing URLs and `Authorization` headers to `curl` through the single
+  stdin config channel (`curl -K -`, quoted header values — an unquoted
+  `header =` value is silently dropped by real curl), and the deep-check
+  helper feeds the `Authorization: Bearer` header to `curl` via stdin
+  (`-H @-`). Request semantics are unchanged (URL, method, proxy, retries,
+  timeouts, payloads, status parsing). The header value must still reach the
+  HTTP request while never appearing in process listings.
+
 - Discover persisted account-auth identities structurally from the Hermes
   auth store instead of a hard-coded provider roster: nested provider token
   state (`providers.<id>.tokens.*`), flat provider state with a refresh token,
