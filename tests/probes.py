@@ -2070,7 +2070,7 @@ def probe_r1c_shell_full_auth_not_in_argv(tmp: Path):
     })
     result = subprocess.run(
         ["bash", str(REPO / "scripts" / "health-check-integrations.sh")],
-        cwd=REPO, env=env, input=b"", capture_output=True, text=True, timeout=180)
+        cwd=REPO, env=env, input="", capture_output=True, text=True, timeout=180)
     _r1c_save_outcome(tmp, "r1c-full", result)
     argv_text = _read_or(argv_log)
     stdin_text = _read_or(stdin_log)
@@ -2102,7 +2102,7 @@ def probe_r1c_quick_github_header_not_in_argv(tmp: Path):
     })
     result = subprocess.run(
         ["bash", str(REPO / "scripts" / "health-check-integrations.sh"), "--quick"],
-        cwd=REPO, env=env, input=b"", capture_output=True, text=True, timeout=120)
+        cwd=REPO, env=env, input="", capture_output=True, text=True, timeout=120)
     _r1c_save_outcome(tmp, "r1c-quick", result)
     argv_text = _read_or(argv_log)
     stdin_text = _read_or(stdin_log)
@@ -2228,7 +2228,7 @@ def _r1c_run_deep_check(tmp: Path, tag: str,
             "    sys.stderr.write('STDINLOG\\t' + json.dumps(inp) + '\\n')\n"
             "print('RC', code)\nprint('DATA', json.dumps(data))\n"
         )
-        result = subprocess.run([sys.executable, "-c", code], input=b"",
+        result = subprocess.run([sys.executable, "-c", code], input="",
                                 capture_output=True, text=True, timeout=90)
         err = result.stderr
         argv_lines = [json.loads(l.split("\t", 1)[1]) for l in err.splitlines()
@@ -2263,7 +2263,7 @@ def _r1c_run_deep_check(tmp: Path, tag: str,
     )
     result = subprocess.run(["bash", "-c",
                              f'exec {sys.executable} -c {shlex.quote(code)}'],
-                            env=env, input=b"", capture_output=True, text=True,
+                            env=env, input="", capture_output=True, text=True,
                             timeout=90)
     _r1c_save_outcome(tmp, f"r1c-dc-{tag}", result)
     return result.stdout, _read_or(argv_log), _read_or(stdin_log)
