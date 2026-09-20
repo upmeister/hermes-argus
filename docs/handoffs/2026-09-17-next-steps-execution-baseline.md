@@ -2,9 +2,8 @@
 
 Status: **ACTIVE EXECUTION BASELINE — UPDATED 2026-09-20**
 
-This document translates the stabilization/release roadmap into bounded
-repository work. Agents may perform only the named task currently selected by
-the maintainer.
+This document translates the release roadmap into bounded repository work.
+Agents may perform only the named task currently selected by the maintainer.
 
 ## Architecture invariant
 
@@ -19,14 +18,29 @@ coverage.
 ## Exact current baseline
 
 ```text
-Argus main = f1ddadab40c9eb30900491c480f28a6c80756484
+Argus main = 133931a8242de0e61cecace5f75905bf63615383
 
 R1a / PR #29 = DONE
 R1b / PR #31 = DONE
+R1c / PR #42 = DONE
 OA phase / PR #40 = COMPLETE
 
-R1c = NOW
+R2a = NOW
 ```
+
+R1c final evidence:
+
+```text
+candidate head = b477d2bbd4d892b3fee97dd188110d4c7bbff94e
+CI #81 = success
+115/115 probes
+8/8 swap tests
+candidate/main changed blobs = identical
+```
+
+The sole Pytna remediation changed only the probe harness. It fixed a synthetic
+Authorization canary leaking from test detail and made the real-curl seam
+capture fail closed. Production R1c code did not change during remediation.
 
 Supported Hermes authority:
 
@@ -39,8 +53,8 @@ warning-source main = f88c6fc46e1c1c61ae8fdc0d7fb10ec8ad949aab
 ## Current execution order
 
 ```text
-R1c Authorization-header argv debt        NOW
- -> R2a malformed YAML
+R1c Authorization-header argv debt        DONE / PR #42
+ -> R2a malformed YAML                    NOW
  -> R2c.1 fallback_providers compatibility
  -> RR1 installer/dependency/managed-cron
  -> RR2 runtime i18n (en + ru)
@@ -59,102 +73,99 @@ MP*                                       SEPARATE
 ## Current selected contract
 
 ```text
-docs/handoffs/r1c-authorization-header-argv-contract.md
+docs/handoffs/r2a-malformed-yaml-contract.md
 ```
 
-## R1c current evidence
+## R2a demonstrated failure chain
 
-Current source still demonstrates child-argv Authorization exposure in two
-production owners.
+Current `integration-discover.py` loads the authoritative
+`~/.hermes/config.yaml` with a helper that only catches
+`FileNotFoundError`.
 
-### scripts/health-check-integrations.sh
+Therefore:
 
-- generic `check_url` expands `-H "$auth_header"`;
-- full authenticated checks include OpenCode, Firecrawl, GitHub, Groq and
-  OpenRouter;
-- quick GitHub directly expands `Authorization: token ...`.
+- syntactically malformed YAML raises out of discovery;
+- a valid YAML list/string later crashes on `cfg.get(...)`;
+- no fresh snapshot is written;
+- the previous snapshot remains on disk;
+- `integration-discover-wrapper.sh` logs the inner non-2 exit and returns 0;
+- the operator receives no degradation alert.
 
-The same helper already uses `curl -K -` stdin for secret-bearing URLs.
-R1c must not fix headers by regressing token-bearing URL secrecy.
-
-### scripts/ai-deep-check.py
-
-`curl_json()` builds:
+Current failure shape:
 
 ```text
--H Authorization: Bearer <token>
+malformed config
+ -> discover crash
+ -> stale snapshot remains
+ -> wrapper looks successful
+ -> no operator alert
 ```
 
-inside subprocess argv.
+## R2a selected state model
 
-### safe reference
+Do **not** map malformed config to an empty dict and diff it against last good.
+That would create false mass-removal events.
 
-`health-check-v2.py` already uses stdin-fed `-H @-`.
-
-## R1c success condition
+The preferred bounded model is:
 
 ```text
-Authorization still reaches the request
-AND
-Authorization secret is absent from child argv
-AND
-existing Telegram secret-URL protection is unchanged
+preserved last-good inventory
++
+explicit top-level discovery status
 ```
 
-No generic HTTP subsystem.
+A degraded attempt must distinguish:
 
-## Release direction
+- current failed attempt time;
+- last successful observation time;
+- stable reason code;
+- preserved last-good entities.
 
-After R1c:
+On recovery, the valid inventory is diffed against the preserved last-good
+inventory so genuine changes are reported once and malformed-state gaps do not
+create remove/add storms.
 
-1. R2a makes malformed YAML explicit degraded state instead of crash/false
-   empty inventory;
-2. R2c.1 adopts canonical ordered `fallback_providers` statically;
-3. release-readiness hardens install/dependencies/managed cron/update/uninstall;
-4. runtime human-facing UI becomes localizable in English and Russian;
-5. clean Ubuntu/versioned-release acceptance gates `v0.1.0-rc.1`.
+## Consumer boundary
 
-Public documentation remains English-only. Existing Russian runtime deployments
-must remain supported.
+A degraded snapshot is not live inventory.
 
-## 2026-09-20 upstream watch
+At minimum:
 
-Fresh Hermes main has moved substantially since the earlier OA watch.
+- `health-check-v2.py` must fail closed before network/subprocess checks;
+- `ai-deep-check.py` must fail closed before curl.
 
-Convergence:
+For health-check-v2, existing exit 2 is the natural configuration-error path;
+its wrapper already avoids processing stale health reports on that path.
 
-- Codex status is now documented read-only and uses a read-only resolver;
-- Nous exposes a refresh-free local status snapshot;
-- xAI status avoids refresh-on-observation.
+## Operator semantics
 
-Remaining OA2 blockers:
+Prefer the existing discover process contract:
 
-- Qwen status still refresh-validates;
-- the dashboard OAuth response still includes `token_preview`;
-- `/api/providers/oauth` still lacks the required supported machine-token
-  route;
-- latest stable is still v0.21.3.
+```text
+0 = no operator-visible change
+2 = reportable entity/discovery-state transition
+```
 
-Credential-pool runtime semantics continue to grow more complex, reinforcing
-the Argus boundary rather than motivating a duplicate resolver.
+Entering degradation and recovering may use the existing reportable path rather
+than introducing a new systemd exit code. Repeated identical degradation must
+not alert every cron cycle.
 
-Fallback activation/restore markers and MCP-test output remain compatible.
+## Global non-goals for R2a
 
-## Global non-goals for R1c
-
-- runtime bridge revival;
-- OAuth/OA2 implementation;
-- malformed-YAML changes;
-- fallback config changes;
-- installer/cron work;
-- i18n;
+- Hermes runtime imports;
+- YAML repair/normalization;
+- R2c `fallback_providers`;
+- generic provenance/config frameworks;
+- new state database/sidecar architecture;
+- installer/i18n work;
+- plugin/provider execution;
 - multi-profile implementation;
 - unrelated cleanup.
 
 ## Workflow
 
 ```text
-one R1c implementation pass
+one R2a implementation pass
  -> one focused Pytna review
  -> at most one remediation
  -> exact-head reread

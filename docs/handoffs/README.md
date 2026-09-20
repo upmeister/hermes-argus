@@ -14,12 +14,13 @@ Read in this order:
 
 Current selected task:
 
-- `r1c-authorization-header-argv-contract.md` — **NOW / READY**
+- `r2a-malformed-yaml-contract.md` — **NOW / READY**
 
 Completed:
 
 - R1a deploy/GitHub-heartbeat secret-in-argv — **DONE / PR #29**
 - R1b Telegram child-argv secret exposure — **DONE / PR #31**
+- R1c Authorization-header argv exposure — **DONE / PR #42**
 - OA0 account-auth research — **DONE / PR #33 / STATIC ONLY**
 - OA1 generic static account-auth discovery — **DONE / PR #35**
 - OA1b OAuth evidence rendering — **DONE / PR #39**
@@ -29,11 +30,26 @@ Closed/upstream-gated:
 
 - `oa2-hermes-status-shadow-reopen-gate.md`
 
+## R1c accepted baseline
+
+```text
+contract baseline = 96149309dba4b5b539ba6f111e375355b2ab4cfd
+candidate head    = b477d2bbd4d892b3fee97dd188110d4c7bbff94e
+merged main       = 133931a8242de0e61cecace5f75905bf63615383
+CI #81            = success
+probes            = 115 pass / 0 fail
+swap tests        = 8 pass / 0 fail
+```
+
+All four changed blobs are identical between candidate and merged main.
+The final Pytna remediation changed only `tests/probes.py` and strengthened the
+artifact/capture boundary; production code was unchanged.
+
 ## Release-oriented execution order
 
 ```text
-R1c NOW
- -> R2a malformed YAML
+R1c DONE
+ -> R2a malformed YAML NOW
  -> R2c.1 fallback_providers compatibility
  -> RR1 installer/dependency/managed-cron
  -> RR2 runtime i18n: en + ru
@@ -64,28 +80,19 @@ stable commit = 345cd2b057a452236de401d3534b8502a7465e8d
 warning-source main = f88c6fc46e1c1c61ae8fdc0d7fb10ec8ad949aab
 ```
 
-The 2026-09-20 watch found meaningful movement toward refresh-free account
-observation (Codex read-only status, Nous local snapshot, xAI non-refresh
-status), but OA2 remains closed because Qwen still refresh-validates, the OAuth
-response still carries token previews, the required machine-auth route is
-absent, and stable has not moved.
-
-Fallback activation/restore markers and `hermes mcp test` output remain
-compatible.
-
 ## Current contracts
 
 Current:
 
-- `r1c-authorization-header-argv-contract.md`
+- `r2a-malformed-yaml-contract.md`
 
 Queued:
 
-- `r2a-malformed-yaml-contract.md`
-- `r2c-static-discovery-compat-contract.md` (take R2c.1 before RC; R2c.2 after)
+- `r2c-static-discovery-compat-contract.md` (R2c.1 before RC; R2c.2 after)
 
 Completed:
 
+- `r1c-authorization-header-argv-contract.md`
 - `oa-close-account-auth-acceptance-contract.md`
 - `oa1b-oauth-evidence-rendering-contract.md`
 - `oa1-static-account-auth-discovery-contract.md`
@@ -112,7 +119,5 @@ one selected contract
 ```
 
 A reviewer finding outside the active contract is recorded, not automatically
-implemented.
-
-Before merge recommendation, refresh the PR body/evidence receipt to the exact
-candidate head.
+implemented. Before merge recommendation, refresh the PR body/evidence receipt
+to the exact candidate head.

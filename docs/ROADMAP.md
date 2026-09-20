@@ -55,8 +55,8 @@ refresh-free, no-secret status seam suitable for monitoring.
 ## Current path to the first public release
 
 ```text
-R1c  Authorization-header argv debt
- -> R2a  malformed YAML fail-safe
+R1c  Authorization-header argv debt — DONE / PR #42
+ -> R2a  malformed YAML fail-safe — NOW
  -> R2c.1  canonical fallback_providers inventory
  -> RR1  installer/dependency/managed-cron hardening
  -> RR2  runtime i18n (English + Russian)
@@ -68,20 +68,25 @@ R1c  Authorization-header argv debt
 
 ## R1c — Authorization headers out of child argv
 
-Current stage.
+**Done / PR #42.**
 
-Known active authenticated curl paths must deliver Authorization values without
-putting them in child process arguments. Existing Telegram secret-URL handling
-must remain safe.
+Authorization values now reach authenticated requests without appearing in
+child argv. Existing Telegram secret-URL handling remains safe. Exact candidate
+`b477d2bb...` passed 115/115 probes plus 8/8 swap tests; its four changed
+blobs match merged main `133931a8...`.
 
 Implementation contract:
 [docs/handoffs/r1c-authorization-header-argv-contract.md](handoffs/r1c-authorization-header-argv-contract.md).
 
 ## R2a — malformed YAML fail-safe
 
-A malformed Hermes `config.yaml` must become explicit degraded/partial
-observation, not a traceback, silently empty healthy inventory, or stale state
-that looks fresh.
+**Current stage.**
+
+A malformed Hermes `config.yaml` must become explicit degraded observation,
+not a traceback, silently empty healthy inventory, or stale state that looks
+fresh. The design preserves last-good inventory, marks discovery degraded,
+suppresses false mass removals, fails health/deep consumers closed, and emits a
+bounded operator-visible degradation/recovery transition.
 
 ## R2c.1 — canonical fallback chain compatibility
 
@@ -196,5 +201,5 @@ Current posture:
 monitoring core: proven in maintainer production
 clean-VM bootstrap: previously rehearsed
 distribution contract: incomplete
-public RC: close, gated by the stages above
+public RC: close, gated by R2a + R2c.1 + RR1/RR2/RR3
 ```
