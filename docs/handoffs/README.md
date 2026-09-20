@@ -5,7 +5,7 @@ handoffs. **Old handoff presence is not implementation authority.**
 
 Repository `AGENTS.md` scope-control rules apply to every document here.
 
-## Active baseline — updated 2026-09-20
+## Active baseline — updated 2026-09-21
 
 Read in this order:
 
@@ -14,43 +14,40 @@ Read in this order:
 
 Current selected task:
 
-- `r2a-malformed-yaml-contract.md` — **NOW / READY**
+- `r2c-static-discovery-compat-contract.md` — **R2c.1 NOW / READY**
 
 Completed:
 
-- R1a deploy/GitHub-heartbeat secret-in-argv — **DONE / PR #29**
-- R1b Telegram child-argv secret exposure — **DONE / PR #31**
-- R1c Authorization-header argv exposure — **DONE / PR #42**
-- OA0 account-auth research — **DONE / PR #33 / STATIC ONLY**
-- OA1 generic static account-auth discovery — **DONE / PR #35**
-- OA1b OAuth evidence rendering — **DONE / PR #39**
-- OA-close acceptance — **DONE / PR #40 / OA PHASE COMPLETE**
+- R1a — **DONE / PR #29**
+- R1b — **DONE / PR #31**
+- R1c — **DONE / PR #42**
+- R2a malformed YAML fail-safe — **DONE / PR #44**
+- OA0/OA1/OA1b/OA-close — **COMPLETE**
 
 Closed/upstream-gated:
 
 - `oa2-hermes-status-shadow-reopen-gate.md`
 
-## R1c accepted baseline
+## R2a accepted baseline
 
 ```text
-contract baseline = 96149309dba4b5b539ba6f111e375355b2ab4cfd
-candidate head    = b477d2bbd4d892b3fee97dd188110d4c7bbff94e
-merged main       = 133931a8242de0e61cecace5f75905bf63615383
-CI #81            = success
-probes            = 115 pass / 0 fail
-swap tests        = 8 pass / 0 fail
+candidate head = 6241543d96e93cfbe197706dcbf316fbbc72b58d
+merged main    = 7b78e9369be72d9a5f08de267ccfc62604710f79
+CI #86         = success
+probes         = 131 pass / 0 fail
+swap tests     = 8 pass / 0 fail
 ```
 
-All four changed blobs are identical between candidate and merged main.
-The final Pytna remediation changed only `tests/probes.py` and strengthened the
-artifact/capture boundary; production code was unchanged.
+All six changed blobs match candidate and merged main. One P1 and one P2 from
+Pytna were fixed in the single remediation.
 
 ## Release-oriented execution order
 
 ```text
 R1c DONE
- -> R2a malformed YAML NOW
- -> R2c.1 fallback_providers compatibility
+ -> R2a DONE
+ -> R2c.1 NOW
+ -> RR0 legacy/personal-dependency reduction
  -> RR1 installer/dependency/managed-cron
  -> RR2 runtime i18n: en + ru
  -> RR3 release acceptance
@@ -59,12 +56,10 @@ R1c DONE
  -> v0.1.0
 ```
 
-After the RC:
+Post-RC:
 
-```text
-R2c.2 bounded auxiliary coverage
- -> R3 reduction/stabilization
-```
+- R2c.2 bounded auxiliary coverage;
+- low-risk archive/docs cleanup.
 
 Deferred/separate:
 
@@ -77,27 +72,29 @@ Deferred/separate:
 ```text
 Hermes stable = v2026.9.14 / v0.21.3
 stable commit = 345cd2b057a452236de401d3534b8502a7465e8d
-warning-source main = f88c6fc46e1c1c61ae8fdc0d7fb10ec8ad949aab
+warning-source main = 64c7da592d43a9f155ea8606865d9ae1eda3222b
 ```
+
+Stable itself confirms R2c.1 semantics:
+`fallback_providers` ordered first, legacy `fallback_model` appended with
+route dedupe.
 
 ## Current contracts
 
 Current:
 
-- `r2a-malformed-yaml-contract.md`
+- `r2c-static-discovery-compat-contract.md` — R2c.1 only
 
 Queued:
 
-- `r2c-static-discovery-compat-contract.md` (R2c.1 before RC; R2c.2 after)
+- RR0 contracts — to be split from
+  `docs/research/2026-09-21-pre-release-legacy-audit.md` after R2c.1
 
 Completed:
 
+- `r2a-malformed-yaml-contract.md`
 - `r1c-authorization-header-argv-contract.md`
-- `oa-close-account-auth-acceptance-contract.md`
-- `oa1b-oauth-evidence-rendering-contract.md`
-- `oa1-static-account-auth-discovery-contract.md`
-- `oa0-account-auth-discovery-research-contract.md`
-- R1a/R1b contracts
+- OA contracts
 
 Closed/upstream-gated:
 
@@ -118,6 +115,4 @@ one selected contract
  -> merge/decision OR blocker
 ```
 
-A reviewer finding outside the active contract is recorded, not automatically
-implemented. Before merge recommendation, refresh the PR body/evidence receipt
-to the exact candidate head.
+Out-of-scope review findings are recorded, not automatically implemented.
