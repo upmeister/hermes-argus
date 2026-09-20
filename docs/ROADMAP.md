@@ -9,55 +9,36 @@ is not permission to pull adjacent work into the same PR.
 
 1. **Hermes owns runtime truth.** Argus observes externally and independently;
    it does not become a second provider/credential/runtime resolver.
-2. **Failures must be loud without becoming false-green.** Missing evidence,
-   unknown state and static credential presence are not silently promoted to
-   health.
-3. **Secret handling is part of correctness.** Monitoring must not expose the
-   credentials it is trying to verify.
-4. **Public installation is a product surface.** Installer, cron/systemd
-   ownership, upgrade and uninstall behavior need tests just like monitoring
-   code.
-5. **Prefer bounded compatibility to mirroring Hermes internals.** Track
-   stable external seams and documented config where useful; do not chase every
-   upstream implementation detail.
-6. **Runtime localization and documentation are separate concerns.** Runtime
-   operator UI will support English and Russian; project documentation remains
-   English-only.
+2. **Failures must be loud without becoming false-green.**
+3. **Secret handling is part of correctness.**
+4. **Public installation is a product surface.**
+5. **Prefer bounded compatibility to mirroring Hermes internals.**
+6. **Runtime localization and documentation are separate concerns.** Runtime UI
+   will support English and Russian; project documentation remains English-only.
+7. **Default modules must be internally truthful.** A clean default install
+   must not depend on optional or historical components that were not installed.
 
 ## Completed foundation
 
-### Monitoring core
+Completed release gates include:
 
-- integration discovery from Hermes config/environment/static auth evidence;
-- schema-v2 health reports with explicit evidence/verdict semantics;
-- external HTTP/MCP/integration checks;
-- fallback cascade observation and recovery tracking;
-- systemd/process/network/resource watchdogs;
-- bounded auto-remediation and memory-limit drop-ins;
-- Telegram alert/control-plane integration;
-- optional external dead-man heartbeat backends.
+- R1a deploy/GitHub-heartbeat secret-in-argv hardening;
+- R1b Telegram child-argv secret hardening;
+- OA static account-auth discovery and false-green correction;
+- OA1b user-facing auth-evidence rendering;
+- OA-close;
+- R1c Authorization headers out of child argv;
+- R2a fail-safe malformed YAML discovery.
 
-### Stabilization and account-auth phase
+OA2 remains **closed/upstream-gated**.
 
-Completed work includes:
-
-- deployment/GitHub heartbeat secret-in-argv hardening;
-- Telegram child-argv secret hardening;
-- generic static account-auth discovery including nested/pool-only Codex;
-- elimination of false-green "logged in" semantics for static OAuth evidence;
-- user-facing OAuth evidence rendering;
-- final OA acceptance.
-
-OA2 — consuming Hermes-owned account status dynamically — remains
-**closed/upstream-gated** until Hermes exposes a stable machine-readable,
-refresh-free, no-secret status seam suitable for monitoring.
-
-## Current path to the first public release
+## Current path to first public release
 
 ```text
-R1c  Authorization-header argv debt — DONE / PR #42
- -> R2a  malformed YAML fail-safe — NOW
- -> R2c.1  canonical fallback_providers inventory
+R1c  Authorization-header argv debt                 DONE / PR #42
+ -> R2a  malformed YAML fail-safe                    DONE / PR #44
+ -> R2c.1  canonical fallback_providers inventory    NOW
+ -> RR0  legacy/personal-dependency reduction
  -> RR1  installer/dependency/managed-cron hardening
  -> RR2  runtime i18n (English + Russian)
  -> RR3  clean-install/upgrade/uninstall/release acceptance
@@ -66,57 +47,80 @@ R1c  Authorization-header argv debt — DONE / PR #42
  -> v0.1.0
 ```
 
-## R1c — Authorization headers out of child argv
+After the first RC:
 
-**Done / PR #42.**
+```text
+R2c.2 bounded auxiliary-role coverage
+ -> low-risk archive/docs cleanup as ordinary maintenance
+```
 
-Authorization values now reach authenticated requests without appearing in
-child argv. Existing Telegram secret-URL handling remains safe. Exact candidate
-`b477d2bb...` passed 115/115 probes plus 8/8 swap tests; its four changed
-blobs match merged main `133931a8...`.
+## R2a — completed
+
+PR #44 made discovery fail-safe for malformed/unreadable config:
+
+- preserves last-good inventory;
+- marks discovery degraded without false mass removals;
+- reports bounded degradation/recovery transitions;
+- makes health/deep consumers fail closed on degraded inventory.
+
+Accepted candidate `6241543d...` passed 131/131 probes + 8/8 swap tests.
+All six changed blobs match merged main `7b78e936...`.
+
+## R2c.1 — current stage
+
+Supported Hermes stable already defines the canonical fallback chain:
+
+```text
+fallback_providers first, preserving order
+then legacy fallback_model
+dedupe by provider/model/base_url
+```
+
+Hermes CLI writes `fallback_providers` and removes the legacy key.
+
+Argus currently inventories only one legacy `fallback_model`, so current
+canonical fallback chains can be invisible.
+
+R2c.1 fixes that static inventory gap only. It does not alter runtime fallback
+tracking or expand auxiliary/delegation/MoA coverage.
 
 Implementation contract:
-[docs/handoffs/r1c-authorization-header-argv-contract.md](handoffs/r1c-authorization-header-argv-contract.md).
+[docs/handoffs/r2c-static-discovery-compat-contract.md](handoffs/r2c-static-discovery-compat-contract.md).
 
-## R2a — malformed YAML fail-safe
+## RR0 — pre-release legacy/personal-dependency reduction
 
-**Current stage.**
+The 2026-09-21 audit found release-affecting historical coupling that cannot
+wait until after RC.
 
-A malformed Hermes `config.yaml` must become explicit degraded observation,
-not a traceback, silently empty healthy inventory, or stale state that looks
-fresh. The design preserves last-good inventory, marks discovery degraded,
-suppresses false mass removals, fails health/deep consumers closed, and emits a
-bounded operator-visible degradation/recovery transition.
+High-value findings include:
 
-## R2c.1 — canonical fallback chain compatibility
+- watchdog calls a non-existent historical `~/scripts/check-integrations.sh`;
+- default CORE self-health depends on default-OFF ANALYZER state;
+- self-health requires TG bot and Netdata although they are optional/uninstalled
+  by the default bootstrap;
+- GH heartbeat deploy uses `~/.hermes/gh-heartbeat` while runtime paths still
+  use historical `~/.hermes/hermes-infra`;
+- personal GitHub/proxy/old-kit defaults remain;
+- some deployed code has no live caller or is explicitly superseded.
 
-Before the RC, update only the demonstrated static config drift:
+RR0 is a release gate, but it must be implemented in focused slices rather than
+one broad refactor.
 
-- prefer ordered `fallback_providers`;
-- retain bounded legacy `fallback_model` compatibility;
-- keep static config distinct from actual runtime route truth.
-
-Broader auxiliary-role expansion moves after the RC unless a concrete incident
-promotes it.
+Research:
+[pre-release legacy audit](research/2026-09-21-pre-release-legacy-audit.md).
 
 ## RR1 — public installation contract
 
-The repository already has a clean-Ubuntu bootstrap, but the public install path
-still needs product-grade ownership semantics.
-
-Release goals:
+After RR0 defines the truthful live module surface:
 
 - managed, idempotent Argus cron block;
 - dependency preflight for enabled modules;
-- ordinary sudo/install ergonomics;
+- interactive sudo/install ergonomics;
 - Hermes/version/home preflight;
 - private secret-config permissions;
-- no shell mismatch in cron jobs;
-- version-pinned stable install with an explicit edge channel;
-- safe update and uninstall that remove only Argus-owned resources.
-
-The likely distribution is a versioned GitHub Release rather than a Python/apt
-package.
+- version-pinned stable install with explicit edge channel;
+- safe update/uninstall;
+- migration of any renamed Argus-owned resources.
 
 ## RR2 — runtime localization
 
@@ -127,79 +131,55 @@ en
 ru
 ```
 
-The maintainer production deployment currently uses Russian and must remain
-supported without a surprise language flip on upgrade.
-
-Localization applies to human-facing runtime/operator surfaces such as bot
-messages, alerts and status text. Machine-readable schemas and parser-facing
-markers remain language-neutral.
-
-The README and project documentation remain English-only. There is no plan for
-a duplicated Russian documentation tree.
+The current Russian production experience remains supported. Existing installs
+must not silently flip language on upgrade. README/docs remain English-only.
 
 ## RR3 — release acceptance
 
 Before `v0.1.0-rc.1`:
 
-- installer/deploy syntax and smoke tests run in CI;
+- installer/deploy smoke tests run in CI;
 - clean Ubuntu 24.04 install from a versioned artifact/tag is rehearsed;
+- default module set reaches useful operation without historical hidden state;
 - re-run/upgrade is idempotent;
-- uninstall is bounded to Argus-owned state;
-- default modules reach useful operation without undocumented manual dependency
-  steps;
-- release notes/changelog/compatibility target are explicit.
-
-The first public tag should be a GitHub pre-release. Stable `v0.1.0` follows
-after a short real-world soak.
-
-## After the first RC
-
-### R2c.2 — bounded auxiliary-role coverage
-
-Add auxiliary configuration only when it materially improves operator
-understanding or a real incident demonstrates the gap.
-
-### R3 — reduction and stabilization
-
-Delete stale compatibility/dead paths, simplify accumulated personal-era
-assumptions, and tighten the public v0.1 surface.
-
-### Separate tracks
-
-- multi-profile monitoring remains its own MP0-MP5 track;
-- gateway-liveness redesign remains deferred;
-- OA2 remains upstream-gated research.
+- uninstall removes only Argus-owned resources;
+- release notes/changelog/compatibility targets are explicit.
 
 ## Hermes upstream policy
 
 Argus targets supported Hermes stable behavior first and treats upstream
 `main` as a warning/research source.
 
-As of the 2026-09-20 watch:
+2026-09-21 snapshot:
 
-- supported stable remains Hermes Agent v0.21.3 / `v2026.9.14`;
-- fresh upstream is increasingly separating read-only account observation from
-  credential mutation;
-- Codex status is now explicitly read-only, Nous has a refresh-free local
-  snapshot and xAI avoids refresh-on-status;
-- Qwen still refresh-validates;
-- the OAuth dashboard response still exposes token previews and lacks the
-  suitable machine-authenticated no-secret endpoint required by OA2;
-- credential-pool logic continues to grow substantially more complex.
+```text
+stable = v2026.9.14 / v0.21.3
+warning-source main = 64c7da592d43a9f155ea8606865d9ae1eda3222b
+main advanced 951 commits since the previous f88c6fc4 watch
+```
 
-That direction reinforces the core boundary: Argus should consume stable
-observation seams when they exist, not duplicate Hermes credential logic.
+Relevant convergence:
+
+- stable and main share the same canonical fallback chain semantics used by
+  R2c.1;
+- the runtime restore marker consumed by Argus is unchanged;
+- fresh-main `hermes mcp test` now has useful non-zero failure/missing-server
+  exits while retaining current output markers.
+
+Keep current MCP marker parsing until a supported stable bump.
+
+OA2 remains closed: Qwen status still refresh-validates, OAuth status cards
+still carry `token_preview`, and `/api/providers/oauth` is not registered on
+the generic token-auth route seam.
 
 ## Release threshold
 
-A public RC is ready when known blockers are ordinary post-release feature work,
-not known installation, secret-boundary or fail-safe correctness defects.
-
-Current posture:
-
 ```text
-monitoring core: proven in maintainer production
-clean-VM bootstrap: previously rehearsed
+monitoring core: proven
+R1c: closed
+R2a: closed
+R2c.1: current
+RR0: required before installer hardening
 distribution contract: incomplete
-public RC: close, gated by R2a + R2c.1 + RR1/RR2/RR3
+public RC: gated by R2c.1 + RR0 + RR1/RR2/RR3
 ```
