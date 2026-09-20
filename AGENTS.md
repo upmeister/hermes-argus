@@ -165,9 +165,10 @@ branch-protection changes require explicit maintainer authorization.
 Public release path:
 
 ```text
-R1c
- -> R2a
- -> R2c.1
+R1c DONE
+ -> R2a DONE
+ -> R2c.1 NOW
+ -> RR0 legacy/personal-dependency reduction
  -> installer/dependency/managed-cron hardening
  -> runtime i18n (en + ru)
  -> release acceptance
@@ -189,3 +190,6 @@ release-readiness task, not permission to duplicate documentation.
 - `tests/probes.py` — regression/security probes.
 - Canonical planning roadmap in the Obsidian vault:
   `projects/hermes-argus/plans/2026-09-20-public-release-roadmap.md`.
+
+Pre-release cleanup research:
+`docs/research/2026-09-21-pre-release-legacy-audit.md`.
