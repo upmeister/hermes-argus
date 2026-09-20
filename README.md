@@ -258,8 +258,8 @@ becoming a second credential resolver.
 The current path to the first public release is intentionally bounded:
 
 ```text
-R1c  Authorization headers out of child argv
- -> R2a  malformed YAML fail-safe
+R1c  Authorization headers out of child argv — DONE
+ -> R2a  malformed YAML fail-safe — NOW
  -> R2c.1  canonical fallback_providers inventory
  -> installer/dependency/managed-cron hardening
  -> runtime i18n: English + Russian
