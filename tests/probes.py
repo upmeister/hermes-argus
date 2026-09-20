@@ -3260,6 +3260,42 @@ def probe_r2a_secret_error_boundary(tmp: Path):
           f"rc={r.returncode} canary_leaked={R2A_CANARY in blob}")
 
 
+def probe_r2a_recovery_reportable_via_baseline(tmp: Path):
+    """R2a (Pytna Finding 2): --baseline глушит entity-diff, но НЕ обязательный
+    degraded→ok переход: recovery через baseline-прогон отчётный (2), следующий
+    обычный прогон тихий (без дубля)."""
+    home = _r2a_home(tmp, "r2a-recbase")
+    write(home / "config.yaml", R2A_VALID_CFG)
+    _r2a_run(home, args=["--baseline"])
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    _r2a_run(home)
+    write(home / "config.yaml", R2A_VALID_CFG)
+    r = _r2a_run(home, args=["--baseline"],
+                 extra_env={"DISCOVER_REPORT": str(tmp / "r2a-recbase-report.json")})
+    rep = _r2a_report(tmp, "r2a-recbase-report.json")
+    r2 = _r2a_run(home)
+    check("r2a_recovery_reportable_via_baseline",
+          r.returncode == 2
+          and [e["event"] for e in rep["events"]] == ["discovery_recovered"]
+          and r2.returncode == 0,
+          f"rc={r.returncode} rc2={r2.returncode} events={rep['events']}")
+
+
+def probe_r2a_unreadable_encoding_degraded(tmp: Path):
+    """R2a (Pytna Finding 1): config.yaml с битой UTF-8 последовательностью —
+    деградация config_unreadable (RC 2, без traceback), не крах чтения."""
+    home = _r2a_home(tmp, "r2a-encoding")
+    (home / "config.yaml").write_bytes(b'providers: "\xff\xfe broken"\n')
+    r = _r2a_run(home)
+    snap = _r2a_snap(home)
+    out = r.stdout.decode(errors="ignore") + r.stderr.decode(errors="ignore")
+    check("r2a_unreadable_encoding_degraded",
+          r.returncode == 2 and "Traceback" not in out
+          and snap["discovery"]["status"] == "degraded"
+          and snap["discovery"]["reason_code"] == "config_unreadable",
+          f"rc={r.returncode} disc={snap.get('discovery')}")
+
+
 # ── runner ──────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -3391,6 +3427,8 @@ def main() -> int:
     probe_r2a_legacy_snapshot_compat(tmp)
     probe_r2a_wrapper_renders_transitions(tmp)
     probe_r2a_secret_error_boundary(tmp)
+    probe_r2a_recovery_reportable_via_baseline(tmp)
+    probe_r2a_unreadable_encoding_degraded(tmp)
     probe_deploy_cron_profile(tmp)
     probe_deploy_secret_not_in_argv(tmp)
     probe_deploy_gh_heartbeat_secret_not_in_argv(tmp)

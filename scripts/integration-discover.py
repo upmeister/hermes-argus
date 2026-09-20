@@ -138,12 +138,16 @@ def load_config():
         return {}, "ok", ""
     try:
         import yaml
-        with open(CONFIG) as f:
+        with open(CONFIG, encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except FileNotFoundError:
         return {}, "ok", ""
     except yaml.YAMLError:
         return {}, "degraded", DISC_REASON_SYNTAX
+    except UnicodeError:
+        # Битая кодировка (Pytna R2a-1 Finding 1): файл есть, но не читается
+        # как UTF-8 — деградация, не traceback.
+        return {}, "degraded", DISC_REASON_UNREADABLE
     except OSError:
         return {}, "degraded", DISC_REASON_UNREADABLE
     if data is None:
@@ -422,14 +426,16 @@ def main():
         if not baseline:
             events = diff_entities(
                 old_snap.get("entities", {}) if old_snap else {}, entities)
-            if prev_status == "degraded":
-                # Восстановление всегда отчётное — даже при пустом diff
-                # сущностей (R2a §4). Инвентаризация сравнивается с last-good:
-                # замороженные на время деградации entities и есть last-good,
-                # поэтому «буря remove/add» из-за malformed-интервала невозможна.
-                events.insert(0, {
-                    "event": "discovery_recovered", "key": "discovery",
-                    "entity": _discovery_entity("ok", "")})
+        if prev_status == "degraded":
+            # Восстановление всегда отчётное — даже при пустом diff сущностей
+            # и даже в --baseline-прогоне: baseline глушит entity-diff, но не
+            # обязательный degraded→ok переход (Pytna R2a-1 Finding 2).
+            # Инвентаризация сравнивается с last-good: замороженные на время
+            # деградации entities и есть last-good, поэтому «буря remove/add»
+            # из-за malformed-интервала невозможна.
+            events.insert(0, {
+                "event": "discovery_recovered", "key": "discovery",
+                "entity": _discovery_entity("ok", "")})
     else:
         # Деградация: last-good инвентаризация замораживается дословно.
         # updated/config_hash/entities/env_keys остаются last-good — stale
