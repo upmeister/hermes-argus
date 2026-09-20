@@ -1,115 +1,303 @@
 # R2c contract — bounded static discovery compatibility with current Hermes
 
-Status: **QUEUED AFTER OA TRACK + R2a**
+Status: **R2c.1 NOW / READY FOR IMPLEMENTATION**
 
-## Authority note — auth subsection superseded
-
-The former R2c.3 credential/OAuth audit is superseded by:
+## Exact baseline
 
 ```text
-docs/handoffs/oa0-account-auth-discovery-research-contract.md
+Argus main = 7b78e9369be72d9a5f08de267ccfc62604710f79
+
+R2a / PR #44 = DONE
+R2a candidate = 6241543d96e93cfbe197706dcbf316fbbc72b58d
+R2a CI #86 = success
+R2a probes = 131/131
+R2a swap tests = 8/8
 ```
 
-Reason: the old R2c.3 premise was that no supported-deployment auth identity had yet been demonstrated as invisible. That premise is no longer true: current Argus can miss a working OpenAI/Codex account because Hermes auth storage evolved beyond the old flat singleton assumption.
-
-Do not start a second auth-discovery design under R2c.
-
-Future account-auth implementation belongs to OA1/OA2 only after OA0 research and maintainer approval.
-
-## Problem retained by R2c
-
-Current Argus static discovery still reflects older Hermes configuration assumptions in a few non-auth places.
-
-The retained concrete drift is:
-
-1. `fallback_providers` is the canonical ordered primary fallback chain;
-2. legacy `fallback_model` remains accepted for compatibility;
-3. registry metadata is curated Argus check/catalog data, not complete Hermes runtime truth;
-4. auxiliary-role coverage should remain bounded to demonstrated operator value.
-
-This task updates only static metadata with clear operational value. It does not recreate Hermes provider/runtime resolution.
-
-## Owner
-
-Primary owner: `scripts/integration-discover.py`.
-
-Related generated metadata: `registry.yaml` / `scripts/gen-registry.py` only for documentation/semantics clarification unless a concrete bug is demonstrated.
-
-`fallback-tracker-v2.py` is NOT in scope merely because fallback configuration changes; its log-event parser is a separate runtime-observation path and remains unchanged unless a current upstream marker actually breaks.
-
-## R2c.1 — canonical fallback chain inventory
-
-Discovery should represent `fallback_providers` in configured order.
-
-Compatibility rule:
-
-- prefer canonical `fallback_providers` when present;
-- continue understanding legacy `fallback_model` according to the minimum semantics required to avoid losing existing installations;
-- do not call Hermes helpers to normalize/merge the two;
-- do not claim the static result is the actual runtime route selected at inference time.
-
-The output must preserve enough identity to show provider/model chain changes without serializing secrets.
-
-## R2c.2 — auxiliary roles: bounded coverage only
-
-Do not enumerate every upstream auxiliary task merely because it exists.
-
-Retain current roles and add another role only when one of these is true:
-
-- it materially changes operator understanding of provider dependency/fallback;
-- it is used in the reference deployment;
-- a real incident demonstrates missing monitoring value.
-
-This contract does not authorize a full mirror of Hermes auxiliary config.
-
-## R2c.3 — retired
-
-Credential/OAuth/account-auth work has moved to the OA track.
-
-See:
+Hermes authority:
 
 ```text
-OA0 research
- -> maintainer decision
- -> OA1 generic structural auth discovery
- -> OA2 optional Hermes-owned status shadow/enrichment
+stable = v2026.9.14 / v0.21.3
+stable commit = 345cd2b057a452236de401d3534b8502a7465e8d
+warning-source main = 64c7da592d43a9f155ea8606865d9ae1eda3222b
 ```
+
+## 1. Demonstrated compatibility gap
+
+Current Argus only inventories:
+
+```text
+cfg.fallback_model -> model:fallback
+```
+
+and ignores the canonical ordered `fallback_providers` chain.
+
+This is a real false-negative against the supported stable release, not merely
+fresh-main drift.
+
+Hermes stable `v2026.9.14` and fresh main both define
+`get_fallback_chain()` with the same semantics:
+
+1. read `fallback_providers` first and preserve its order;
+2. append valid legacy `fallback_model` entries afterwards;
+3. deduplicate equivalent provider/model/base_url routes.
+
+The Hermes fallback CLI persists only `fallback_providers` and removes
+`fallback_model`.
+
+Therefore a normal current Hermes configuration can have all fallback rungs
+invisible to Argus.
+
+## 2. R2c.1 selected scope
+
+R2c.1 updates **static top-level fallback inventory only**.
+
+Primary owner:
+
+- `scripts/integration-discover.py`.
+
+Allowed adjacent:
+
+- `tests/probes.py`;
+- `CHANGELOG.md`.
+
+`health-check-v2.py` may be touched only if the existing informational
+`active_models` projection would otherwise destroy the newly represented
+chain order/identity. Stop and report before expanding further.
+
+Not owners:
+
+- `fallback-tracker-v2.py`;
+- `webhook.py` absent a concrete local rendering regression;
+- `registry.yaml` / `gen-registry.py` absent a demonstrated fallback bug.
+
+## 3. Static chain semantics
+
+Implement the smallest pure/static equivalent needed for inventory.
+
+### Canonical source
+
+Accept `fallback_providers` as the primary ordered chain.
+
+A valid entry requires non-empty string:
+
+```text
+provider
+model
+```
+
+Malformed/non-mapping entries are ignored rather than crashing discovery.
+
+### Legacy append
+
+After canonical entries, append valid `fallback_model` entries.
+
+Keep minimum compatibility with the stable Hermes semantics. Both dict and list
+forms may be accepted if doing so stays local and simple.
+
+### Deduplication
+
+Equivalent routes should appear once.
+
+Bounded identity:
+
+```text
+provider + model + normalized/sanitized base_url identity
+```
+
+Do not import Hermes' helper merely to obtain this behavior.
+
+Case/whitespace normalization may follow the obvious stable static semantics,
+but do not grow a compatibility framework around obscure provider aliases.
+
+### Ordered entity representation
+
+Keep the old single-fallback surface stable where practical.
+
+Preferred positional keys:
+
+```text
+first rung      -> model:fallback
+additional rung -> model:fallback:1
+                   model:fallback:2
+                   ...
+```
+
+All remain informational `activemodel` entities with role `fallback`.
+Insertion/report order must preserve configured chain order.
+
+A different equally small key shape is acceptable only if it preserves:
+
+- deterministic order;
+- stable identity across repeated runs;
+- legacy single-entry compatibility;
+- meaningful diff behavior on reorder.
+
+### Route metadata / secret boundary
+
+If `base_url` is retained in snapshot metadata to distinguish routes, it must
+use the existing URL sanitization boundary. Userinfo and secret query values
+must never enter snapshot/report/event output.
+
+Do not persist credential material or provider-resolved runtime metadata.
+
+## 4. Static inventory is not runtime truth
+
+Do not claim the configured chain is the route Hermes actually used.
+
+Runtime observation stays owned by `fallback-tracker-v2.py`.
+
+Fresh main still emits the restore marker Argus currently consumes:
+
+```text
+Primary runtime restored for new turn: ...
+```
+
+No fallback-tracker rewrite is authorized by R2c.1.
+
+## 5. R2a compatibility
+
+R2c.1 must preserve the new discovery fail-safe semantics.
+
+A degraded snapshot/config attempt must not:
+
+- run fallback extraction on invalid config as if it were healthy;
+- overwrite last-good inventory;
+- create a false fallback remove/add storm;
+- bypass consumer fail-closed behavior.
+
+Legacy pre-R2a snapshots remain readable according to the accepted R2a contract.
+
+## 6. Required red-capable probes
+
+At minimum:
+
+1. canonical 3-rung `fallback_providers` fixture appears in configured order;
+2. canonical + legacy fixture: canonical entries first, unique legacy appended;
+3. duplicate canonical/legacy provider/model/base_url route appears once;
+4. legacy-only single fallback preserves the old `model:fallback` behavior;
+5. malformed chain/list entries are ignored safely;
+6. chain reorder produces deterministic positional changes rather than random
+   identity churn;
+7. two otherwise-equal routes with distinct safe base URLs remain
+   distinguishable if base_url participates in identity;
+8. URL userinfo/secret query canaries are absent from snapshot/report/events;
+9. unrelated provider/MCP/OAuth discovery behavior remains unchanged;
+10. R2a degraded-state/last-good behavior remains unchanged;
+11. no Hermes imports, subprocess, network, provider/plugin execution or
+    credential resolution is added.
+
+Whenever practical, run the new canonical-chain probe against the pre-R2c.1
+baseline and record the red result.
+
+## 7. R2c.2 — deferred
+
+Auxiliary-role expansion remains **AFTER RC**.
+
+Do not enumerate every upstream auxiliary/delegation/MoA/cron role merely
+because fresh Hermes has one.
+
+Add a role later only when it materially changes operator understanding or a
+real incident demonstrates monitoring value.
+
+## 8. Account-auth subsection — retired
+
+Credential/OAuth/account-auth work remains owned by OA0/OA1/OA2.
 
 Do not add credential-pool parsing under R2c.
 
-## Registry semantics
+## 9. Registry semantics
 
-`registry.yaml` is an Argus curated check/catalog input, not proof of the complete Hermes integration surface.
+`registry.yaml` remains curated Argus check/catalog metadata, not a complete
+Hermes runtime registry.
 
-`scripts/gen-registry.py` currently derives much of its metadata from the static `OPTIONAL_ENV_VARS` data source. Fresh Hermes can augment provider/plugin env metadata elsewhere, and not every documented environment setting is represented by that static block.
+Do not redesign the generator to chase “100% Hermes integration coverage” in
+R2c.1.
 
-Required outcome: comments/docs must state this limitation clearly so future agents do not attempt to reach “100% Hermes integration coverage” by expanding the generator architecture.
+## 10. Non-goals
 
-No registry redesign is required by this contract.
-
-## Acceptance criteria
-
-- fixture with ordered `fallback_providers` produces stable ordered static metadata;
-- legacy `fallback_model` fixture remains supported;
-- secrets never appear in discovery output;
-- valid existing discovery semantics unrelated to fallback remain unchanged;
-- no Hermes imports, provider/plugin execution, credential resolution, token refresh, network, or subprocess bridge;
-- registry scope limitation is documented;
-- no account-auth/OAuth implementation is added here;
-- `argus-ci` green.
-
-## Non-goals
+R2c.1 does not authorize:
 
 - runtime route truth;
-- account-auth discovery (OA track);
-- all auxiliary tasks;
-- all Hermes providers;
-- plugin provider execution;
-- auth validation during discovery;
-- C1 bridge revival;
-- multi-profile support;
-- fallback-tracker rewrite.
+- fallback tracker changes;
+- R2c.2 auxiliary/delegation/MoA coverage;
+- Hermes imports or provider registry execution;
+- account-auth/OA2 changes;
+- RR0 legacy cleanup;
+- installer/i18n work;
+- broad schema migration.
 
-## Stop condition
+## 11. Stop condition
 
-Stop if “correct static discovery” begins to require upstream internal imports, provider registry execution, credential materialization, a new adapter framework, broad schema migration, or account-auth work already owned by OA0/OA1/OA2. Report the uncovered semantic gap instead.
+Stop if the patch begins to require:
+
+- upstream runtime imports;
+- provider/plugin execution;
+- credential materialization;
+- broad health/report schema changes;
+- a new adapter framework;
+- RR0 cleanup to make R2c.1 work.
+
+Report the concrete incompatibility instead.
+
+## 12. ZCode receipt
+
+```markdown
+# R2c.1 outcome
+
+## Exact baseline/head
+
+## Upstream semantics verified
+- stable:
+- fresh main:
+
+## Static chain implementation
+- canonical order:
+- legacy append:
+- dedupe identity:
+- entity key/shape:
+
+## Compatibility
+- legacy-only:
+- malformed entries:
+- R2a degradation:
+
+## Secret boundary
+- base_url/query/userinfo:
+
+## No-effects proof
+- Hermes imports:
+- subprocess:
+- network/provider/plugin execution:
+
+## Tests / red capability / CI
+
+## Changed files
+
+## Out-of-scope findings
+
+## Production actions
+None.
+
+## Recommendation
+READY FOR PYTNA | BLOCKED
+```
+
+## 13. Pytna focus
+
+Prioritize:
+
+1. canonical order lost;
+2. legacy entry replaces/precedes canonical incorrectly;
+3. duplicate route appears twice;
+4. old single-fallback shape breaks needlessly;
+5. route secrets appear in snapshot/report/event output;
+6. runtime tracker/Hermes imports enter the patch;
+7. R2a degraded-state behavior regresses;
+8. RR0 cleanup gets mixed into R2c.1.
+
+Recommendation:
+
+```text
+PASS-TO-MERGE | REMEDIATE | BLOCKED-FOR-MAINTAINER
+```
