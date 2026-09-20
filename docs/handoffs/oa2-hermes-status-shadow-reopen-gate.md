@@ -11,11 +11,11 @@ supported Hermes stable = v2026.9.14 / v0.21.3
 stable commit = 345cd2b057a452236de401d3534b8502a7465e8d
 ```
 
-Latest upstream watch recorded 2026-09-20:
+Latest upstream watch recorded 2026-09-21:
 
 ```text
 latest stable = v2026.9.14 / v0.21.3
-Hermes main = f88c6fc46e1c1c61ae8fdc0d7fb10ec8ad949aab
+Hermes main = 64c7da592d43a9f155ea8606865d9ae1eda3222b
 stable unchanged
 ```
 
@@ -104,6 +104,24 @@ Therefore:
 OA2 remains CLOSED.
 Fresh-main convergence is tracked as upstream progress, not implementation authority.
 ```
+
+## 2026-09-21 follow-up watch
+
+From the prior `f88c6fc4...` watch to `64c7da59...`, fresh main advanced
+951 commits. The gate still does not reopen.
+
+Verified on the refreshed head:
+
+- `get_codex_auth_status()` remains explicitly read-only and uses
+  `read_only=True`;
+- Qwen `get_qwen_auth_status()` still calls
+  `resolve_qwen_runtime_credentials(refresh_if_expiring=True)`;
+- OAuth provider cards still carry `token_preview`;
+- repository registration search for the generic `register_token_route` seam
+  still shows no `/api/providers/oauth` registration (the live production
+  registration is the drain plugin route).
+
+Stable remains v0.21.3. Therefore OA2 stays **CLOSED / UPSTREAM-GATED**.
 
 ## Reopen conditions
 
