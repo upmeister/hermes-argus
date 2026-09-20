@@ -641,6 +641,16 @@ def run(argv: list[str] | None = None) -> int:
     except json.JSONDecodeError as e:
         print(f"health-check-v2: snapshot corrupt ({e}) — run integration-discover first", file=sys.stderr)
         return 2
+    # R2a: degraded discover snapshot is not live inventory. Fail closed
+    # through the existing configuration-error path BEFORE any network/MCP
+    # check, and do not rewrite a fresh-looking health report. Legacy
+    # pre-R2a snapshots without the discovery envelope stay valid.
+    disc = snapshot.get("discovery")
+    if isinstance(disc, dict) and disc.get("status") == "degraded":
+        reason = disc.get("reason_code") or "unknown reason"
+        print(f"health-check-v2: discovery degraded ({reason}) — snapshot is not live inventory; "
+              f"fix ~/.hermes/config.yaml and re-run integration-discover", file=sys.stderr)
+        return 2
 
     checks = [c for c in build_checks(registry, snapshot, env)
               if c["id"] not in set(filter(None, args.skip.split(",")))]

@@ -4,6 +4,14 @@
 Читает config.yaml (providers.key_env, custom_providers, mcp_servers, ${VAR})
 и имена ключей .env (НЕ значения) → снимок JSON. Diff с прошлым снимком →
 события added/removed/changed. exit 0 = тишина, 2 = есть события.
+
+R2a: malformed/wrong-shape config.yaml — не крах и не «пустой валидный конфиг».
+Снапшот несёт конверт discovery (status ok|degraded, reason_code, attempted_at,
+last_good_at); при деградации инвентаризация last-good замораживается как есть
+(никаких ложных removed/changed), свежесть updated не переписывается. Первый
+переход ok→degraded и восстановление degraded→ok — отчётные события (exit 2),
+повтор идентичной деградации — тихий (exit 0). Сырой текст ошибки парсера в
+вывод не попадает: в config.yaml могут быть секреты.
 """
 import json, os, re, sys, hashlib
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -104,8 +112,49 @@ def load_yaml(path):
         import yaml
         with open(path) as f:
             return yaml.safe_load(f) or {}
-    except FileNotFoundError:
+    except (FileNotFoundError, yaml.YAMLError):
+        # YAMLError (R2a): community plugin.yaml с битым YAML не должен ронять
+        # весь дискавери — пропускается как непрочитанный источник. Авторитетный
+        # config.yaml идёт через load_config(), где деградация — явная.
         return {}
+
+
+# Стабильные reason_code деградации config.yaml (R2a). Вывод сырого исключения
+# парсера запрещён — в config.yaml могут быть секреты.
+DISC_REASON_SYNTAX = "config_yaml_syntax"
+DISC_REASON_SHAPE = "config_yaml_shape"
+DISC_REASON_UNREADABLE = "config_unreadable"
+
+
+def load_config():
+    """Авторитетный config.yaml → (cfg, status, reason_code).
+
+    status "ok": cfg — словарь; отсутствие файла сохраняет существующую
+    семантику ({} как «нет конфига»). status "degraded": файл есть, но не
+    парсится или верхний уровень не словарь — cfg {} и стабильный reason_code.
+    Деградация НИКОГДА не маппится в валидный пустой конфиг (R2a): это создало
+    бы ложную массу removed-событий."""
+    if not CONFIG.exists():
+        return {}, "ok", ""
+    try:
+        import yaml
+        with open(CONFIG, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except FileNotFoundError:
+        return {}, "ok", ""
+    except yaml.YAMLError:
+        return {}, "degraded", DISC_REASON_SYNTAX
+    except UnicodeError:
+        # Битая кодировка (Pytna R2a-1 Finding 1): файл есть, но не читается
+        # как UTF-8 — деградация, не traceback.
+        return {}, "degraded", DISC_REASON_UNREADABLE
+    except OSError:
+        return {}, "degraded", DISC_REASON_UNREADABLE
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return {}, "degraded", DISC_REASON_SHAPE
+    return data, "ok", ""
 
 
 def env_names(path):
@@ -170,8 +219,11 @@ def sanitize_url(url: str) -> str:
         return _sanitize_unparsed_url(value)
 
 
-def extract_entities():
-    cfg = load_yaml(CONFIG)
+def extract_entities(cfg=None):
+    # cfg=None: legacy in-process callers (probes) читают CONFIG сами;
+    # main() всегда передаёт уже разобранный load_config() результат.
+    if cfg is None:
+        cfg = load_yaml(CONFIG)
     env = env_names(ENV_FILE)
     entities = {}
 
@@ -331,9 +383,13 @@ def diff_entities(old, new):
     return events
 
 
+def _discovery_entity(status: str, reason_code: str) -> dict:
+    return {"type": "discovery", "name": "discovery",
+            "status": status, "reason_code": reason_code}
+
+
 def main():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    entities, env = extract_entities()
     # --baseline: write the snapshot WITHOUT diff/alerts. Used after discover
     # upgrades that add whole new entity layers (lesson 2026-09-06: a first run
     # without baseline produced a 181-alert storm for the fallback tracker).
@@ -346,20 +402,80 @@ def main():
         except Exception:
             old_snap = None
 
+    # Legacy pre-R2a snapshots carry no discovery envelope; they were
+    # successful runs and count as "ok" for transition semantics.
+    prev_disc = (old_snap or {}).get("discovery")
+    if not isinstance(prev_disc, dict):
+        prev_disc = {}
+    prev_status = prev_disc.get("status", "ok")
+    if prev_status not in ("ok", "degraded"):
+        prev_status = "ok"
+
+    cfg, disc_status, disc_reason = load_config()
+    now = datetime.now(timezone.utc).isoformat()
+    events = []
+
+    if disc_status == "ok":
+        entities, env = extract_entities(cfg)
+        env_keys = sorted(env.keys())
+        updated = now
+        config_hash = hashlib.sha256(CONFIG.read_bytes()).hexdigest()[:12] \
+            if CONFIG.exists() else ""
+        disc_env = {"status": "ok", "reason_code": "",
+                    "attempted_at": now, "last_good_at": now}
+        if not baseline:
+            events = diff_entities(
+                old_snap.get("entities", {}) if old_snap else {}, entities)
+        if prev_status == "degraded":
+            # Восстановление всегда отчётное — даже при пустом diff сущностей
+            # и даже в --baseline-прогоне: baseline глушит entity-diff, но не
+            # обязательный degraded→ok переход (Pytna R2a-1 Finding 2).
+            # Инвентаризация сравнивается с last-good: замороженные на время
+            # деградации entities и есть last-good, поэтому «буря remove/add»
+            # из-за malformed-интервала невозможна.
+            events.insert(0, {
+                "event": "discovery_recovered", "key": "discovery",
+                "entity": _discovery_entity("ok", "")})
+    else:
+        # Деградация: last-good инвентаризация замораживается дословно.
+        # updated/config_hash/entities/env_keys остаются last-good — stale
+        # состояние НЕ выглядит свежим, потому что конверт discovery помечает
+        # его degraded и attempted_at != updated.
+        if old_snap is not None:
+            entities = old_snap.get("entities") or {}
+            env_keys = old_snap.get("env_keys") or []
+            updated = old_snap.get("updated") or ""
+            config_hash = old_snap.get("config_hash") or ""
+        else:
+            entities, env_keys, updated, config_hash = {}, [], "", ""
+        last_good_at = prev_disc.get("last_good_at") or \
+            (old_snap.get("updated") if old_snap else None)
+        disc_env = {"status": "degraded", "reason_code": disc_reason,
+                    "attempted_at": now, "last_good_at": last_good_at or None}
+        if not baseline:
+            # Первый переход ok→degraded отчётный; повтор идентичной деградации
+            # тихий (без cron-спама); смена reason_code — отчётная.
+            if prev_status != "degraded" or \
+                    prev_disc.get("reason_code") != disc_reason:
+                events.append({
+                    "event": "discovery_degraded", "key": "discovery",
+                    "entity": _discovery_entity("degraded", disc_reason)})
+
     snap = {
-        "updated": datetime.now(timezone.utc).isoformat(),
-        "config_hash": hashlib.sha256(CONFIG.read_bytes()).hexdigest()[:12] if CONFIG.exists() else "",
+        "updated": updated,
+        "config_hash": config_hash,
         "entities": entities,
-        "env_keys": sorted(env.keys()),
+        "env_keys": env_keys,
+        "discovery": disc_env,
     }
-    events = [] if baseline else diff_entities(old_snap.get("entities", {}) if old_snap else {}, entities)
 
     tmp = SNAPSHOT.with_suffix(".tmp")
     tmp.write_text(json.dumps(snap, ensure_ascii=False, indent=1))
     tmp.replace(SNAPSHOT)
 
     report = {"updated": snap["updated"], "total_entities": len(entities),
-              "total_env_keys": len(env), "baseline": baseline, "events": events}
+              "total_env_keys": len(env_keys), "baseline": baseline,
+              "events": events, "discovery": snap["discovery"]}
     text = json.dumps(report, ensure_ascii=False, indent=1)
     out = os.environ.get("DISCOVER_REPORT", "")
     if out:

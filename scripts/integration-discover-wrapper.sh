@@ -33,8 +33,23 @@ import json, sys
 r = json.load(sys.stdin)
 lines = []
 icon_map = {"added": "\U0001F7E2", "removed": "\U0001F534", "changed": "\U0001F7E1"}
+# R2a: discovery-переходы рендерятся человекочитаемо; сырой текст ошибки
+# парсера/YAML не выводится — в config.yaml могут быть секреты.
+reason_text = {
+    "config_yaml_syntax": "config.yaml: синтаксическая ошибка",
+    "config_yaml_shape": "config.yaml: верхний уровень — не словарь",
+    "config_unreadable": "config.yaml: файл не читается",
+}
 for e in r["events"][:10]:
-    ent = e.get("entity", {})
+    ent = e.get("entity") or {}
+    if e.get("event") == "discovery_degraded":
+        reason = reason_text.get(ent.get("reason_code"), ent.get("reason_code") or "неизвестная причина")
+        lines.append("\u26A0\uFE0F Деградация обнаружения интеграций: " + reason
+                     + " (инвентаризация заморожена на last-good)")
+        continue
+    if e.get("event") == "discovery_recovered":
+        lines.append("\U0001F50C Обнаружение интеграций восстановлено: config.yaml снова читается")
+        continue
     t = ent.get("type", "?")
     n = ent.get("name", e["key"])
     icon = icon_map.get(e["event"], "\u26AA")

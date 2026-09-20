@@ -2883,6 +2883,419 @@ def probe_wrapper_v2_contract_enforced(tmp: Path):
           f"missing={state1.get('kit:DUMMY_KEY')} bool={state2.get('kit:DUMMY_KEY')}")
 
 
+# ── Пробы: R2a fail-safe malformed YAML discovery ──────────────────────────
+
+R2A_CANARY = "R2A_CANARY_SECRET_VALUE"
+R2A_VALID_CFG = ("providers:\n"
+                 "  alpha:\n"
+                 "    key_env: R2A_K1\n"
+                 "    base_url: https://alpha.invalid\n")
+R2A_VALID_CFG_BETA = R2A_VALID_CFG + ("  beta:\n"
+                                      "    key_env: R2A_K2\n")
+R2A_CORRUPT_CFG = "providers: {broken\n"
+R2A_SHAPE_CFG = "- just\n- a list\n"
+
+
+def _r2a_home(tmp: Path, name: str) -> Path:
+    home = tmp / name
+    home.mkdir(parents=True, exist_ok=True)
+    write(home / ".env", "R2A_K1=x\n")
+    return home
+
+
+def _r2a_run(home: Path, extra_env: dict | None = None, args: list | None = None):
+    env = dict(os.environ, HERMES_DIR=str(home), PYTHONIOENCODING="utf-8")
+    if extra_env:
+        env.update(extra_env)
+    cmd = ["python3", str(REPO / "scripts" / "integration-discover.py")] + (args or [])
+    return subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, timeout=60)
+
+
+def _r2a_snap(home: Path) -> dict:
+    return json.loads((home / "state" / "integration-snapshot.json")
+                      .read_text(encoding="utf-8"))
+
+
+def _r2a_report(tmp: Path, name: str) -> dict:
+    return json.loads((tmp / name).read_text(encoding="utf-8"))
+
+
+def _r2a_degraded_snapshot(tmp: Path, name: str) -> Path:
+    """Baseline с валидным конфигом → деградация; путь к деградированному
+    снапшоту (общая фикстура fail-closed проб консьюмеров)."""
+    home = _r2a_home(tmp, name)
+    write(home / "config.yaml", R2A_VALID_CFG)
+    _r2a_run(home, args=["--baseline"])
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    _r2a_run(home)
+    snap = _r2a_snap(home)
+    assert snap["discovery"]["status"] == "degraded", snap.get("discovery")
+    return home
+
+
+def probe_r2a_syntax_degraded_not_crash(tmp: Path):
+    """R2a-1: синтаксически битый config.yaml → явная деградация (exit 2,
+    без traceback), снапшот/отчёт помечены degraded со стабильным
+    reason_code; без last-good инвентаризация пуста и updated пуст."""
+    home = _r2a_home(tmp, "r2a-syntax")
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    r = _r2a_run(home, {"DISCOVER_REPORT": str(tmp / "r2a-syntax-report.json")})
+    snap = _r2a_snap(home)
+    rep = _r2a_report(tmp, "r2a-syntax-report.json")
+    out = r.stdout.decode(errors="ignore") + r.stderr.decode(errors="ignore")
+    check("r2a_syntax_degraded_not_crash",
+          r.returncode == 2 and "Traceback" not in out
+          and snap["discovery"]["status"] == "degraded"
+          and snap["discovery"]["reason_code"] == "config_yaml_syntax"
+          and snap["updated"] == ""
+          and rep["discovery"]["status"] == "degraded",
+          f"rc={r.returncode} disc={snap.get('discovery')}")
+
+
+def probe_r2a_wrong_shape_degraded(tmp: Path):
+    """R2a-2: валидный YAML с верхним уровнем не-словарь (list, затем string)
+    — деградация config_yaml_shape, а не пустой здоровый инвентарь; повтор с
+    тем же reason_code тихий."""
+    home = _r2a_home(tmp, "r2a-shape")
+    write(home / "config.yaml", R2A_SHAPE_CFG)
+    r1 = _r2a_run(home)
+    write(home / "config.yaml", "just a string\n")
+    r2 = _r2a_run(home)
+    snap = _r2a_snap(home)
+    check("r2a_wrong_shape_degraded",
+          r1.returncode == 2 and r2.returncode == 0
+          and snap["discovery"]["status"] == "degraded"
+          and snap["discovery"]["reason_code"] == "config_yaml_shape",
+          f"rc1={r1.returncode} rc2={r2.returncode} disc={snap.get('discovery')}")
+
+
+def probe_r2a_valid_control_unchanged(tmp: Path):
+    """R2a-3: валидный конфиг — прежняя семантика: baseline тихий (0), статус
+    ok, сущности извлечены; повтор без изменений тихий."""
+    home = _r2a_home(tmp, "r2a-valid")
+    write(home / "config.yaml", R2A_VALID_CFG)
+    r1 = _r2a_run(home, args=["--baseline"])
+    snap = _r2a_snap(home)
+    r2 = _r2a_run(home)
+    check("r2a_valid_control_unchanged",
+          r1.returncode == 0 and r2.returncode == 0
+          and snap["discovery"]["status"] == "ok"
+          and snap["discovery"]["reason_code"] == ""
+          and "provider:alpha" in snap["entities"],
+          f"rc1={r1.returncode} rc2={r2.returncode} entities={sorted(snap['entities'])}")
+
+
+def probe_r2a_missing_config_control(tmp: Path):
+    """R2a-4: отсутствие config.yaml — прежняя семантика (ок, не деградация)."""
+    home = _r2a_home(tmp, "r2a-missing")
+    r1 = _r2a_run(home, args=["--baseline"])
+    snap = _r2a_snap(home)
+    check("r2a_missing_config_control",
+          r1.returncode == 0 and snap["discovery"]["status"] == "ok"
+          and snap["discovery"]["reason_code"] == "",
+          f"rc={r1.returncode} disc={snap.get('discovery')}")
+
+
+def probe_r2a_last_good_preserved(tmp: Path):
+    """R2a-5: при деградации last-good entities/updated/config_hash сохранены
+    дословно; свежесть не переписана; attempted_at отделяет попытку,
+    last_good_at указывает на последний успешный прогон."""
+    home = _r2a_home(tmp, "r2a-lastgood")
+    write(home / "config.yaml", R2A_VALID_CFG)
+    _r2a_run(home, args=["--baseline"])
+    good = _r2a_snap(home)
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    _r2a_run(home)
+    snap = _r2a_snap(home)
+    disc = snap["discovery"]
+    check("r2a_last_good_preserved",
+          snap["entities"] == good["entities"]
+          and snap["updated"] == good["updated"]
+          and snap["config_hash"] == good["config_hash"]
+          and disc["status"] == "degraded"
+          and disc["attempted_at"] != snap["updated"]
+          and disc["last_good_at"] == good["updated"],
+          f"disc={disc}")
+
+
+def probe_r2a_no_false_removals(tmp: Path):
+    """R2a-6: деградация не создаёт removed/changed событий по сущностям —
+    единственное событие отчёта: discovery_degraded."""
+    home = _r2a_home(tmp, "r2a-nofalse")
+    write(home / "config.yaml", R2A_VALID_CFG)
+    _r2a_run(home, args=["--baseline"])
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    r = _r2a_run(home, {"DISCOVER_REPORT": str(tmp / "r2a-nofalse-report.json")})
+    rep = _r2a_report(tmp, "r2a-nofalse-report.json")
+    check("r2a_no_false_removals",
+          r.returncode == 2
+          and [e["event"] for e in rep["events"]] == ["discovery_degraded"],
+          f"rc={r.returncode} events={rep['events']}")
+
+
+def probe_r2a_repetition_quiet(tmp: Path):
+    """R2a-7: первая деградация отчётная (2), повтор идентичной — тихий (0),
+    статус в снапшоте остаётся degraded."""
+    home = _r2a_home(tmp, "r2a-repeat")
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    r1 = _r2a_run(home)
+    r2 = _r2a_run(home)
+    snap = _r2a_snap(home)
+    check("r2a_repetition_quiet",
+          r1.returncode == 2 and r2.returncode == 0
+          and snap["discovery"]["status"] == "degraded",
+          f"rc1={r1.returncode} rc2={r2.returncode} disc={snap.get('discovery')}")
+
+
+def probe_r2a_recovery_diff_last_good(tmp: Path):
+    """R2a-8: восстановление отчётное; diff считается от last-good —
+    легитимное добавление видно один раз, замороженные сущности не
+    «удаляются» из-за malformed-интервала."""
+    home = _r2a_home(tmp, "r2a-recovery")
+    write(home / "config.yaml", R2A_VALID_CFG)
+    _r2a_run(home, args=["--baseline"])
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    _r2a_run(home)
+    write(home / "config.yaml", R2A_VALID_CFG_BETA)
+    r = _r2a_run(home, {"DISCOVER_REPORT": str(tmp / "r2a-recovery-report.json")})
+    rep = _r2a_report(tmp, "r2a-recovery-report.json")
+    ev = [(e["event"], e["key"]) for e in rep["events"]]
+    check("r2a_recovery_diff_last_good",
+          r.returncode == 2 and ("discovery_recovered", "discovery") in ev
+          and ("added", "provider:beta") in ev
+          and not any(e["event"] == "removed" for e in rep["events"]),
+          f"rc={r.returncode} events={ev}")
+
+
+def probe_r2a_recovery_reportable_no_change(tmp: Path):
+    """R2a-9: восстановление с неизменённым конфигом — отчётное событие
+    recovery и ровно ноль entity-событий (нет remove/add-бури)."""
+    home = _r2a_home(tmp, "r2a-rec2")
+    write(home / "config.yaml", R2A_VALID_CFG)
+    _r2a_run(home, args=["--baseline"])
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    _r2a_run(home)
+    write(home / "config.yaml", R2A_VALID_CFG)
+    r = _r2a_run(home, {"DISCOVER_REPORT": str(tmp / "r2a-rec2-report.json")})
+    rep = _r2a_report(tmp, "r2a-rec2-report.json")
+    check("r2a_recovery_reportable_no_change",
+          r.returncode == 2
+          and [e["event"] for e in rep["events"]] == ["discovery_recovered"],
+          f"rc={r.returncode} events={rep['events']}")
+
+
+def probe_r2a_health_fail_closed(tmp: Path):
+    """R2a-10: health-check-v2 на деградированном снапшоте — exit 2 через
+    существующий config-error path ДО сетевых/MCP-примитивов; свежий
+    health-отчёт не переписывается."""
+    home = _r2a_degraded_snapshot(tmp, "r2a-hc")
+    hc = load_module("health-check-v2")
+    registry = write(tmp / "r2a-registry.yaml", "kit_entries: []\n")
+    out = tmp / "r2a-health-report.json"
+
+    calls = []
+
+    def _boom(*a, **k):
+        calls.append(1)
+        raise AssertionError("network primitive called on degraded snapshot")
+
+    originals = {name: getattr(hc, name)
+                 for name in ("check_http", "check_tcp", "check_tg_getme", "check_mcp")}
+    for name in originals:
+        setattr(hc, name, _boom)
+    try:
+        rc = hc.run(["--registry", str(registry),
+                     "--snapshot", str(home / "state" / "integration-snapshot.json"),
+                     "--env", str(home / ".env"), "--out", str(out)])
+    finally:
+        for name, fn in originals.items():
+            setattr(hc, name, fn)
+    check("r2a_health_fail_closed",
+          rc == 2 and not calls and not out.exists(),
+          f"rc={rc} primitive_calls={len(calls)} report_exists={out.exists()}")
+
+
+def probe_r2a_deep_check_fail_closed(tmp: Path):
+    """R2a-11: ai-deep-check на деградированном снапшоте — отказ ДО curl
+    (ноль вызовов curl_json) с понятной диагностикой."""
+    home = _r2a_degraded_snapshot(tmp, "r2a-dc")
+    dc = load_module("ai-deep-check")
+    registry = write(tmp / "r2a-dc-registry.yaml", "free_models: {}\n")
+    calls = []
+
+    def _boom(*a, **k):
+        calls.append(1)
+        raise AssertionError("curl called on degraded snapshot")
+
+    orig = dc.curl_json
+    dc.curl_json = _boom
+    message = ""
+    try:
+        dc.run(["--snapshot", str(home / "state" / "integration-snapshot.json"),
+                "--env", str(home / ".env"), "--registry", str(registry),
+                "--out", str(tmp / "r2a-dc-out.json")])
+    except SystemExit as e:
+        message = str(e)
+    finally:
+        dc.curl_json = orig
+    check("r2a_deep_check_fail_closed",
+          not calls and "degraded" in message,
+          f"curl_calls={len(calls)} msg={message[:100]!r}")
+
+
+def probe_r2a_legacy_snapshot_compat(tmp: Path):
+    """R2a: legacy-снапшот без конверта discovery — pre-R2a успешный:
+    discover при деградации сохраняет его инвентаризацию (last_good_at =
+    legacy updated), а health-check-v2 НЕ закрывается на нём."""
+    home = _r2a_home(tmp, "r2a-legacy")
+    legacy = {"updated": "2026-09-01T00:00:00+00:00", "config_hash": "legacy12",
+              "entities": {"provider:alpha": {"type": "provider", "name": "alpha",
+                                              "key_env": "R2A_K1", "key_present": True,
+                                              "base_url": "https://alpha.invalid"}},
+              "env_keys": ["R2A_K1"]}
+    (home / "state").mkdir(parents=True, exist_ok=True)
+    write(home / "state" / "integration-snapshot.json", json.dumps(legacy, indent=1))
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    r = _r2a_run(home)
+    snap = _r2a_snap(home)
+    disc = snap["discovery"]
+    # health: legacy-снапшот (без конверта, пустые сущности) не fail-closed
+    hc = load_module("health-check-v2")
+    registry = write(tmp / "r2a-legacy-registry.yaml", "kit_entries: []\n")
+    legacy_snap = write(tmp / "r2a-legacy-snap.json",
+                        json.dumps({"updated": legacy["updated"],
+                                    "config_hash": legacy["config_hash"],
+                                    "entities": {}, "env_keys": []}))
+    health_rc = hc.run(["--registry", str(registry), "--snapshot", str(legacy_snap),
+                        "--env", str(home / ".env"),
+                        "--out", str(tmp / "r2a-legacy-health.json")])
+    check("r2a_legacy_snapshot_compat",
+          r.returncode == 2 and snap["entities"] == legacy["entities"]
+          and snap["updated"] == legacy["updated"]
+          and disc["status"] == "degraded"
+          and disc["last_good_at"] == legacy["updated"]
+          and health_rc == 0,
+          f"rc={r.returncode} disc={disc} health_rc={health_rc}")
+
+
+def probe_r2a_wrapper_renders_transitions(tmp: Path):
+    """R2a-12: wrapper рендерит деградацию и восстановление человекочитаемо:
+    payload содержит humans-текст причины без сырых event-имён/reason_code и
+    без содержимого конфига; токен доставляется только через stdin."""
+    home = tmp / "r2a-wrap-home"
+    scripts = home / "scripts"
+    hermes = home / ".hermes"
+    scripts.mkdir(parents=True, exist_ok=True)
+    # ~/.hermes/logs в проде создаёт deploy.sh; фикстура повторяет это
+    (hermes / "logs").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(REPO / "scripts" / "integration-discover.py",
+                    scripts / "integration-discover.py")
+    shim_dir = tmp / "r2a-shims"
+    shim_dir.mkdir(exist_ok=True)
+    argvlog = tmp / "r2a-wrap-argv.log"
+    stdinlog = tmp / "r2a-wrap-stdin.log"
+    _write_argv_shim(shim_dir, "curl",
+                     'printf "%s\\n" "$*" >> "$R2A_ARGVLOG"\n'
+                     'cat >> "$R2A_STDINLOG"\n'
+                     'printf -- "---R2A-BOUNDARY---\\n" >> "$R2A_STDINLOG"\n')
+    _write_argv_shim(shim_dir, "flock", "exit 0\n")
+
+    def wrap_run():
+        return subprocess.run(
+            ["bash", str(REPO / "scripts" / "integration-discover-wrapper.sh")],
+            cwd=REPO, capture_output=True, timeout=120,
+            env=_probe_subprocess_env(home, {
+                "PATH": str(shim_dir) + os.pathsep + os.environ.get("PATH", ""),
+                "R2A_ARGVLOG": str(argvlog), "R2A_STDINLOG": str(stdinlog),
+                # discover-child пинаем на фикстуру: allowlist env режет
+                # USERPROFILE, а discover зовёт Path.home() при любом раскладе
+                # (default-аргумент os.environ.get вычисляется всегда) — урок R1c
+                "HERMES_DIR": str(hermes), "USERPROFILE": str(home)}))
+
+    write(hermes / "config.yaml", R2A_CORRUPT_CFG)
+    write(hermes / ".env", "WATCHDOG_BOT_TOKEN=DUMMY_R2A_TOKEN\nWATCHDOG_CHAT_ID=1\n")
+    r1 = wrap_run()
+    write(hermes / "config.yaml", R2A_VALID_CFG)
+    r2 = wrap_run()
+    stdin_text = stdinlog.read_text(encoding="utf-8", errors="ignore") \
+        if stdinlog.exists() else ""
+    argv_text = argvlog.read_text(encoding="utf-8", errors="ignore") \
+        if argvlog.exists() else ""
+    # Payload с rendered-текстом уходит в argv curl (-d), а русский текст
+    # JSON-эскейпится (ensure_ascii) — разбираем text-поля обоих прогонов.
+    payloads = []
+    for chunk in argv_text.split('"text": "')[1:]:
+        esc = chunk.split('", "parse_mode"')[0]
+        try:
+            payloads.append(json.loads('"' + esc + '"'))
+        except ValueError:
+            pass
+    msg_text = "\n".join(payloads)
+    check("r2a_wrapper_renders_transitions",
+          r1.returncode == 0 and r2.returncode == 0
+          and "Деградация обнаружения" in msg_text
+          and "синтаксическая ошибка" in msg_text
+          and "восстановлено" in msg_text
+          and "discovery_degraded" not in argv_text
+          and "config_yaml_syntax" not in msg_text
+          and "R2A_K1" not in argv_text
+          and "DUMMY_R2A_TOKEN" not in argv_text
+          and "DUMMY_R2A_TOKEN" in stdin_text,
+          f"rc1={r1.returncode} rc2={r2.returncode} msgs={msg_text[:300]!r} "
+          f"stderr={r1.stderr.decode(errors='ignore')[-200:]!r}")
+
+
+def probe_r2a_secret_error_boundary(tmp: Path):
+    """R2a-13: canary в битом YAML (похож на секрет) не появляется в
+    stdout/stderr/снапшоте/отчёте — сырой текст ошибки парсера не выводится."""
+    home = _r2a_home(tmp, "r2a-secret")
+    write(home / "config.yaml", f'providers: "{R2A_CANARY}\n')
+    r = _r2a_run(home, {"DISCOVER_REPORT": str(tmp / "r2a-secret-report.json")})
+    snap_text = (home / "state" / "integration-snapshot.json").read_text(encoding="utf-8")
+    rep_text = (tmp / "r2a-secret-report.json").read_text(encoding="utf-8")
+    blob = "\n".join([r.stdout.decode(errors="ignore"), r.stderr.decode(errors="ignore"),
+                      snap_text, rep_text])
+    check("r2a_secret_error_boundary",
+          r.returncode == 2 and R2A_CANARY not in blob,
+          f"rc={r.returncode} canary_leaked={R2A_CANARY in blob}")
+
+
+def probe_r2a_recovery_reportable_via_baseline(tmp: Path):
+    """R2a (Pytna Finding 2): --baseline глушит entity-diff, но НЕ обязательный
+    degraded→ok переход: recovery через baseline-прогон отчётный (2), следующий
+    обычный прогон тихий (без дубля)."""
+    home = _r2a_home(tmp, "r2a-recbase")
+    write(home / "config.yaml", R2A_VALID_CFG)
+    _r2a_run(home, args=["--baseline"])
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    _r2a_run(home)
+    write(home / "config.yaml", R2A_VALID_CFG)
+    r = _r2a_run(home, args=["--baseline"],
+                 extra_env={"DISCOVER_REPORT": str(tmp / "r2a-recbase-report.json")})
+    rep = _r2a_report(tmp, "r2a-recbase-report.json")
+    r2 = _r2a_run(home)
+    check("r2a_recovery_reportable_via_baseline",
+          r.returncode == 2
+          and [e["event"] for e in rep["events"]] == ["discovery_recovered"]
+          and r2.returncode == 0,
+          f"rc={r.returncode} rc2={r2.returncode} events={rep['events']}")
+
+
+def probe_r2a_unreadable_encoding_degraded(tmp: Path):
+    """R2a (Pytna Finding 1): config.yaml с битой UTF-8 последовательностью —
+    деградация config_unreadable (RC 2, без traceback), не крах чтения."""
+    home = _r2a_home(tmp, "r2a-encoding")
+    (home / "config.yaml").write_bytes(b'providers: "\xff\xfe broken"\n')
+    r = _r2a_run(home)
+    snap = _r2a_snap(home)
+    out = r.stdout.decode(errors="ignore") + r.stderr.decode(errors="ignore")
+    check("r2a_unreadable_encoding_degraded",
+          r.returncode == 2 and "Traceback" not in out
+          and snap["discovery"]["status"] == "degraded"
+          and snap["discovery"]["reason_code"] == "config_unreadable",
+          f"rc={r.returncode} disc={snap.get('discovery')}")
+
+
 # ── runner ──────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -2999,6 +3412,23 @@ def main() -> int:
     probe_r1c_deep_check_get_not_in_argv(tmp)
     probe_r1c_deep_check_post_not_in_argv(tmp)
     probe_r1c_artifact_boundary(tmp)
+    # R2a: fail-safe malformed YAML discovery (degradation/recovery + consumers)
+    probe_r2a_syntax_degraded_not_crash(tmp)
+    probe_r2a_wrong_shape_degraded(tmp)
+    probe_r2a_valid_control_unchanged(tmp)
+    probe_r2a_missing_config_control(tmp)
+    probe_r2a_last_good_preserved(tmp)
+    probe_r2a_no_false_removals(tmp)
+    probe_r2a_repetition_quiet(tmp)
+    probe_r2a_recovery_diff_last_good(tmp)
+    probe_r2a_recovery_reportable_no_change(tmp)
+    probe_r2a_health_fail_closed(tmp)
+    probe_r2a_deep_check_fail_closed(tmp)
+    probe_r2a_legacy_snapshot_compat(tmp)
+    probe_r2a_wrapper_renders_transitions(tmp)
+    probe_r2a_secret_error_boundary(tmp)
+    probe_r2a_recovery_reportable_via_baseline(tmp)
+    probe_r2a_unreadable_encoding_degraded(tmp)
     probe_deploy_cron_profile(tmp)
     probe_deploy_secret_not_in_argv(tmp)
     probe_deploy_gh_heartbeat_secret_not_in_argv(tmp)

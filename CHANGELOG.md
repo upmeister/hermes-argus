@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Make integration discovery fail-safe against a malformed Hermes
+  `config.yaml` (R2a): a syntactically invalid YAML or a valid YAML whose
+  top level is not a mapping now produces an explicit degraded observation
+  instead of a traceback, an empty healthy-looking inventory, or stale state
+  that looks fresh. The snapshot/report carries a discovery envelope
+  (`status ok|degraded`, stable `reason_code`, `attempted_at`,
+  `last_good_at`); during degradation the last-good inventory is preserved
+  verbatim (no false mass removals, freshness not rewritten), repeated
+  identical degradation is quiet, and first degradation and recovery are
+  reportable events (existing exit 0/2 contract). Both snapshot consumers
+  fail closed on a degraded snapshot before any network/subprocess work:
+  `health-check-v2` returns through its existing configuration-error path,
+  `ai-deep-check` refuses before curl. Legacy pre-R2a snapshots without the
+  envelope remain valid; raw parser error text is never surfaced (the config
+  may contain secrets). The Telegram wrapper renders degradation/recovery
+  human-readably; a malformed community `plugin.yaml` is skipped instead of
+  crashing discovery.
+
 - Keep Authorization values out of child-process argv in the remaining
   demonstrated owners (R1c): the integration shell checker now delivers both
   token-bearing URLs and `Authorization` headers to `curl` through the single

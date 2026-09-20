@@ -191,6 +191,15 @@ def run(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, json.JSONDecodeError):
         sys.exit("FATAL: discover snapshot missing/invalid — run integration-discover first")
 
+    # R2a: a degraded discover snapshot is not live inventory — refuse before
+    # any catalog/chat curl. Legacy pre-R2a snapshots without the envelope
+    # stay valid.
+    disc = snap.get("discovery")
+    if isinstance(disc, dict) and disc.get("status") == "degraded":
+        reason = disc.get("reason_code") or "unknown reason"
+        sys.exit(f"FATAL: discovery degraded ({reason}) — snapshot is not live inventory; "
+                 f"fix ~/.hermes/config.yaml and re-run integration-discover first")
+
     results = []
     for eid, ent in (snap.get("entities") or {}).items():
         if ent.get("type") != "provider":
