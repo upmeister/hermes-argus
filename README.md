@@ -259,8 +259,9 @@ The current path to the first public release is intentionally bounded:
 
 ```text
 R1c  Authorization headers out of child argv — DONE
- -> R2a  malformed YAML fail-safe — NOW
- -> R2c.1  canonical fallback_providers inventory
+ -> R2a  malformed YAML fail-safe — DONE
+ -> R2c.1  canonical fallback_providers inventory — NOW
+ -> legacy/personal-dependency reduction
  -> installer/dependency/managed-cron hardening
  -> runtime i18n: English + Russian
  -> clean install / upgrade / uninstall acceptance
@@ -299,6 +300,7 @@ contract under [docs/handoffs/](docs/handoffs/).
 ## Documentation
 
 - [Public roadmap](docs/ROADMAP.md)
+- [Pre-release legacy/personal-dependency audit](docs/research/2026-09-21-pre-release-legacy-audit.md)
 - [Project/agent contract](AGENTS.md)
 - [Integration evidence policy](docs/adr/0001-integration-evidence-policy.md)
 - [Hermes discovery boundary ADR](docs/adr/0002-hermes-discovery-sync-boundary.md)
