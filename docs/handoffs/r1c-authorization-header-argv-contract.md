@@ -1,6 +1,6 @@
 # R1c contract — Authorization headers out of child argv
 
-Status: **NOW / READY FOR IMPLEMENTATION**
+Status: **DONE / PR #42 — ACCEPTED**
 
 ## Exact baseline
 
@@ -20,7 +20,21 @@ stable = v2026.9.14 / v0.21.3
 warning-source main = f88c6fc46e1c1c61ae8fdc0d7fb10ec8ad949aab
 ```
 
-R1c is a bounded public-release security gate.
+R1c was a bounded public-release security gate and is closed.
+
+Accepted receipt:
+
+```text
+candidate head = b477d2bbd4d892b3fee97dd188110d4c7bbff94e
+merged main = 133931a8242de0e61cecace5f75905bf63615383
+CI #81 = success
+probes = 115/115
+swap tests = 8/8
+```
+
+All four changed blobs match between candidate and merged main. The final
+Pytna remediation changed only `tests/probes.py`; production behavior was
+unchanged.
 
 ## 1. Problem
 
