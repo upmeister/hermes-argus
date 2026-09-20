@@ -24,6 +24,7 @@ import subprocess
 import json
 import os
 import sys
+import shlex
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -1981,6 +1982,336 @@ def _probe_subprocess_env(home: Path, extra: dict | None = None) -> dict:
     return env
 
 
+# ── Пробы: R1c Authorization headers out of child argv ──────────────────────
+
+R1C_TOKEN = "ARGUS_CANARY_R1C_AUTH"
+R1C_TG = "ARGUS_CANARY_R1C_TGURL"
+R1C_GH = "ARGUS_CANARY_R1C_GHTOKEN"
+R1C_PROXY = "http://127.0.0.1:8444"
+
+
+def _r1c_shell_curl_shim(shim_dir: Path, tmp: Path, tag: str) -> tuple[Path, Path]:
+    """curl shim для shell-проб R1c: логирует argv и stdin каждого вызова и
+    эмулирует разбираемые скриптом формы ответа (code-only для -w, body+code
+    для getMe — getMe ищем в STDIN, потому что token-bearing URL идёт через
+    config, 302 для socks, JSON для status-hint). Сети нет."""
+    argv_log = tmp / f"{tag}-argv.log"
+    stdin_log = tmp / f"{tag}-stdin.log"
+    body = (
+        f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
+        'STD=$(cat 2>/dev/null)\n'
+        f'printf \'%s\\n\' "$STD" >> "{stdin_log.as_posix()}"\n'
+        f'printf \'\\n--\\n\' >> "{stdin_log.as_posix()}"\n'
+        'case "$*" in\n'
+        '  *--socks5-hostname*) printf \'302\\n\'; exit 0 ;;\n'
+        'esac\n'
+        'case "$STD" in\n'
+        '  *getMe*)\n'
+        '    case "$*" in\n'
+        '      *"-o /dev/null"*) printf \'200\\n\' ;;\n'
+        '      *) printf \'{"ok": true}\\n200\\n\' ;;\n'
+        '    esac ;;\n'
+        '  *)\n'
+        '    case "$*" in\n'
+        '      *-w*) printf \'200\\n\' ;;\n'
+        '      *) printf \'{"ok": true}\\n\' ;;\n'
+        '    esac ;;\n'
+        'esac\n'
+        'exit 0\n'
+    )
+    _write_argv_shim(shim_dir, "curl", body)
+    return argv_log, stdin_log
+
+
+def _r1c_dc_curl_shim(shim_dir: Path, tmp: Path, tag: str) -> tuple[Path, Path]:
+    """curl shim для проб ai-deep-check: тот же capture, но ответ в форме
+    `-w "\\n%{http_code}"` — body JSON + код (curl_json парсит rpartition)."""
+    argv_log = tmp / f"{tag}-argv.log"
+    stdin_log = tmp / f"{tag}-stdin.log"
+    body = (
+        f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
+        f'cat >> "{stdin_log.as_posix()}" 2>/dev/null\n'
+        f'printf \'\\n--\\n\' >> "{stdin_log.as_posix()}"\n'
+        'printf \'{"data": [{"id": "m1"}]}\\n200\'\n'
+        'exit 0\n'
+    )
+    _write_argv_shim(shim_dir, "curl", body)
+    return argv_log, stdin_log
+
+
+def _r1c_save_outcome(tmp: Path, tag: str, result) -> None:
+    """Сохранить stdout/stderr пробы как артефакты для boundary-скана (§7.6)."""
+    write(tmp / f"{tag}-out.txt", result.stdout)
+    write(tmp / f"{tag}-err.txt", result.stderr)
+
+
+def probe_r1c_shell_full_auth_not_in_argv(tmp: Path):
+    """R1c §7.1/§7.3: full-режим — 5 authenticated check_url доставляют
+    Authorization через stdin-канал (не argv); token-bearing Telegram URL
+    остаётся в stdin (R1b не регрессировал); --proxy сохранён; unauthenticated
+    вызовы работают (shim 200 → нет строки сбоя SearXNG)."""
+    home = tmp / "r1c-full-home"
+    shim = tmp / "r1c-shim-full"
+    shim.mkdir()
+    argv_log, stdin_log = _r1c_shell_curl_shim(shim, tmp, "r1c-full")
+    write(home / ".hermes" / ".env",
+          f"OPENCODE_GO_API_KEY={R1C_TOKEN}\n"
+          f"FIRECRAWL_API_KEY={R1C_TOKEN}\n"
+          f"GITHUB_TOKEN={R1C_TOKEN}\n"
+          f"GH_TOKEN={R1C_TOKEN}\n"
+          f"GROQ_API_KEY={R1C_TOKEN}\n"
+          f"OPENROUTER_API_KEY={R1C_TOKEN}\n"
+          f"CLINE_API_KEY={R1C_TOKEN}\n"
+          f"AGENTROUTER_API_KEY={R1C_TOKEN}\n"
+          f"TELEGRAM_BOT_TOKEN={R1C_TG}\n"
+          f"WATCHDOG_BOT_TOKEN={R1C_TG}\n")
+    env = _probe_subprocess_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+    })
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts" / "health-check-integrations.sh")],
+        cwd=REPO, env=env, input=b"", capture_output=True, text=True, timeout=180)
+    _r1c_save_outcome(tmp, "r1c-full", result)
+    argv_text = _read_or(argv_log)
+    stdin_text = _read_or(stdin_log)
+    auth_headers = stdin_text.count(f'header = "Authorization: Bearer {R1C_TOKEN}"')
+    tg_stdin = f"url = https://api.telegram.org/bot{R1C_TG}/getMe" in stdin_text
+    no_secret_argv = R1C_TOKEN not in argv_text and R1C_TG not in argv_text
+    proxy_kept = "--proxy" in argv_text
+    unauth_ok = "SearXNG: HTTP" not in result.stdout
+    ok = (no_secret_argv and auth_headers >= 5 and tg_stdin and proxy_kept
+          and unauth_ok and result.returncode == 0)
+    check("r1c_shell_full_auth_not_in_argv", ok,
+          f"rc={result.returncode} auth_headers={auth_headers} tg_stdin={tg_stdin} "
+          f"secret_in_argv={not no_secret_argv} proxy={proxy_kept} unauth_ok={unauth_ok}")
+
+
+def probe_r1c_quick_github_header_not_in_argv(tmp: Path):
+    """R1c §7.2/§7.3: quick GitHub — Authorization: token ... через stdin-канал,
+    не в argv; getMe URL остаётся в stdin; обе проверки проходят (shim 200)."""
+    home = tmp / "r1c-quick-home"
+    shim = tmp / "r1c-shim-quick"
+    shim.mkdir()
+    argv_log, stdin_log = _r1c_shell_curl_shim(shim, tmp, "r1c-quick")
+    write(home / ".hermes" / ".env",
+          f"GITHUB_TOKEN={R1C_GH}\n"
+          f"WATCHDOG_BOT_TOKEN={R1C_TG}\n"
+          f"TELEGRAM_PROXY={R1C_PROXY}\n")
+    env = _probe_subprocess_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+    })
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts" / "health-check-integrations.sh"), "--quick"],
+        cwd=REPO, env=env, input=b"", capture_output=True, text=True, timeout=120)
+    _r1c_save_outcome(tmp, "r1c-quick", result)
+    argv_text = _read_or(argv_log)
+    stdin_text = _read_or(stdin_log)
+    gh_in_stdin = f'header = "Authorization: token {R1C_GH}"' in stdin_text
+    ok = (R1C_GH not in argv_text and R1C_TG not in argv_text
+          and gh_in_stdin
+          and f"url = https://api.telegram.org/bot{R1C_TG}/getMe" in stdin_text
+          and "🔑 GitHub token" not in result.stdout
+          and "🤖 Telegram monitoring bot" not in result.stdout)
+    check("r1c_quick_github_header_not_in_argv", ok,
+          f"rc={result.returncode} gh_stdin={gh_in_stdin} "
+          f"secret_in_argv={R1C_GH in argv_text or R1C_TG in argv_text}")
+
+
+def probe_r1c_curl_config_header_seam(tmp: Path):
+    """R1c §7.1 (delivery proof): РЕАЛЬНЫЙ curl парсит `header = ...` из stdin
+    config и отправляет именно этот Authorization на провод; logging-exec shim
+    доказывает отсутствие canary в реальном argv. Негативный контроль: без
+    header-строки Authorization не уходит."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    real_curl = shutil.which("curl")
+    if not real_curl:
+        check("r1c_curl_config_header_seam", True, "skipped: curl not installed")
+        return
+
+    received: list[tuple[str, str | None]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def _handle(self):
+            received.append((self.path, self.headers.get("Authorization")))
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        do_GET = _handle
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    server.timeout = 3
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+    url = f"http://127.0.0.1:{port}/models"
+    try:
+        argv_log = tmp / "r1c-seam-argv.log"
+        stdin_log = tmp / "r1c-seam-stdin.log"
+        shim = tmp / "r1c-shim-seam"
+        shim.mkdir()
+        # Лог argv + tee stdin → реальный curl (реальный запрос + capture argv).
+        _write_argv_shim(shim, "curl",
+                         f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
+                         f'tee "{stdin_log.as_posix()}" | '
+                         f'"{Path(real_curl).as_posix()}" "$@"\n')
+        env = _probe_subprocess_env(tmp / "r1c-seam-home", {
+            "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        })
+        positive = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-K", "-"],
+            input=f'url = {url}\nheader = "Authorization: Bearer {R1C_TOKEN}"\n'.encode(),
+            env=env, capture_output=True, timeout=30)
+        # Негативный контроль 1: БЕЗ header-строки Authorization не уходит.
+        negative = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-K", "-"],
+            input=f"url = {url}\n".encode(),
+            env=env, capture_output=True, timeout=30)
+        # Негативный контроль 2 (ловушка R1c): НЕциклованный header = значение
+        # реальный curl молча не отправляет — проба красная, если сценарий
+        # вернётся к непроцитованной форме.
+        unquoted = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-K", "-"],
+            input=f"url = {url}\nheader = Authorization: Bearer {R1C_TOKEN}\n".encode(),
+            env=env, capture_output=True, timeout=30)
+        argv_text = _read_or(argv_log)
+        pos_header = received[0][1] if received else None
+        neg_header = received[1][1] if len(received) > 1 else "missing-call"
+        unq_header = received[2][1] if len(received) > 2 else "missing-call"
+        ok = (positive.stdout.decode().strip() == "200"
+              and pos_header == f"Bearer {R1C_TOKEN}"
+              and neg_header in (None, "")
+              and unq_header in (None, "")
+              and R1C_TOKEN not in argv_text)
+        check("r1c_curl_config_header_seam", ok,
+              f"pos_auth={pos_header!r} neg_auth={neg_header!r} "
+              f"unquoted_auth={unq_header!r} secret_in_argv={R1C_TOKEN in argv_text}")
+    finally:
+        server.shutdown()
+
+
+_DC_CURL_STDOUT = '{"data": [{"id": "m1"}]}\n200'
+
+
+def _r1c_run_deep_check(tmp: Path, tag: str,
+                        payload: dict | None) -> tuple[str, str, str]:
+    """Прогон curl_json с capture. POSIX: дочерний python с PATH-shim curl
+    (os-level child-argv через лог shim'а). Windows: CreateProcess не исполняет
+    shebang-shim и молча уходит в реальный curl — therefore in-process capture
+    subprocess.run на границе (argv + input = ровно то, что ушло бы в os-argv/
+    stdin ребёнка; красная-способность сохраняется: на старом коде canary
+    оказывается в argv). Возвращает (stdout, argv_text, stdin_text)."""
+    shim = tmp / f"r1c-shim-{tag}"
+    shim.mkdir()
+    argv_log, stdin_log = _r1c_dc_curl_shim(shim, tmp, f"r1c-dc-{tag}")
+    url = "http://127.0.0.1:9/dc-models"
+    if os.name == "nt":
+        code = (
+            "import importlib.util, json, sys\n"
+            f"spec = importlib.util.spec_from_file_location('dc', "
+            f"{str(REPO / 'scripts' / 'ai-deep-check.py')!r})\n"
+            "dc = importlib.util.module_from_spec(spec); spec.loader.exec_module(dc)\n"
+            "rec = []\n"
+            "real_run = dc.subprocess.run\n"
+            "def fake_run(cmd, **kw):\n"
+            "    rec.append((list(cmd), kw.get('input')))\n"
+            "    from subprocess import CompletedProcess\n"
+            f"    return CompletedProcess(cmd, 0, stdout={_DC_CURL_STDOUT!r}, stderr='')\n"
+            "dc.subprocess.run = fake_run\n"
+            f"code, data = dc.curl_json({url!r}, {R1C_TOKEN!r}, {payload!r}, "
+            "timeout=5, attempts=1)\n"
+            "dc.subprocess.run = real_run\n"
+            "for argv, inp in rec:\n"
+            "    sys.stderr.write('ARGVLOG\\t' + json.dumps(argv) + '\\n')\n"
+            "    sys.stderr.write('STDINLOG\\t' + json.dumps(inp) + '\\n')\n"
+            "print('RC', code)\nprint('DATA', json.dumps(data))\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code], input=b"",
+                                capture_output=True, text=True, timeout=90)
+        err = result.stderr
+        argv_lines = [json.loads(l.split("\t", 1)[1]) for l in err.splitlines()
+                      if l.startswith("ARGVLOG\t")]
+        stdin_lines = [json.loads(l.split("\t", 1)[1]) for l in err.splitlines()
+                       if l.startswith("STDINLOG\t")]
+        # repr-нормализация: двойные кавычки внутри элементов остаются сырыми,
+        # поэтому substring-утверждения работают так же, как на posix-логах.
+        argv_text = "\n".join(repr(a) for a in argv_lines)
+        stdin_text = "\n".join(repr(s) for s in stdin_lines)
+        # Сырой stderr ребёнка НЕ сохраняем: STDINLOG несёт canary по дизайну
+        # (это канал доставки), а boundary-скан §7.6 смотрит только stdout/err.
+        write(tmp / f"r1c-dc-{tag}-out.txt", result.stdout)
+        return result.stdout, argv_text, stdin_text
+    env = _probe_subprocess_env(tmp / f"r1c-dc-home-{tag}", {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        # Windows-python в ребёнке требует USERPROFILE для Path.home() модуля.
+        "USERPROFILE": str(tmp / f"r1c-dc-home-{tag}"),
+    })
+    if payload is not None:
+        call = (f"code, data = dc.curl_json({url!r}, {R1C_TOKEN!r}, {payload!r}, "
+                "timeout=5, attempts=1)\n")
+    else:
+        call = f"code, data = dc.curl_json({url!r}, {R1C_TOKEN!r}, None, timeout=5, attempts=1)\n"
+    code = (
+        "import importlib.util, json, sys\n"
+        f"spec = importlib.util.spec_from_file_location('dc', "
+        f"{str(REPO / 'scripts' / 'ai-deep-check.py')!r})\n"
+        "dc = importlib.util.module_from_spec(spec); spec.loader.exec_module(dc)\n"
+        + call +
+        "print('RC', code)\nprint('DATA', json.dumps(data))\n"
+    )
+    result = subprocess.run(["bash", "-c",
+                             f'exec {sys.executable} -c {shlex.quote(code)}'],
+                            env=env, input=b"", capture_output=True, text=True,
+                            timeout=90)
+    _r1c_save_outcome(tmp, f"r1c-dc-{tag}", result)
+    return result.stdout, _read_or(argv_log), _read_or(stdin_log)
+
+
+def probe_r1c_deep_check_get_not_in_argv(tmp: Path):
+    """R1c §7.4: catalog GET — Bearer canary не в child argv, header доставлен
+    через stdin, запрос/парсинг сохранены (200 + JSON catalog)."""
+    out, argv_text, stdin_text = _r1c_run_deep_check(tmp, "get", None)
+    ok = ("RC 200" in out and '"m1"' in out
+          and R1C_TOKEN not in argv_text
+          and f"Authorization: Bearer {R1C_TOKEN}" in stdin_text
+          and "--max-time" in argv_text and "dc-models" in argv_text)
+    check("r1c_deep_check_get_not_in_argv", ok,
+          f"rc_ok={'RC 200' in out} secret_in_argv={R1C_TOKEN in argv_text} "
+          f"header_stdin={f'Authorization: Bearer {R1C_TOKEN}' in stdin_text}")
+
+
+def probe_r1c_deep_check_post_not_in_argv(tmp: Path):
+    """R1c §7.5: chat POST — Bearer canary не в child argv, header через stdin,
+    payload/-d и Content-Type в argv сохранены (свойства запроса не изменились)."""
+    payload = {"model": "m1",
+               "messages": [{"role": "user", "content": "ping"}],
+               "max_tokens": 1}
+    out, argv_text, stdin_text = _r1c_run_deep_check(tmp, "post", payload)
+    payload_argv = json.dumps(payload) in argv_text
+    ok = ("RC 200" in out
+          and R1C_TOKEN not in argv_text
+          and f"Authorization: Bearer {R1C_TOKEN}" in stdin_text
+          and payload_argv and "-d" in argv_text
+          and "Content-Type: application/json" in argv_text)
+    check("r1c_deep_check_post_not_in_argv", ok,
+          f"rc_ok={'RC 200' in out} secret_in_argv={R1C_TOKEN in argv_text} "
+          f"payload_argv={payload_argv} header_stdin={f'Authorization: Bearer {R1C_TOKEN}' in stdin_text}")
+
+
+def probe_r1c_artifact_boundary(tmp: Path):
+    """R1c §7.6: canary отсутствует во всех stdout/stderr-артефактах R1c-проб
+    (shim stdin-логи — каналы доставки, не отчёты, и секрет там ожидаем)."""
+    canaries = (R1C_TOKEN, R1C_TG, R1C_GH)
+    leaked = []
+    for p in sorted(tmp.glob("r1c-*-out.txt")) + sorted(tmp.glob("r1c-*-err.txt")):
+        text = _read_or(p)
+        if any(c in text for c in canaries):
+            leaked.append(p.name)
+    check("r1c_artifact_boundary", not leaked, f"leaked={leaked}")
+
+
 @contextmanager
 def override_environ(**updates):
     """Temporarily set/replace environment keys (restores prior values)."""
@@ -2640,6 +2971,13 @@ def main() -> int:
     probe_oa1b_quick_mixed_failure_and_oauth(wh)
     probe_oa1b_report_not_mutated(wh)
     probe_oa1b_helpers_are_pure()
+    # R1c: Authorization headers out of child argv (shell + ai-deep-check)
+    probe_r1c_shell_full_auth_not_in_argv(tmp)
+    probe_r1c_quick_github_header_not_in_argv(tmp)
+    probe_r1c_curl_config_header_seam(tmp)
+    probe_r1c_deep_check_get_not_in_argv(tmp)
+    probe_r1c_deep_check_post_not_in_argv(tmp)
+    probe_r1c_artifact_boundary(tmp)
     probe_deploy_cron_profile(tmp)
     probe_deploy_secret_not_in_argv(tmp)
     probe_deploy_gh_heartbeat_secret_not_in_argv(tmp)

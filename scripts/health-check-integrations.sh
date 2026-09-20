@@ -49,12 +49,18 @@ check_env() {   # name var — проверяет, что env var не пуст�
 
 check_url() {   # name url [expected] [auth_header] [proxy]
     local name="$1" url="$2" expected="${3:-200}" auth_header="${4:-}" proxy="${5:-}"
-    local attempt=0 code
+    local attempt=0 code cfg hdr
+    # Секреты не в argv (R1b + R1c): URL и Authorization уходят в curl через
+    # ОДИН stdin-канал — curl config (-K -). Значение header в кавычках:
+    # непроцитованное "Authorization: ..." реальный curl в заголовок не
+    # превращает (проверено probe_r1c_curl_config_header_seam).
+    hdr=${auth_header//\\/\\\\}
+    hdr=${hdr//\"/\\\"}
+    cfg="url = $url"
+    [[ -n "$auth_header" ]] && cfg+=$'\nheader = "'"${hdr}"'"'
     while [[ $attempt -lt $RETRIES ]]; do
-        # URL может нести токен (getMe) — через -K - (config на stdin), не в argv
-        code=$(printf 'url = %s\n' "$url" | curl -s -o /dev/null -w "%{http_code}" --max-time "$TIMEOUT" \
-            ${proxy:+--proxy "$proxy"} \
-            ${auth_header:+-H "$auth_header"} -K - 2>/dev/null || true)
+        code=$(printf '%s\n' "$cfg" | curl -s -o /dev/null -w "%{http_code}" --max-time "$TIMEOUT" \
+            ${proxy:+--proxy "$proxy"} -K - 2>/dev/null || true)
         [[ "$code" == "$expected" ]] && return 0
         attempt=$((attempt + 1))
         [[ $attempt -lt $RETRIES ]] && sleep "$RETRY_DELAY"
@@ -142,10 +148,14 @@ except Exception:
     }
 
     # 1. GitHub token
-    local HTTP_CODE
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 8 --max-time 12 \
-        -H "Authorization: token ${GITHUB_TOKEN}" \
-        "https://api.github.com/user" 2>/dev/null)
+    local HTTP_CODE hdr
+    # R1c: Authorization не в argv — quoted header в curl config stdin (как в
+    # check_url); без кавычек реальный curl заголовок молча не отправляет.
+    hdr=${GITHUB_TOKEN//\\/\\\\}
+    hdr=${hdr//\"/\\\"}
+    HTTP_CODE=$(printf 'url = https://api.github.com/user\nheader = "Authorization: token %s"\n' \
+        "$hdr" | \
+        curl -s -o /dev/null -w "%{http_code}" --connect-timeout 8 --max-time 12 -K - 2>/dev/null)
         HTTP_CODE=${HTTP_CODE:-000}
     if [ "$HTTP_CODE" != "200" ]; then
         local MSG="🔑 GitHub token: HTTP $HTTP_CODE (ожидался 200)"

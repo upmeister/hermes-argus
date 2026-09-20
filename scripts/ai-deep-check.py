@@ -43,7 +43,11 @@ def curl_json(url: str, token: str, payload: dict | None, timeout: int,
               attempts: int = 2) -> tuple[int, dict | None]:
     """GET/POST with Bearer auth. Returns (http_code, parsed_json_or_None)."""
     cmd = ["curl", "-s", "-w", "\n%{http_code}", "--max-time", str(timeout),
-           "-H", f"Authorization: Bearer {token}"]
+           "-H", "@-"]
+    # Bearer не в argv/ps (R1c): заголовок уходит в curl через stdin, как в
+    # health-check-v2.py curl_code/curl_json. Строка формируется всегда —
+    # семантика заголовка идентична прежнему argv-варианту.
+    header_input = f"Authorization: Bearer {token}\n"
     if payload is not None:
         cmd += ["-H", "Content-Type: application/json",
                 "-d", json.dumps(payload), url]
@@ -52,7 +56,8 @@ def curl_json(url: str, token: str, payload: dict | None, timeout: int,
     code, body = "000", ""
     for attempt in range(attempts):
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+            r = subprocess.run(cmd, input=header_input, capture_output=True,
+                               text=True, timeout=timeout + 5)
             body, _, code = r.stdout.rpartition("\n")
             code = code.strip() or "000"
         except subprocess.TimeoutExpired:
