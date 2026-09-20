@@ -1,6 +1,6 @@
 # R2a contract — fail-safe malformed YAML discovery
 
-Status: **NOW / READY FOR IMPLEMENTATION**
+Status: **DONE / PR #44 — ACCEPTED**
 
 ## Exact baseline
 
@@ -21,7 +21,26 @@ stable = v2026.9.14 / v0.21.3
 warning-source main = f88c6fc46e1c1c61ae8fdc0d7fb10ec8ad949aab
 ```
 
-R2a is a public-release correctness gate.
+R2a was a public-release correctness gate and is closed.
+
+Accepted receipt:
+
+```text
+candidate head = 6241543d96e93cfbe197706dcbf316fbbc72b58d
+merged main = 7b78e9369be72d9a5f08de267ccfc62604710f79
+CI #86 = success
+probes = 131/131
+swap tests = 8/8
+changed blobs = exact match candidate -> merged main
+```
+
+Pytna found one P1 (Unicode/unreadable config) and one P2 (`--baseline`
+suppressing recovery) in the initial candidate. Both were fixed in the single
+remediation. Final reread found no remaining P1/P2.
+
+Known P3 / out of scope: syntactically valid non-mapping community
+`plugin.yaml` metadata can still reach `meta.get()`; carry this into RR0
+rather than reopening R2a.
 
 ## 1. Demonstrated problem
 
