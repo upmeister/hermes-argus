@@ -5,7 +5,7 @@ handoffs. **Old handoff presence is not implementation authority.**
 
 Repository `AGENTS.md` scope-control rules apply to every document here.
 
-## Active baseline — updated 2026-09-20
+## Active baseline — updated 2026-09-21
 
 Read in this order:
 
@@ -14,7 +14,7 @@ Read in this order:
 
 Current selected task:
 
-- `r2a-malformed-yaml-contract.md` — **NOW / READY**
+- `r2a-baseline-degradation-followup-contract.md` — **NOW / READY**
 
 Completed:
 
@@ -49,8 +49,9 @@ artifact/capture boundary; production code was unchanged.
 
 ```text
 R1c DONE
- -> R2a malformed YAML NOW
- -> R2c.1 fallback_providers compatibility
+ -> R2a baseline-degradation follow-up NOW
+ -> R2c.1 fallback_providers compatibility PREPARED / HOLD
+ -> RR0 legacy/personal-dependency reduction
  -> RR1 installer/dependency/managed-cron
  -> RR2 runtime i18n: en + ru
  -> RR3 release acceptance
@@ -77,16 +78,20 @@ Deferred/separate:
 ```text
 Hermes stable = v2026.9.14 / v0.21.3
 stable commit = 345cd2b057a452236de401d3534b8502a7465e8d
-warning-source main = f88c6fc46e1c1c61ae8fdc0d7fb10ec8ad949aab
+warning-source main = 5171ea18dc4b699e14f0092388be326dc4fc81ab
 ```
 
 ## Current contracts
 
 Current:
 
+- `r2a-baseline-degradation-followup-contract.md`
+
+R2a base contract:
+
 - `r2a-malformed-yaml-contract.md`
 
-Queued:
+Prepared / held:
 
 - `r2c-static-discovery-compat-contract.md` (R2c.1 before RC; R2c.2 after)
 

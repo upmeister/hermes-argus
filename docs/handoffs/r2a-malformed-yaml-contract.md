@@ -1,6 +1,6 @@
 # R2a contract — fail-safe malformed YAML discovery
 
-Status: **NOW / READY FOR IMPLEMENTATION**
+Status: **MERGED / FOLLOW-UP P2 OPEN**
 
 ## Exact baseline
 
@@ -393,3 +393,14 @@ Recommendation:
 ```text
 PASS-TO-MERGE | REMEDIATE | BLOCKED-FOR-MAINTAINER
 ```
+
+
+## Final exact-tree follow-up
+
+After PR #44 merge, final review found that `--baseline` can suppress the first
+`discovery_degraded` transition and make subsequent identical degraded runs
+quiet indefinitely. See:
+
+`docs/handoffs/r2a-baseline-degradation-followup-contract.md`
+
+R2a is not closed until that focused follow-up passes.
