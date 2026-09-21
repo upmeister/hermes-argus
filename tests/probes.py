@@ -3299,7 +3299,9 @@ def probe_r2a_unreadable_encoding_degraded(tmp: Path):
 def probe_r2a1_plugin_nonmapping_skipped(tmp: Path):
     """R2a.1: plugin.yaml с YAML-list/битым YAML пропускается безопасно
     (дискавери завершается, RC 0, без traceback), авторитетный config.yaml
-    не деградирует; валидный mapping сохраняет прежнюю семантику."""
+    не деградирует; валидный mapping сохраняет прежнюю семантику.
+    Пустой/comment-only валидный YAML — тоже прежняя семантика: entity
+    с именем каталога (Pytna R2a.1-1 Finding 1); явный scalar null — skip."""
     home = _r2a_home(tmp, "r2a1-plugin")
     write(home / "config.yaml", "")
     plugins = home / "plugins" / "model-providers"
@@ -3307,14 +3309,17 @@ def probe_r2a1_plugin_nonmapping_skipped(tmp: Path):
           'name: goodplug\ndescription: "R2A1 valid metadata"\n')
     write(plugins / "badplug" / "plugin.yaml", "- just\n- a list\n")
     write(plugins / "malformedplug" / "plugin.yaml", "{broken\n")
+    write(plugins / "emptyplug" / "plugin.yaml", "# only a comment\n")
+    write(plugins / "nullplug" / "plugin.yaml", "null\n")
     r = _r2a_run(home, args=["--baseline"])
     snap = _r2a_snap(home)
     plugin_ids = {k for k in snap["entities"] if k.startswith("plugin-provider:")}
     out = r.stdout.decode(errors="ignore") + r.stderr.decode(errors="ignore")
     check("r2a1_plugin_nonmapping_skipped",
           r.returncode == 0 and "Traceback" not in out
-          and plugin_ids == {"plugin-provider:goodplug"}
+          and plugin_ids == {"plugin-provider:goodplug", "plugin-provider:emptyplug"}
           and snap["entities"]["plugin-provider:goodplug"]["name"] == "goodplug"
+          and snap["entities"]["plugin-provider:emptyplug"]["name"] == "emptyplug"
           and snap["discovery"]["status"] == "ok",
           f"rc={r.returncode} plugins={sorted(plugin_ids)} disc={snap.get('discovery')}")
 

@@ -355,7 +355,14 @@ def extract_entities(cfg=None):
             # mapping», а skip требуется именно для битого.
             try:
                 import yaml
-                meta = yaml.safe_load(yml.read_text(encoding="utf-8"))
+                raw = yml.read_text(encoding="utf-8")
+                meta = yaml.safe_load(raw)
+                # Пустой/comment-only документ: safe_load() даёт None, но это
+                # валидный YAML — прежняя семантика load_yaml() or {} создавала
+                # entity с именем каталога (Pytna R2a.1-1 Finding 1). Явный
+                # scalar null/«---» отличаем по compose(): там node есть.
+                if meta is None:
+                    meta = {} if yaml.compose(raw) is None else None
             except (yaml.YAMLError, UnicodeError, OSError):
                 continue
             if not isinstance(meta, dict):
