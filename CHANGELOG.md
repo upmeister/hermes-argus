@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Harden community plugin metadata discovery (R2a.1): a `plugin.yaml` that is
+  unreadable, malformed YAML, or valid YAML with a non-mapping top level now
+  skips the plugin instead of crashing discovery; a valid mapping keeps the
+  existing semantics. The authoritative `config.yaml` degradation semantics
+  are unaffected. Also make `--baseline` suppress only the entity diff: the
+  first `ok -> degraded` discovery transition is reportable even in a
+  baseline run (previously a degradation first observed via `--baseline`
+  stayed operator-invisible indefinitely), while repeated identical
+  degradation stays quiet and recovery remains reportable.
+
 - Make integration discovery fail-safe against a malformed Hermes
   `config.yaml` (R2a): a syntactically invalid YAML or a valid YAML whose
   top level is not a mapping now produces an explicit degraded observation

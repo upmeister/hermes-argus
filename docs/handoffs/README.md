@@ -14,7 +14,8 @@ Read in this order:
 
 Current selected task:
 
-- `r2a-baseline-degradation-followup-contract.md` — **NOW / READY**
+- none — R2a closed (baseline follow-up + R2a.1 batch); R2c.1 is
+  PREPARED / HOLD awaiting an explicit maintainer go
 
 Completed:
 
@@ -25,6 +26,8 @@ Completed:
 - OA1 generic static account-auth discovery — **DONE / PR #35**
 - OA1b OAuth evidence rendering — **DONE / PR #39**
 - OA-close acceptance — **DONE / PR #40 / OA PHASE COMPLETE**
+- R2a malformed YAML fail-safe — **DONE / PR #44 (+ #46 docs)**
+- R2a.1 plugin metadata hardening + baseline follow-up — **DONE / R2a.1 batch**
 
 Closed/upstream-gated:
 
@@ -49,7 +52,7 @@ artifact/capture boundary; production code was unchanged.
 
 ```text
 R1c DONE
- -> R2a baseline-degradation follow-up NOW
+ -> R2a DONE (PR #44 + baseline follow-up + R2a.1 batch)
  -> R2c.1 fallback_providers compatibility PREPARED / HOLD
  -> RR0 legacy/personal-dependency reduction
  -> RR1 installer/dependency/managed-cron
@@ -85,11 +88,7 @@ warning-source main = 5171ea18dc4b699e14f0092388be326dc4fc81ab
 
 Current:
 
-- `r2a-baseline-degradation-followup-contract.md`
-
-R2a base contract:
-
-- `r2a-malformed-yaml-contract.md`
+- none (R2c.1 held)
 
 Prepared / held:
 
@@ -97,6 +96,8 @@ Prepared / held:
 
 Completed:
 
+- `r2a-baseline-degradation-followup-contract.md`
+- `r2a-malformed-yaml-contract.md`
 - `r1c-authorization-header-argv-contract.md`
 - `oa-close-account-auth-acceptance-contract.md`
 - `oa1b-oauth-evidence-rendering-contract.md`
