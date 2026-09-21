@@ -348,7 +348,25 @@ def extract_entities(cfg=None):
             yml = d / "plugin.yaml"
             if not yml.is_file():
                 continue
-            meta = load_yaml(yml) or {}
+            # R2a.1: community metadata никогда не роняет дискавери —
+            # нечитаемый/битый/не-словарный plugin.yaml пропускает плагин;
+            # валидный mapping сохраняет прежнюю семантику. Отдельное чтение
+            # с guard'ом: load_yaml() не отличает «битый YAML» от «пустого
+            # mapping», а skip требуется именно для битого.
+            try:
+                import yaml
+                raw = yml.read_text(encoding="utf-8")
+                meta = yaml.safe_load(raw)
+                # Пустой/comment-only документ: safe_load() даёт None, но это
+                # валидный YAML — прежняя семантика load_yaml() or {} создавала
+                # entity с именем каталога (Pytna R2a.1-1 Finding 1). Явный
+                # scalar null/«---» отличаем по compose(): там node есть.
+                if meta is None:
+                    meta = {} if yaml.compose(raw) is None else None
+            except (yaml.YAMLError, UnicodeError, OSError):
+                continue
+            if not isinstance(meta, dict):
+                continue
             name = str(meta.get("name") or d.name)
             entities[f"plugin-provider:{name}"] = {
                 "type": "plugin-provider", "name": name,
@@ -452,14 +470,15 @@ def main():
             (old_snap.get("updated") if old_snap else None)
         disc_env = {"status": "degraded", "reason_code": disc_reason,
                     "attempted_at": now, "last_good_at": last_good_at or None}
-        if not baseline:
-            # Первый переход ok→degraded отчётный; повтор идентичной деградации
-            # тихий (без cron-спама); смена reason_code — отчётная.
-            if prev_status != "degraded" or \
-                    prev_disc.get("reason_code") != disc_reason:
-                events.append({
-                    "event": "discovery_degraded", "key": "discovery",
-                    "entity": _discovery_entity("degraded", disc_reason)})
+        # Первый переход ok→degraded отчётный даже в --baseline-прогоне:
+        # baseline глушит ТОЛЬКО entity-diff (R2a baseline follow-up).
+        # Повтор идентичной деградации тихий (без cron-спама); смена
+        # reason_code — отчётная.
+        if prev_status != "degraded" or \
+                prev_disc.get("reason_code") != disc_reason:
+            events.append({
+                "event": "discovery_degraded", "key": "discovery",
+                "entity": _discovery_entity("degraded", disc_reason)})
 
     snap = {
         "updated": updated,

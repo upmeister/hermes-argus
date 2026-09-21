@@ -8,14 +8,16 @@ Status: **ACTIVE EXECUTION BASELINE — UPDATED 2026-09-21**
 Argus main = 7b78e9369be72d9a5f08de267ccfc62604710f79
 
 R1c / PR #42 = DONE
-R2a / PR #44 = MERGED / FOLLOW-UP REQUIRED
+R2a / PR #44 = MERGED
 R2a candidate = 6241543d96e93cfbe197706dcbf316fbbc72b58d
 R2a CI #86 = success
 R2a probes = 131/131
 R2a swap tests = 8/8
 
-R2a baseline-degradation follow-up = NOW
-R2c.1 = PREPARED / HOLD
+R2a baseline-degradation follow-up = DONE / R2a.1 batch
+R2a.1 plugin metadata shape hardening = DONE / R2a.1 batch
+R2a = CLOSED
+R2c.1 = PREPARED / HOLD (awaits explicit maintainer go)
 ```
 
 Hermes authority:
@@ -25,7 +27,7 @@ stable = v2026.9.14 / v0.21.3
 warning-source main = 5171ea18dc4b699e14f0092388be326dc4fc81ab
 ```
 
-## Remaining R2a blocker
+## R2a close-out (blocker resolved)
 
 Final exact-tree review found one P2 not covered by the 131-probe suite:
 
@@ -63,8 +65,8 @@ R2a baseline follow-up NOW
  -> v0.1.0-rc.1
 ```
 
-R2c.1 docs/research may be prepared, but implementation is not active until
-R2a closes.
+R2a is closed by the R2a.1 batch. R2c.1 implementation awaits an explicit
+maintainer go.
 
 ## RR0 decision
 
@@ -81,10 +83,10 @@ personal proxy/GitHub defaults, and deployed dead/duplicate surfaces.
 ## Workflow
 
 ```text
-one focused R2a follow-up
+one focused R2a follow-up (DONE, R2a.1 batch)
  -> one Pytna verification
  -> exact-head reread
- -> R2a close OR blocker
+ -> R2a closed
 ```
 
 Production deploy remains a separate maintainer action.

@@ -1,6 +1,6 @@
 # R2a follow-up contract — baseline must not swallow first degradation
 
-Status: **NOW / READY FOR ONE NARROW FOLLOW-UP**
+Status: **DONE / MERGED IN THE R2a.1 BATCH**
 
 ## Exact baseline
 
@@ -101,3 +101,12 @@ one local fix
  -> exact-head reread
  -> close R2a OR maintainer blocker
 ```
+
+## Accepted
+
+Fixed in the R2a.1 batch together with the community plugin metadata shape
+hardening. `--baseline` suppresses only the entity diff; the first
+`ok -> degraded` transition is reportable through a baseline run, repeated
+identical degradation stays quiet, recovery remains reportable. Probe
+`r2a_baseline_degraded_reportable` was RED on main before the fix and GREEN
+on the candidate.

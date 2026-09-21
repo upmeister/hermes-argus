@@ -1,6 +1,6 @@
 # R2a contract — fail-safe malformed YAML discovery
 
-Status: **MERGED / FOLLOW-UP P2 OPEN**
+Status: **MERGED / CLOSED (R2a.1 batch)**
 
 ## Exact baseline
 
@@ -403,4 +403,5 @@ quiet indefinitely. See:
 
 `docs/handoffs/r2a-baseline-degradation-followup-contract.md`
 
-R2a is not closed until that focused follow-up passes.
+Resolved by the R2a.1 batch: the follow-up fix landed together with
+community plugin metadata shape hardening; R2a is closed.
