@@ -293,7 +293,7 @@ def extract_entities(cfg=None):
                 "check_mode": e.get("check_mode", "")}
 
     # ── Discover v2, layer 3: active model references ───────────────────────
-    # What is ACTUALLY used (deep-check target): model/fallback_model/auxiliary.
+    # Configured model references; fallback inventory is not runtime route proof.
     # The primary model lives in model.default (not model.model).
     def model_ref(eid, role, section, use_default_key=False):
         if isinstance(section, dict):
@@ -306,7 +306,30 @@ def extract_entities(cfg=None):
                     "key_env": section.get("key_env", "")}
 
     model_ref("model:primary", "primary", cfg.get("model") or {}, use_default_key=True)
-    model_ref("model:fallback", "fallback", cfg.get("fallback_model") or {})
+    fallbacks, seen_fallbacks = [], set()
+    for source in ("fallback_providers", "fallback_model"):
+        raw = cfg.get(source)
+        candidates = [raw] if isinstance(raw, dict) else raw if isinstance(raw, list) else []
+        for entry in candidates:
+            if not isinstance(entry, dict):
+                continue
+            provider = str(entry.get("provider") or "").strip()
+            model = str(entry.get("model") or "").strip()
+            if not provider or not model:
+                continue
+            base_url = entry.get("base_url")
+            base_url = base_url.strip().rstrip("/") if isinstance(base_url, str) else ""
+            identity = (provider.lower(), model.lower(), base_url.lower())
+            if identity in seen_fallbacks:
+                continue
+            seen_fallbacks.add(identity)
+            fallbacks.append({"provider": provider, "model": model,
+                              "key_env": entry.get("key_env", ""), "base_url": base_url})
+    for index, fallback in enumerate(fallbacks):
+        key = "model:fallback" if index == 0 else f"model:fallback:{index}"
+        model_ref(key, "fallback", fallback)
+        if fallback["base_url"]:
+            entities[key]["base_url"] = sanitize_url(fallback["base_url"])
     aux = cfg.get("auxiliary") or {}
     if isinstance(aux, dict):
         for role in ("vision", "compression"):
