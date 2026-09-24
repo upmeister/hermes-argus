@@ -2920,6 +2920,172 @@ def _r2a_report(tmp: Path, name: str) -> dict:
     return json.loads((tmp / name).read_text(encoding="utf-8"))
 
 
+def _r2c_entities(disc, tmp: Path, name: str, cfg: dict) -> dict:
+    home = tmp / name
+    home.mkdir(parents=True, exist_ok=True)
+    disc.HERMES_DIR = home
+    disc.CONFIG = write(home / "config.yaml", "")
+    disc.ENV_FILE = write(home / ".env", "")
+    disc.REGISTRY = home / "registry.yaml"
+    disc.AUTH_JSON = home / "auth.json"
+    entities, _env = disc.extract_entities(cfg)
+    return entities
+
+
+def _r2c_rows(entities: dict) -> list[tuple]:
+    return [(key, entity.get("provider"), entity.get("model"),
+             entity.get("base_url", ""), entity.get("key_env", ""))
+            for key, entity in entities.items()
+            if key == "model:fallback" or key.startswith("model:fallback:")]
+
+
+def probe_r2c_fallback_shapes(disc, tmp: Path):
+    cases = (
+        ("canonical_order", {"fallback_providers": [
+            {"provider": "alpha", "model": "one"}, {"provider": "beta", "model": "two"},
+            {"provider": "gamma", "model": "three"}]}, [
+            ("model:fallback", "alpha", "one", "", ""),
+            ("model:fallback:1", "beta", "two", "", ""),
+            ("model:fallback:2", "gamma", "three", "", "")]),
+        ("canonical_mapping", {"fallback_providers": {"provider": "alpha", "model": "one"}}, [
+            ("model:fallback", "alpha", "one", "", "")]),
+        ("canonical_legacy_order", {"fallback_providers": [
+            {"provider": "alpha", "model": "one"}, {"provider": "beta", "model": "two"}],
+            "fallback_model": [{"provider": "gamma", "model": "three"}]}, [
+            ("model:fallback", "alpha", "one", "", ""),
+            ("model:fallback:1", "beta", "two", "", ""),
+            ("model:fallback:2", "gamma", "three", "", "")]),
+        ("dedupe_identity", {"fallback_providers": [{
+            "provider": " OpenAI ", "model": " M ",
+            "base_url": " https://EXAMPLE.invalid/v1/// "}], "fallback_model": [
+            {"provider": "openai", "model": "m", "base_url": "https://example.invalid/v1"},
+            {"provider": "legacy", "model": "tail"}]}, [
+            ("model:fallback", "OpenAI", "M", "https://example.invalid/v1", ""),
+            ("model:fallback:1", "legacy", "tail", "", "")]),
+        ("distinct_route_identity", {"fallback_providers": [
+            {"provider": "vendor", "model": "same", "base_url": "https://one.invalid/v1"},
+            {"provider": "vendor", "model": "same", "base_url": "https://two.invalid/v1"}]}, [
+            ("model:fallback", "vendor", "same", "https://one.invalid/v1", ""),
+            ("model:fallback:1", "vendor", "same", "https://two.invalid/v1", "")]),
+        ("legacy_only_shape", {"fallback_model": {
+            "provider": "legacy", "model": "old", "key_env": "OLD_KEY"}}, [
+            ("model:fallback", "legacy", "old", "", "OLD_KEY")]),
+        ("malformed_entries_ignored", {"fallback_providers": ["bad", None,
+            {"provider": "", "model": "x"}, {"provider": "valid", "model": "  "},
+            {"provider": "valid", "model": "ok"}], "fallback_model": 42}, [
+            ("model:fallback", "valid", "ok", "", "")]),
+    )
+    for i, (name, cfg, expected) in enumerate(cases):
+        actual = _r2c_rows(_r2c_entities(disc, tmp, f"r2c-shape-{i}", cfg))
+        check(f"r2c_{name}", actual == expected, f"actual={actual}")
+
+
+def _r2c_chain_yaml(models: list[str]) -> str:
+    return "fallback_providers:\n" + "".join(
+        f"  - provider: provider-{name}\n    model: model-{name}\n" for name in models)
+
+
+def probe_r2c_reorder_deterministic(tmp: Path):
+    home = _r2a_home(tmp, "r2c-reorder")
+    write(home / "config.yaml", _r2c_chain_yaml(["alpha", "beta", "gamma"]))
+    first = _r2a_run(home, args=["--baseline"])
+    write(home / "config.yaml", _r2c_chain_yaml(["gamma", "alpha", "beta"]))
+    report_path = tmp / "r2c-reorder-report.json"
+    second = _r2a_run(home, {"DISCOVER_REPORT": str(report_path)})
+    report = _r2a_report(tmp, report_path.name)
+    changes = {e["key"]: (e.get("old", {}).get("model"), e.get("entity", {}).get("model"))
+               for e in report["events"] if e["event"] == "changed"}
+    expected = {"model:fallback": ("model-alpha", "model-gamma"),
+                "model:fallback:1": ("model-beta", "model-alpha"),
+                "model:fallback:2": ("model-gamma", "model-beta")}
+    repeat_path = tmp / "r2c-reorder-repeat.json"
+    repeat = _r2a_run(home, {"DISCOVER_REPORT": str(repeat_path)})
+    repeat_report = _r2a_report(tmp, repeat_path.name)
+    check("r2c_reorder_deterministic",
+          first.returncode == 0 and second.returncode == 2 and changes == expected
+          and repeat.returncode == 0 and not repeat_report["events"],
+          f"changes={changes}")
+
+
+def probe_r2c_secret_boundary(tmp: Path):
+    home = _r2a_home(tmp, "r2c-secrets")
+    write(home / "config.yaml",
+          "fallback_providers:\n"
+          "  - provider: vendor\n"
+          "    model: safe-model\n"
+          "    api_key: R2C_INLINE_API_SECRET\n"
+          "    base_url: 'https://user:R2C_URL_PASSWORD@fallback.invalid/v1?api_key=R2C_URL_QUERY_SECRET'\n")
+    report_path = tmp / "r2c-secrets-report.json"
+    result = _r2a_run(home, {"DISCOVER_REPORT": str(report_path)})
+    snap = _r2a_snap(home)
+    report_text = report_path.read_text(encoding="utf-8")
+    output = (result.stdout + result.stderr).decode(errors="ignore")
+    blob = json.dumps(snap, ensure_ascii=False) + report_text + output
+    entity = snap.get("entities", {}).get("model:fallback", {})
+    secrets = ("R2C_INLINE_API_SECRET", "R2C_URL_PASSWORD", "R2C_URL_QUERY_SECRET")
+    check("r2c_secret_boundary",
+          result.returncode == 2
+          and entity.get("base_url") ==
+          "https://fallback.invalid/v1?api_key=%3Credacted%3E"
+          and not any(secret in blob for secret in secrets),
+          f"entity={entity}")
+
+
+def probe_r2c_r2a_last_good(tmp: Path):
+    home = _r2a_home(tmp, "r2c-r2a")
+    write(home / "config.yaml", _r2c_chain_yaml(["alpha", "beta"]))
+    first = _r2a_run(home, args=["--baseline"])
+    good = _r2a_snap(home)
+    keys = [key for key in good["entities"] if key == "model:fallback"
+            or key.startswith("model:fallback:")]
+    write(home / "config.yaml", R2A_CORRUPT_CFG)
+    report_path = tmp / "r2c-r2a-report.json"
+    degraded = _r2a_run(home, {"DISCOVER_REPORT": str(report_path)})
+    bad = _r2a_snap(home)
+    report = _r2a_report(tmp, report_path.name)
+    check("r2c_r2a_last_good_fallback",
+          first.returncode == 0 and keys == ["model:fallback", "model:fallback:1"]
+          and degraded.returncode == 2 and bad["entities"] == good["entities"]
+          and [e["event"] for e in report["events"]] == ["discovery_degraded"]
+          and not any(e.get("key", "").startswith("model:fallback")
+                      for e in report["events"]),
+          f"events={report['events']}")
+
+
+def probe_r2c_unrelated_discovery(tmp: Path):
+    home = _r2a_home(tmp, "r2c-unrelated")
+    base = ("providers:\n  alpha:\n    key_env: ALPHA_KEY\n"
+            "    base_url: https://alpha.invalid/v1\n"
+            "mcp_servers:\n  bridge:\n    url: https://mcp.invalid/v1\n")
+    write(home / "config.yaml", base)
+    write(home / "auth.json", '{"providers":{"nous":{"refresh_token":"dummy"}}}\n')
+    plugin = home / "plugins" / "model-providers" / "control" / "plugin.yaml"
+    write(plugin, "name: control\ndescription: control fixture\n")
+    first = _r2a_run(home, args=["--baseline"])
+    before = _r2a_snap(home)["entities"]
+    write(home / "config.yaml", base + _r2c_chain_yaml(["alpha"]))
+    report_path = tmp / "r2c-unrelated-report.json"
+    second = _r2a_run(home, {"DISCOVER_REPORT": str(report_path)})
+    after = _r2a_snap(home)["entities"]
+    report = _r2a_report(tmp, report_path.name)
+    stable = ("provider:alpha", "mcp:bridge", "oauth:nous", "plugin-provider:control")
+    check("r2c_unrelated_discovery_unchanged",
+          first.returncode == 0 and second.returncode == 2
+          and all(before.get(key) == after.get(key) for key in stable)
+          and all(key in before for key in stable)
+          and "model:fallback" in after
+          and all(e["key"] == "model:fallback" for e in report["events"]),
+          f"stable={[key for key in stable if before.get(key) == after.get(key)]}")
+
+
+def probe_r2c_no_effects():
+    source = (REPO / "scripts" / "integration-discover.py").read_text(encoding="utf-8")
+    effects = ("import hermes", "from hermes", "import subprocess", "import socket",
+               "urllib.request", "urlopen(", "resolve_runtime_provider(", "get_secret(",
+               "load_plugin(", "import_module(")
+    check("r2c_no_runtime_or_external_effects", not any(item in source for item in effects))
+
+
 def _r2a_degraded_snapshot(tmp: Path, name: str) -> Path:
     """Baseline с валидным конфигом → деградация; путь к деградированному
     снапшоту (общая фикстура fail-closed проб консьюмеров)."""
@@ -3479,6 +3645,13 @@ def main() -> int:
     probe_r2a_unreadable_encoding_degraded(tmp)
     probe_r2a1_plugin_nonmapping_skipped(tmp)
     probe_r2a_baseline_degraded_reportable(tmp)
+    # R2c.1: canonical top-level fallback chain inventory
+    probe_r2c_fallback_shapes(disc, tmp)
+    probe_r2c_reorder_deterministic(tmp)
+    probe_r2c_secret_boundary(tmp)
+    probe_r2c_r2a_last_good(tmp)
+    probe_r2c_unrelated_discovery(tmp)
+    probe_r2c_no_effects()
     probe_deploy_cron_profile(tmp)
     probe_deploy_secret_not_in_argv(tmp)
     probe_deploy_gh_heartbeat_secret_not_in_argv(tmp)

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Inventory the ordered Hermes `fallback_providers` chain, append unique legacy
+  `fallback_model` entries, and keep route metadata sanitized. This is static
+  configuration evidence, not a claim about the route used for a request.
+
 ### Fixed
 
 - Harden community plugin metadata discovery (R2a.1): a `plugin.yaml` that is
