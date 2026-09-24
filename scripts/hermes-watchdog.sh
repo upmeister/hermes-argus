@@ -491,7 +491,7 @@ if [ ${#NEW_PROBLEMS[@]} -gt 0 ]; then
 "
         done
     fi
-    send_tg "$ALERT_MSG" "pin keyboard"
+    send_tg "$ALERT_MSG" "pin"
     log "📤 Отправлен алерт (${#NEW_PROBLEMS[@]} новых) + пин"
 elif [ ${#RESOLVED[@]} -gt 0 ]; then
     R_MSG="✅ <b>Восстановлено</b> — $(date '+%H:%M')
@@ -500,7 +500,7 @@ elif [ ${#RESOLVED[@]} -gt 0 ]; then
         R_MSG+="• $r
 "
     done
-    send_tg "$R_MSG" "keyboard"
+    send_tg "$R_MSG"
     log "📤 Отправлено восстановление (${#RESOLVED[@]}): ${RESOLVED[*]}"
 else
     # Всё хорошо — тишина (heartbeat-сообщения убраны: шум при здоровой системе,

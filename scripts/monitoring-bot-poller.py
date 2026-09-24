@@ -82,7 +82,8 @@ _DENY_COOLDOWN_S = 60.0
 
 def _send_deny(chat_id, callback_id: str | None = None, query: dict | None = None):
     """Сообщает «🚫 нет доступа» не чаще 1/мин на user_id; возвращает всегда False."""
-    key = str((query or {}).get("id") or callback_id or chat_id or "anon")
+    user_id = (query or {}).get("from", {}).get("id")
+    key = str(user_id or chat_id or "anon")
     now = time.time()
     last = _DENY_LOG.get(key, 0.0)
     fresh = now - last >= _DENY_COOLDOWN_S
@@ -113,9 +114,9 @@ REPLY_LABELS = {
     "👁 Статус Argus": "/watchdog",
     "🔌 Проверка интеграций": "/integrations",
     "📋 Все интеграции": "/integrations_all",
+    "🛠 Обслуживание": "/menu",
     "⚙️ Настройки": "/settings",
     "🔇 Тишина": "/silence",
-    "🛠 Обслуживание": "/menu",
     "❓ Помощь": "/help",
 }
 
@@ -134,7 +135,7 @@ def reply_keyboard() -> dict:
     keys = list(REPLY_LABELS.keys())
     rows = [keys[i:i + 2] for i in range(0, len(keys), 2)]
     return {"keyboard": [[{"text": t} for t in row] for row in rows],
-            "resize_keyboard": True, "is_persistent": True}
+            "resize_keyboard": True}
 
 
 def _secret_worker(key: str, value: str) -> None:
@@ -232,6 +233,54 @@ def route_command(text: str) -> None:
         send_message("🤔 Argus не понял команду.\n"
                      "Панель: /menu · Команды: /help")
 
+
+def _handle_update(update: dict) -> None:
+    """Classify one Telegram update, ignore non-action updates, then auth."""
+    if "callback_query" in update:
+        callback = update["callback_query"]
+        if not is_authorized(callback.get("from", {}).get("id")):
+            _send_deny(
+                chat_id=callback.get("message", {}).get("chat", {}).get("id"),
+                callback_id=callback.get("id"),
+                query=callback,
+            )
+            return
+        threading.Thread(
+            target=webhook.handle_callback_query,
+            args=(callback,), daemon=True
+        ).start()
+        return
+
+    if "message" not in update:
+        return
+
+    message = update["message"]
+    text = message.get("text", "")
+    if not text:
+        return
+
+    if not is_authorized(message.get("from", {}).get("id")):
+        _send_deny(chat_id=message.get("chat", {}).get("id"))
+        return
+
+    if PENDING_SECRET.get("expires", 0) > time.time():
+        key = PENDING_SECRET.pop("key")
+        if text == "/cancel":
+            send_message("🚫 Отменено.")
+        else:
+            threading.Thread(target=_secret_worker,
+                             args=(key, text), daemon=True).start()
+        return
+
+    text = REPLY_LABELS.get(text.strip(), text)
+    if not text.startswith("/"):
+        send_message("👁 Argus на посту. Смотрю в оба.",
+                     reply_markup=reply_keyboard())
+        return
+
+    threading.Thread(target=route_command, args=(text,), daemon=True).start()
+
+
 # ── Main poll loop ──────────────────────────────────────────────────────
 
 def main():
@@ -253,56 +302,7 @@ def main():
 
             for update in data.get("result", []):
                 offset = update["update_id"] + 1
-
-                # Извлекаем user_id независимо от типа update (message / callback_query).
-                user = update.get("message", {}).get("from") or \
-                       update.get("callback_query", {}).get("from")
-                chat = update.get("message", {}).get("chat") or \
-                       update.get("callback_query", {}).get("message", {}).get("chat")
-
-                if not is_authorized(user.get("id")):
-                    # Rate-limited отказ — единая точка для cooldown.
-                    cb = update.get("callback_query") or {}
-                    _send_deny(
-                        chat_id=chat.get("id") if chat else None,
-                        callback_id=cb.get("id"),
-                        query=cb,
-                    )
-                    continue
-
-                # Inline-кнопки → единый обработчик webhook.py
-                if "callback_query" in update:
-                    threading.Thread(
-                        target=webhook.handle_callback_query,
-                        args=(update["callback_query"],), daemon=True
-                    ).start()
-                    continue
-
-                msg = update.get("message", {})
-                text = msg.get("text", "")
-                if not text:
-                    continue
-                if PENDING_SECRET.get("expires", 0) > _time.time():
-                    key = PENDING_SECRET.pop("key")
-                    if text == "/cancel":
-                        send_message("🚫 Отменено.")
-                    else:
-                        threading.Thread(target=_secret_worker,
-                                         args=(key, text), daemon=True).start()
-                    continue
-                # Hybrid UI: reply-keyboard labels map to commands BEFORE
-                # the command test (lesson 2026-09-08: unmapped labels hit
-                # the welcome branch — keyboard "did not work")
-                text = REPLY_LABELS.get(text.strip(), text)
-                if not text.startswith("/"):
-                    # Hybrid UI: plain text gets the branded welcome + the
-                    # persistent reply keyboard (main navigation lives there)
-                    send_message("👁 Argus на посту. Смотрю в оба.",
-                                 reply_markup=reply_keyboard())
-                    continue
-
-                # Команды — в потоке: рестарты блокируют до 30с, не стопорим polling
-                threading.Thread(target=route_command, args=(text,), daemon=True).start()
+                _handle_update(update)
 
             time.sleep(2)
 

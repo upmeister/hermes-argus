@@ -1,19 +1,19 @@
-#!/usr/bin/env python3
-"""probes.py — регрессионный суит по 43 пробам ревью Питны (2026-09-10).
+﻿#!/usr/bin/env python3
+"""probes.py вЂ” СЂРµРіСЂРµСЃСЃРёРѕРЅРЅС‹Р№ СЃСѓРёС‚ РїРѕ 43 РїСЂРѕР±Р°Рј СЂРµРІСЊСЋ РџРёС‚РЅС‹ (2026-09-10).
 
-Каждый дефект из engine-tests/REVIEW.md = тест-кейс. Прогон:
-  python3 tests/probes.py            # все пробы
-  python3 tests/probes.py -k catalog # по подстроке id
+РљР°Р¶РґС‹Р№ РґРµС„РµРєС‚ РёР· engine-tests/REVIEW.md = С‚РµСЃС‚-РєРµР№СЃ. РџСЂРѕРіРѕРЅ:
+  python3 tests/probes.py            # РІСЃРµ РїСЂРѕР±С‹
+  python3 tests/probes.py -k catalog # РїРѕ РїРѕРґСЃС‚СЂРѕРєРµ id
 
-D0a (2026-09-13) добавляет секцию schema-v2: envelope/projection движка и
-dual-read hysteresis обёртки (ADR 0001).
+D0a (2026-09-13) РґРѕР±Р°РІР»СЏРµС‚ СЃРµРєС†РёСЋ schema-v2: envelope/projection РґРІРёР¶РєР° Рё
+dual-read hysteresis РѕР±С‘СЂС‚РєРё (ADR 0001).
 
-Изоляция: dummy HOME/каталоги, subprocess-вызовы подменяются на fixture-фейк
-curl (см. _FakeCurl), сеть не трогается. Секреты в фикстурах — только
-DUMMY_* маркеры.
+РР·РѕР»СЏС†РёСЏ: dummy HOME/РєР°С‚Р°Р»РѕРіРё, subprocess-РІС‹Р·РѕРІС‹ РїРѕРґРјРµРЅСЏСЋС‚СЃСЏ РЅР° fixture-С„РµР№Рє
+curl (СЃРј. _FakeCurl), СЃРµС‚СЊ РЅРµ С‚СЂРѕРіР°РµС‚СЃСЏ. РЎРµРєСЂРµС‚С‹ РІ С„РёРєСЃС‚СѓСЂР°С… вЂ” С‚РѕР»СЊРєРѕ
+DUMMY_* РјР°СЂРєРµСЂС‹.
 
-Статусы: ok | fail | unconfigured | skipped — раздельные, никогда не
-сворачиваются в ok (системный урок ревью: 'not a failure' != 'ok').
+РЎС‚Р°С‚СѓСЃС‹: ok | fail | unconfigured | skipped вЂ” СЂР°Р·РґРµР»СЊРЅС‹Рµ, РЅРёРєРѕРіРґР° РЅРµ
+СЃРІРѕСЂР°С‡РёРІР°СЋС‚СЃСЏ РІ ok (СЃРёСЃС‚РµРјРЅС‹Р№ СѓСЂРѕРє СЂРµРІСЊСЋ: 'not a failure' != 'ok').
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ PASS, FAIL = [], []
 
 def check(probe_id: str, ok: bool, detail: str = "") -> None:
     (PASS if ok else FAIL).append(probe_id)
-    print(f"[{'PASS' if ok else 'FAIL'}] {probe_id}" + (f" — {detail}" if detail else ""))
+    print(f"[{'PASS' if ok else 'FAIL'}] {probe_id}" + (f" вЂ” {detail}" if detail else ""))
 
 
 def load_module(name: str):
@@ -64,7 +64,7 @@ def override_attr(obj, name: str, value):
         setattr(obj, name, old)
 
 
-# ── Фикстуры ────────────────────────────────────────────────────────────────
+# в”Ђв”Ђ Р¤РёРєСЃС‚СѓСЂС‹ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 DUMMY_TOKEN = "DUMMY_SECRET_TOKEN"
 DUMMY_KEY = "DUMMY_SECRET_ECHO"
@@ -90,10 +90,10 @@ SNAP_PROVIDERS = {
 }
 
 
-# ── Пробы: health-check-v2 ──────────────────────────────────────────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: health-check-v2 в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 def probe_catalog_429(hc):
-    """429 не доказывает accepted key — fail, а не ok."""
+    """429 РЅРµ РґРѕРєР°Р·С‹РІР°РµС‚ accepted key вЂ” fail, Р° РЅРµ ok."""
     codes = iter(["429"])
     fake_curl = lambda url, timeout, token="": next(codes, "429")
     with override_attr(hc, "curl_code", fake_curl):
@@ -104,7 +104,7 @@ def probe_catalog_429(hc):
 
 
 def probe_catalog_401_then_public200(hc):
-    """401 на первом кандидате — fail fast, публичный каталог не спасает."""
+    """401 РЅР° РїРµСЂРІРѕРј РєР°РЅРґРёРґР°С‚Рµ вЂ” fail fast, РїСѓР±Р»РёС‡РЅС‹Р№ РєР°С‚Р°Р»РѕРі РЅРµ СЃРїР°СЃР°РµС‚."""
     calls = []
 
     def fake_curl(url, timeout, token=""):
@@ -120,7 +120,7 @@ def probe_catalog_401_then_public200(hc):
 
 
 def probe_catalog_429_then_public200(hc):
-    """429 на первом кандидате — fail fast, публичный каталог не спасает."""
+    """429 РЅР° РїРµСЂРІРѕРј РєР°РЅРґРёРґР°С‚Рµ вЂ” fail fast, РїСѓР±Р»РёС‡РЅС‹Р№ РєР°С‚Р°Р»РѕРі РЅРµ СЃРїР°СЃР°РµС‚."""
     calls = []
 
     def fake_curl(url, timeout, token=""):
@@ -136,7 +136,7 @@ def probe_catalog_429_then_public200(hc):
 
 
 def probe_honcho_503_green(hc):
-    """alive-режим удалён: 503 = fail, а не 'auth wall, service alive'."""
+    """alive-СЂРµР¶РёРј СѓРґР°Р»С‘РЅ: 503 = fail, Р° РЅРµ 'auth wall, service alive'."""
     codes = iter(["503"])
     fake_curl = lambda url, timeout, token="": next(codes, "503")
     with override_attr(hc, "curl_code", fake_curl):
@@ -376,7 +376,7 @@ def probe_honcho_global_config_fallback(hc, tmp: Path):
 
 
 def probe_missing_required_provider_key(hc):
-    """Провайдер из снапшота с пустым ключом = fail (не unconfigured)."""
+    """РџСЂРѕРІР°Р№РґРµСЂ РёР· СЃРЅР°РїС€РѕС‚Р° СЃ РїСѓСЃС‚С‹Рј РєР»СЋС‡РѕРј = fail (РЅРµ unconfigured)."""
     checks = hc.build_checks(
         {}, {"entities": {"provider:dummy": {
             "type": "provider", "name": "dummy", "key_env": "DUMMY_KEY",
@@ -398,7 +398,7 @@ def probe_quoted_empty_provider_key(hc, tmp: Path):
 
 
 def probe_snapshot_missing_green(hc, tmp: Path):
-    """Отсутствующий снапшот = exit 2 (ошибка состояния), не зелёный."""
+    """РћС‚СЃСѓС‚СЃС‚РІСѓСЋС‰РёР№ СЃРЅР°РїС€РѕС‚ = exit 2 (РѕС€РёР±РєР° СЃРѕСЃС‚РѕСЏРЅРёСЏ), РЅРµ Р·РµР»С‘РЅС‹Р№."""
     registry = write(tmp / "valid-registry.yaml", "kit_entries: []\n")
     rc = hc.run(["--snapshot", str(tmp / "missing.json"),
                  "--env", str(tmp / "no.env"), "--registry", str(registry)])
@@ -406,7 +406,7 @@ def probe_snapshot_missing_green(hc, tmp: Path):
 
 
 def probe_snapshot_corrupt_green(hc, tmp: Path):
-    """Битый JSON снапшота = exit 2."""
+    """Р‘РёС‚С‹Р№ JSON СЃРЅР°РїС€РѕС‚Р° = exit 2."""
     registry = write(tmp / "valid-registry-corrupt.yaml", "kit_entries: []\n")
     p = write(tmp / "corrupt.json", "{not json")
     rc = hc.run(["--snapshot", str(p),
@@ -422,7 +422,7 @@ def probe_health_cli_entrypoint(tmp: Path):
           f"rc={result.returncode} stderr={result.stderr.strip()}")
 
 
-# ── Пробы: ai-deep-check ────────────────────────────────────────────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: ai-deep-check в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 def probe_deep_skipped_counted_ok(dc):
     checks = [{"id": "provider:dummy", "status": "unconfigured"}]
@@ -432,7 +432,7 @@ def probe_deep_skipped_counted_ok(dc):
 
 
 def probe_deep_html200_green(dc):
-    """HTML 200 не доказывает каталог — fail, а не ok."""
+    """HTML 200 РЅРµ РґРѕРєР°Р·С‹РІР°РµС‚ РєР°С‚Р°Р»РѕРі вЂ” fail, Р° РЅРµ ok."""
     dc.curl_json = lambda url, token, payload, timeout: (
         200, None) if payload is None else (200, {"choices": []})
     status, detail, _data = dc.catalog_verdict("https://dummy.invalid/v1/models", DUMMY_TOKEN)
@@ -440,7 +440,7 @@ def probe_deep_html200_green(dc):
 
 
 def probe_deep_error_secret_leak(dc):
-    """Ошибка API, эхом содержащая ключ, редактируется до отчёта."""
+    """РћС€РёР±РєР° API, СЌС…РѕРј СЃРѕРґРµСЂР¶Р°С‰Р°СЏ РєР»СЋС‡, СЂРµРґР°РєС‚РёСЂСѓРµС‚СЃСЏ РґРѕ РѕС‚С‡С‘С‚Р°."""
     err = dc.redact_error("Rejected request key " + DUMMY_KEY, DUMMY_KEY)
     check("deep_error_secret_leak", DUMMY_KEY not in err, "leak!" if DUMMY_KEY in err else "redacted")
 
@@ -450,10 +450,10 @@ def probe_deep_quoted_off_ignored(dc):
     check("deep_quoted_off_ignored", allow is False, f"allow={allow}")
 
 
-# ── Пробы: fallback-tracker ─────────────────────────────────────────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: fallback-tracker в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 def probe_fallback_same_second_lost(ft, tmp: Path):
-    """Два события в одну секунду — оба обрабатываются (ms в watermark)."""
+    """Р”РІР° СЃРѕР±С‹С‚РёСЏ РІ РѕРґРЅСѓ СЃРµРєСѓРЅРґСѓ вЂ” РѕР±Р° РѕР±СЂР°Р±Р°С‚С‹РІР°СЋС‚СЃСЏ (ms РІ watermark)."""
     ft.LOG_DIR = tmp
     log = write(tmp / "agent.log",
                 "2026-09-11 00:00:01,100 INFO [s1] agent.chat_completion_helpers: Fallback to dummy/paid-model: attached fallback credential pool\n"
@@ -469,7 +469,7 @@ def probe_fallback_same_second_lost(ft, tmp: Path):
 
 
 def probe_fallback_cross_session_restore(ft, tmp: Path):
-    """Restore в сессии B не закрывает каскад сессии A."""
+    """Restore РІ СЃРµСЃСЃРёРё B РЅРµ Р·Р°РєСЂС‹РІР°РµС‚ РєР°СЃРєР°Рґ СЃРµСЃСЃРёРё A."""
     events = [
         {"ts": 1.0, "ts_str": "t1", "sid": "session-A", "kind": "hop",
          "provider": "dummy", "model": "paid-model"},
@@ -486,7 +486,7 @@ def probe_fallback_cross_session_restore(ft, tmp: Path):
 
 
 def probe_envref_enrichment(hc):
-    """envref-чек наследует registry check_url (probe envref_drops_auth_check)."""
+    """envref-С‡РµРє РЅР°СЃР»РµРґСѓРµС‚ registry check_url (probe envref_drops_auth_check)."""
     reg = {"entries": [{"key": "GITHUB_TOKEN", "check_url": "https://api.github.com/user",
                         "check_auth": "bearer", "check_mode": "200"}]}
     snap = {"entities": {"envref:GITHUB_TOKEN": {"type": "envref", "name": "GITHUB_TOKEN"}}}
@@ -528,7 +528,7 @@ def probe_envkey_enrichment(hc):
 
 
 def probe_deep_activemodel_targeted(dc, tmp: Path):
-    """Deep check таргетит активную модель (probe deep_actual_model_ignored)."""
+    """Deep check С‚Р°СЂРіРµС‚РёС‚ Р°РєС‚РёРІРЅСѓСЋ РјРѕРґРµР»СЊ (probe deep_actual_model_ignored)."""
     snap = write(tmp / "snap.json", json.dumps({"entities": {
         "provider:dummy": {"type": "provider", "name": "dummy", "key_env": "DUMMY_KEY",
                            "key_present": True, "base_url": "https://dummy.invalid/v1"},
@@ -653,7 +653,7 @@ def probe_wrapper_unconfigured_not_recovery(hp, tmp: Path):
 
 
 def probe_fallback_registry_free_ignored(ft, tmp: Path):
-    """Модель из registry free_models классифицируется как free без ':free' в id."""
+    """РњРѕРґРµР»СЊ РёР· registry free_models РєР»Р°СЃСЃРёС„РёС†РёСЂСѓРµС‚СЃСЏ РєР°Рє free Р±РµР· ':free' РІ id."""
     check("fallback_registry_free_ignored",
           ft.is_free_model("openrouter", "minimax-m3",
                            {"openrouter": ["minimax-m3"]}) is True,
@@ -661,8 +661,8 @@ def probe_fallback_registry_free_ignored(ft, tmp: Path):
 
 
 def probe_fallback_baseline_first_incident(ft, tmp: Path):
-    """Baseline на истории с активным инцидентом: первый НОВЫЙ инцидент в новой
-    сессии алертит (probe fallback_first_incident_baselined)."""
+    """Baseline РЅР° РёСЃС‚РѕСЂРёРё СЃ Р°РєС‚РёРІРЅС‹Рј РёРЅС†РёРґРµРЅС‚РѕРј: РїРµСЂРІС‹Р№ РќРћР’Р«Р™ РёРЅС†РёРґРµРЅС‚ РІ РЅРѕРІРѕР№
+    СЃРµСЃСЃРёРё Р°Р»РµСЂС‚РёС‚ (probe fallback_first_incident_baselined)."""
     events = [
         {"ts": 1.0, "ts_str": "t1", "sid": "old-session", "kind": "hop",
          "provider": "dummy", "model": "paid-model"},
@@ -677,7 +677,7 @@ def probe_fallback_baseline_first_incident(ft, tmp: Path):
     check("fallback_baseline_first_incident_alerts", len(alerts2) == 1,
           f"alerts={alerts2}")
 
-# ── Пробы: health_patterns ──────────────────────────────────────────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: health_patterns в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 def probe_disk100(hp, tmp: Path):
     log = write(tmp / "gateway.log",
@@ -723,7 +723,7 @@ def probe_pattern_bearer_secret_leak(hp, tmp: Path):
           "redacted" if "DUMMY_BEARER_SECRET" not in sample else "leak!")
 
 
-# ── Пробы: integration-discover (санитайзер URL) ───────────────────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: integration-discover (СЃР°РЅРёС‚Р°Р№Р·РµСЂ URL) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 def probe_discover_url_secret_leak(disc, tmp: Path):
     cfg = write(tmp / "config.yaml",
@@ -741,7 +741,7 @@ def probe_discover_url_secret_leak(disc, tmp: Path):
 
 
 def probe_discover_url_shape_and_literals(disc, tmp: Path):
-    """userinfo удалён без placeholder-host; literal URL-ключи тоже очищаются."""
+    """userinfo СѓРґР°Р»С‘РЅ Р±РµР· placeholder-host; literal URL-РєР»СЋС‡Рё С‚РѕР¶Рµ РѕС‡РёС‰Р°СЋС‚СЃСЏ."""
     cfg = write(
         tmp / "config-literal.yaml",
         "custom_providers:\n"
@@ -778,7 +778,7 @@ def probe_discover_url_shape_and_literals(disc, tmp: Path):
           f"custom={custom.geturl()} literal={literal.geturl()}")
 
 
-# ── Пробы: OA1 — структурный account-auth discovery + skipped-семантика ─────
+# в”Ђв”Ђ РџСЂРѕР±С‹: OA1 вЂ” СЃС‚СЂСѓРєС‚СѓСЂРЅС‹Р№ account-auth discovery + skipped-СЃРµРјР°РЅС‚РёРєР° в”Ђв”Ђв”Ђв”Ђв”Ђ
 
 def _oa1_auth(auth: dict) -> str:
     return json.dumps(auth, ensure_ascii=False)
@@ -797,8 +797,8 @@ def _oa1_fixture(providers: dict | None = None, pool: dict | None = None,
 
 
 def _oa1_discover(disc, tmp: Path, auth, env_text: str = "") -> dict:
-    """extract_entities на синтетическом HERMES_DIR (auth.json = фикстура:
-    dict → JSON, str → сырое содержимое для malformed-кейсов)."""
+    """extract_entities РЅР° СЃРёРЅС‚РµС‚РёС‡РµСЃРєРѕРј HERMES_DIR (auth.json = С„РёРєСЃС‚СѓСЂР°:
+    dict в†’ JSON, str в†’ СЃС‹СЂРѕРµ СЃРѕРґРµСЂР¶РёРјРѕРµ РґР»СЏ malformed-РєРµР№СЃРѕРІ)."""
     raw = auth if isinstance(auth, str) else json.dumps(auth, ensure_ascii=False)
     disc.AUTH_JSON = write(tmp / "auth.json", raw)
     disc.CONFIG = write(tmp / "config.yaml", "")
@@ -841,7 +841,7 @@ def probe_oa1_discovery_fixtures(disc, tmp: Path):
                                              "active": False},
           f"got {ents.get('oauth:openai-codex')!r}")
 
-    # 4. generic future provider id — без правки ростера
+    # 4. generic future provider id вЂ” Р±РµР· РїСЂР°РІРєРё СЂРѕСЃС‚РµСЂР°
     ents = _oa1_discover(disc, tmp, _oa1_fixture(pool={
         "synthetic-future-provider": [{"auth_type": "oauth", "access_token": "x"}]}))
     check("oa1_generic_future_pool_provider",
@@ -849,15 +849,15 @@ def probe_oa1_discovery_fixtures(disc, tmp: Path):
               "type": "oauth", "name": "synthetic-future-provider", "active": False},
           f"got {ents.get('oauth:synthetic-future-provider')!r}")
 
-    # 5. same-id dedupe (singleton + pool = одна сущность)
+    # 5. same-id dedupe (singleton + pool = РѕРґРЅР° СЃСѓС‰РЅРѕСЃС‚СЊ)
     ents = _oa1_discover(disc, tmp, _oa1_fixture(
         providers={"openai-codex": {"tokens": {"access_token": "a", "refresh_token": "r"}}},
         pool={"openai-codex": [{"auth_type": "oauth", "access_token": "b"}]}))
     codex_keys = [k for k in ents if k.startswith("oauth:openai-codex")]
     check("oa1_same_id_dedupe", codex_keys == ["oauth:openai-codex"], f"keys={codex_keys}")
 
-    # 7. негативные контролы: явный api_key, неизвестный auth_type,
-    #    bare access_token (pool и flat) — НЕ account-auth свидетельства
+    # 7. РЅРµРіР°С‚РёРІРЅС‹Рµ РєРѕРЅС‚СЂРѕР»С‹: СЏРІРЅС‹Р№ api_key, РЅРµРёР·РІРµСЃС‚РЅС‹Р№ auth_type,
+    #    bare access_token (pool Рё flat) вЂ” РќР• account-auth СЃРІРёРґРµС‚РµР»СЊСЃС‚РІР°
     ents = _oa1_discover(disc, tmp, _oa1_fixture(
         providers={"api-key-blob": {"access_token": "OA1_CANARY_G"}},
         pool={"keyed": [{"auth_type": "api_key", "access_token": "OA1_CANARY_H",
@@ -867,7 +867,7 @@ def probe_oa1_discovery_fixtures(disc, tmp: Path):
     leftovers = [k for k in ents if k.startswith("oauth:")]
     check("oa1_apikey_negative_control", leftovers == [], f"leaked={leftovers}")
 
-    # 10. active marker: точное совпадение id, без alias-нормализации
+    # 10. active marker: С‚РѕС‡РЅРѕРµ СЃРѕРІРїР°РґРµРЅРёРµ id, Р±РµР· alias-РЅРѕСЂРјР°Р»РёР·Р°С†РёРё
     ents = _oa1_discover(disc, tmp, _oa1_fixture(
         pool={"xai-oauth": [{"auth_type": "oauth", "access_token": "a"}]}, active="xai"))
     check("oa1_active_marker_exact_id",
@@ -882,8 +882,8 @@ def probe_oa1_discovery_fixtures(disc, tmp: Path):
 
 
 def probe_oa1_storage_shape_stability(disc, tmp: Path):
-    """OA1 acceptance 6: singleton-only vs pool-only vs both для того же id
-    дают идентичную сущность (без provenance-шума)."""
+    """OA1 acceptance 6: singleton-only vs pool-only vs both РґР»СЏ С‚РѕРіРѕ Р¶Рµ id
+    РґР°СЋС‚ РёРґРµРЅС‚РёС‡РЅСѓСЋ СЃСѓС‰РЅРѕСЃС‚СЊ (Р±РµР· provenance-С€СѓРјР°)."""
     singleton = _oa1_discover(disc, tmp, _oa1_fixture(
         providers={"openai-codex": {"tokens": {"access_token": "a", "refresh_token": "r"}}}))
     pooled = _oa1_discover(disc, tmp, _oa1_fixture(
@@ -900,8 +900,8 @@ def probe_oa1_storage_shape_stability(disc, tmp: Path):
 
 
 def probe_oa1_malformed_ignored(disc, tmp: Path):
-    """OA1 acceptance 8 + review remediation: битые/неполные структуры auth.json
-    не роняют дискавери и не классифицируются как OAuth."""
+    """OA1 acceptance 8 + review remediation: Р±РёС‚С‹Рµ/РЅРµРїРѕР»РЅС‹Рµ СЃС‚СЂСѓРєС‚СѓСЂС‹ auth.json
+    РЅРµ СЂРѕРЅСЏСЋС‚ РґРёСЃРєР°РІРµСЂРё Рё РЅРµ РєР»Р°СЃСЃРёС„РёС†РёСЂСѓСЋС‚СЃСЏ РєР°Рє OAuth."""
     cases = {
         "corrupt_json": "{not json",
         "json_null": "null",
@@ -916,13 +916,13 @@ def probe_oa1_malformed_ignored(disc, tmp: Path):
                                                                  "refresh_token": 7}]}}),
         "auth_type_int": _oa1_auth({"credential_pool": {"x": [{"auth_type": 5,
                                                                "access_token": "a"}]}}),
-        # remediation: partial nested tokens — рантайм требует ОБЕ части пары
+        # remediation: partial nested tokens вЂ” СЂР°РЅС‚Р°Р№Рј С‚СЂРµР±СѓРµС‚ РћР‘Р• С‡Р°СЃС‚Рё РїР°СЂС‹
         "tokens_partial_access": _oa1_auth({"providers": {"x": {"tokens": {
             "access_token": "a"}}}}),
         "tokens_partial_refresh": _oa1_auth({"providers": {"x": {"tokens": {
             "refresh_token": "r"}}}}),
-        # remediation: присутствующий, но falsey auth_type — malformed,
-        # а НЕ «отсутствие ключа» (weak-fallback не применяется)
+        # remediation: РїСЂРёСЃСѓС‚СЃС‚РІСѓСЋС‰РёР№, РЅРѕ falsey auth_type вЂ” malformed,
+        # Р° РќР• В«РѕС‚СЃСѓС‚СЃС‚РІРёРµ РєР»СЋС‡Р°В» (weak-fallback РЅРµ РїСЂРёРјРµРЅСЏРµС‚СЃСЏ)
         "auth_type_null": _oa1_auth({"credential_pool": {"x": [
             {"auth_type": None, "refresh_token": "r"}]}}),
         "auth_type_empty": _oa1_auth({"credential_pool": {"x": [
@@ -935,14 +935,14 @@ def probe_oa1_malformed_ignored(disc, tmp: Path):
         try:
             ents = _oa1_discover(disc, tmp, raw)
             results[name] = sorted(k for k in ents if k.startswith("oauth:"))
-        except Exception as e:  # noqa: BLE001 — проба ловит любой краш
+        except Exception as e:  # noqa: BLE001 вЂ” РїСЂРѕР±Р° Р»РѕРІРёС‚ Р»СЋР±РѕР№ РєСЂР°С€
             results[name] = f"CRASH: {e}"
     bad = {k: v for k, v in results.items() if v != []}
     check("oa1_malformed_ignored", not bad, f"{bad}")
 
 
 def probe_oa1_copilot_compat(disc, tmp: Path):
-    """OA1 acceptance 9: Copilot env-канал не изменился (token vs PAT-only)."""
+    """OA1 acceptance 9: Copilot env-РєР°РЅР°Р» РЅРµ РёР·РјРµРЅРёР»СЃСЏ (token vs PAT-only)."""
     ents = _oa1_discover(disc, tmp, _oa1_fixture(), env_text="COPILOT_GITHUB_TOKEN=x\n")
     check("oa1_copilot_token_entity",
           ents.get("oauth:copilot") == {"type": "oauth", "name": "copilot", "active": False},
@@ -955,8 +955,8 @@ def probe_oa1_copilot_compat(disc, tmp: Path):
 
 
 def probe_oa1_secret_canary_scan(tmp: Path):
-    """OA1 secret boundary: canary во всех секретных полях фикстуры не
-    появляется в snapshot, discover report/stdout/stderr и health-report."""
+    """OA1 secret boundary: canary РІРѕ РІСЃРµС… СЃРµРєСЂРµС‚РЅС‹С… РїРѕР»СЏС… С„РёРєСЃС‚СѓСЂС‹ РЅРµ
+    РїРѕСЏРІР»СЏРµС‚СЃСЏ РІ snapshot, discover report/stdout/stderr Рё health-report."""
     home = tmp / "oa1-home"
     canaries = {
         "flat_access": "OA1_CANARY_FLAT_ACCESS",
@@ -997,7 +997,7 @@ def probe_oa1_secret_canary_scan(tmp: Path):
     env = dict(os.environ, HERMES_DIR=str(home),
                DISCOVER_REPORT=str(tmp / "oa1-report.json"))
     outs = []
-    for _ in range(2):  # baseline-прогон + diff-прогон
+    for _ in range(2):  # baseline-РїСЂРѕРіРѕРЅ + diff-РїСЂРѕРіРѕРЅ
         r = subprocess.run(["python3", str(REPO / "scripts" / "integration-discover.py")],
                            cwd=REPO, env=env, capture_output=True, timeout=60)
         outs.append((r.stdout.decode(errors="ignore"), r.stderr.decode(errors="ignore")))
@@ -1021,8 +1021,8 @@ def probe_oa1_secret_canary_scan(tmp: Path):
 
 
 def probe_oa1_health_static_evidence_non_green(hc, tmp: Path):
-    """OA1 acceptance 11-13: статическая oauth-сущность = skipped/не-зелёная,
-    никогда ok/'logged in'."""
+    """OA1 acceptance 11-13: СЃС‚Р°С‚РёС‡РµСЃРєР°СЏ oauth-СЃСѓС‰РЅРѕСЃС‚СЊ = skipped/РЅРµ-Р·РµР»С‘РЅР°СЏ,
+    РЅРёРєРѕРіРґР° ok/'logged in'."""
     registry = write(tmp / "oa1-reg.yaml", "kit_entries: []\n")
     snapshot = write(tmp / "oa1-snap.json", json.dumps({
         "updated": "2026-09-19T00:00:00Z",
@@ -1048,7 +1048,7 @@ def probe_oa1_health_static_evidence_non_green(hc, tmp: Path):
 
 
 def probe_oa1_health_pat_only_unconfigured(hc, tmp: Path):
-    """OA1 acceptance 14: pat-only остаётся unconfigured (не skipped)."""
+    """OA1 acceptance 14: pat-only РѕСЃС‚Р°С‘С‚СЃСЏ unconfigured (РЅРµ skipped)."""
     registry = write(tmp / "oa1-reg3.yaml", "kit_entries: []\n")
     snapshot = write(tmp / "oa1-snap3.json", json.dumps({
         "updated": "2026-09-19T00:00:00Z",
@@ -1069,7 +1069,7 @@ def probe_oa1_health_pat_only_unconfigured(hc, tmp: Path):
 
 
 def probe_oa1_quick_report_not_green(wh):
-    """OA1 acceptance 15: quick-рендер не зелёный на skipped-only отчёте."""
+    """OA1 acceptance 15: quick-СЂРµРЅРґРµСЂ РЅРµ Р·РµР»С‘РЅС‹Р№ РЅР° skipped-only РѕС‚С‡С‘С‚Рµ."""
     report = {
         "schema": 2, "updated": "2026-09-19T00:00:00+00:00", "total": 1,
         "summary": {"total": 1, "healthy": 0, "failed": 0, "unknown": 0,
@@ -1082,10 +1082,10 @@ def probe_oa1_quick_report_not_green(wh):
     }
     text = wh._render_integrations_quick(report)
     check("oa1_quick_report_not_green",
-          "всё в порядке" not in text and "⏸" in text, f"text={text!r}")
+          "РІСЃС‘ РІ РїРѕСЂСЏРґРєРµ" not in text and "вЏё" in text, f"text={text!r}")
 
 
-# ── Пробы OA1b: презентационная семантика OAuth-свидетельств ───────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹ OA1b: РїСЂРµР·РµРЅС‚Р°С†РёРѕРЅРЅР°СЏ СЃРµРјР°РЅС‚РёРєР° OAuth-СЃРІРёРґРµС‚РµР»СЊСЃС‚РІ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 def _oa1b_row(cid: str, label: str, status: str, primitive: str | None = None,
               detail: str = "x") -> dict:
@@ -1112,35 +1112,35 @@ def _oa1b_report(rows: list) -> dict:
 
 
 def probe_oa1b_full_oauth_evidence(wh):
-    """OA1b §7.1: OAuth-свидетельство в full view — informational-строка без
-    ⏸/✅/«пропущено»."""
+    """OA1b В§7.1: OAuth-СЃРІРёРґРµС‚РµР»СЊСЃС‚РІРѕ РІ full view вЂ” informational-СЃС‚СЂРѕРєР° Р±РµР·
+    вЏё/вњ…/В«РїСЂРѕРїСѓС‰РµРЅРѕВ»."""
     report = _oa1b_report([
         _oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"),
         _oa1b_row("oauth:openai-codex", "oauth openai-codex", "skipped", "oauth"),
     ])
     text = wh._render_integrations_full(report, {})
     row = next(l for l in text.split("\n") if "oauth nous" in l)
-    ok = ("🔐" in row and "учётные данные обнаружены" in row
-          and "runtime-статус не проверяется" in row
-          and "⏸" not in row and "✅" not in row and "пропущено" not in row)
+    ok = ("рџ”ђ" in row and "СѓС‡С‘С‚РЅС‹Рµ РґР°РЅРЅС‹Рµ РѕР±РЅР°СЂСѓР¶РµРЅС‹" in row
+          and "runtime-СЃС‚Р°С‚СѓСЃ РЅРµ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ" in row
+          and "вЏё" not in row and "вњ…" not in row and "РїСЂРѕРїСѓС‰РµРЅРѕ" not in row)
     check("oa1b_full_oauth_evidence", ok, f"row={row!r}")
 
 
 def probe_oa1b_full_generic_skipped_control(wh):
-    """OA1b §7.2: generic skipped (не oauth) в full view — прежний ⏸-рендер."""
+    """OA1b В§7.2: generic skipped (РЅРµ oauth) РІ full view вЂ” РїСЂРµР¶РЅРёР№ вЏё-СЂРµРЅРґРµСЂ."""
     report = _oa1b_report([
         _oa1b_row("kit:tg-auth", "kit tg-auth", "skipped", "env"),
     ])
     text = wh._render_integrations_full(report, {})
     row = next(l for l in text.split("\n") if "kit tg-auth" in l)
     check("oa1b_full_generic_skipped_control",
-          "⏸" in row and "пропущено" in row and "🔐" not in row,
+          "вЏё" in row and "РїСЂРѕРїСѓС‰РµРЅРѕ" in row and "рџ”ђ" not in row,
           f"row={row!r}")
 
 
 def probe_oa1b_full_counts_split(wh):
-    """OA1b §5/§7.5: счётчик ⏸ считает только generic-skipped; OAuth-свидетельства
-    идут отдельным нейтральным 🔐-счётчиком."""
+    """OA1b В§5/В§7.5: СЃС‡С‘С‚С‡РёРє вЏё СЃС‡РёС‚Р°РµС‚ С‚РѕР»СЊРєРѕ generic-skipped; OAuth-СЃРІРёРґРµС‚РµР»СЊСЃС‚РІР°
+    РёРґСѓС‚ РѕС‚РґРµР»СЊРЅС‹Рј РЅРµР№С‚СЂР°Р»СЊРЅС‹Рј рџ”ђ-СЃС‡С‘С‚С‡РёРєРѕРј."""
     report = _oa1b_report([
         _oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"),
         _oa1b_row("kit:tg-auth", "kit tg-auth", "skipped", "env"),
@@ -1149,31 +1149,31 @@ def probe_oa1b_full_counts_split(wh):
     text = wh._render_integrations_full(report, {})
     counts = text.split("\n")[1]
     check("oa1b_full_counts_split",
-          "⏸ 1" in counts and "🔐 1" in counts and "⏸ 2" not in counts
-          and "✅ 1" in counts,
+          "вЏё 1" in counts and "рџ”ђ 1" in counts and "вЏё 2" not in counts
+          and "вњ… 1" in counts,
           f"counts={counts!r}")
 
 
 def probe_oa1b_full_oauth_line_survives_cap(wh):
-    """OA1b remediation (Pytna P2): лимит 4000 символов full view не режет и
-    не отбрасывает строку OAuth-свидетельства — обязательное заявление
-    «runtime-статус не проверяется» доезжает целиком; резка идёт по целым
-    строкам (сценарий ревьюера: 16 healthy-меток по 250 символов)."""
+    """OA1b remediation (Pytna P2): Р»РёРјРёС‚ 4000 СЃРёРјРІРѕР»РѕРІ full view РЅРµ СЂРµР¶РµС‚ Рё
+    РЅРµ РѕС‚Р±СЂР°СЃС‹РІР°РµС‚ СЃС‚СЂРѕРєСѓ OAuth-СЃРІРёРґРµС‚РµР»СЊСЃС‚РІР° вЂ” РѕР±СЏР·Р°С‚РµР»СЊРЅРѕРµ Р·Р°СЏРІР»РµРЅРёРµ
+    В«runtime-СЃС‚Р°С‚СѓСЃ РЅРµ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏВ» РґРѕРµР·Р¶Р°РµС‚ С†РµР»РёРєРѕРј; СЂРµР·РєР° РёРґС‘С‚ РїРѕ С†РµР»С‹Рј
+    СЃС‚СЂРѕРєР°Рј (СЃС†РµРЅР°СЂРёР№ СЂРµРІСЊСЋРµСЂР°: 16 healthy-РјРµС‚РѕРє РїРѕ 250 СЃРёРјРІРѕР»РѕРІ)."""
     long_label = "provider " + "p" * 241
     rows = [_oa1b_row(f"provider:fill{i}", long_label, "ok", "env")
             for i in range(16)]
     rows.append(_oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"))
     text = wh._render_integrations_full(_oa1b_report(rows), {})
-    evidence_line = ("🔐 oauth nous — учётные данные обнаружены · "
-                     "runtime-статус не проверяется")
+    evidence_line = ("рџ”ђ oauth nous вЂ” СѓС‡С‘С‚РЅС‹Рµ РґР°РЅРЅС‹Рµ РѕР±РЅР°СЂСѓР¶РµРЅС‹ В· "
+                     "runtime-СЃС‚Р°С‚СѓСЃ РЅРµ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ")
     out_lines = text.split("\n")
-    complete = {evidence_line, "✅ " + long_label, "🤖 AI-провайдеры (custom)",
-                "🔐 OAuth-провайдеры", ""}
-    healthy_left = sum(1 for l in out_lines if l == "✅ " + long_label)
+    complete = {evidence_line, "вњ… " + long_label, "рџ¤– AI-РїСЂРѕРІР°Р№РґРµСЂС‹ (custom)",
+                "рџ”ђ OAuth-РїСЂРѕРІР°Р№РґРµСЂС‹", ""}
+    healthy_left = sum(1 for l in out_lines if l == "вњ… " + long_label)
     ok = (len(text) <= 4000
           and evidence_line in out_lines
           and healthy_left < 16
-          and all(l in complete or l.startswith(("👁 ", "✅ 1"))
+          and all(l in complete or l.startswith(("рџ‘Ѓ ", "вњ… 1"))
                   for l in out_lines))
     check("oa1b_full_oauth_line_survives_cap", ok,
           f"len={len(text)} evidence_complete={evidence_line in out_lines} "
@@ -1181,12 +1181,12 @@ def probe_oa1b_full_oauth_line_survives_cap(wh):
 
 
 def probe_oa1b_full_failure_survives_cap(wh):
-    """OA1b remediation 2 (Pytna P2): cap 4000 не удаляет реальную ❌-строку
-    провала — с хвоста падают только информационные строки; провал и
-    OAuth-свидетельство доезжают целиком. Наполнители лежат в ТОМ же
-    kit:watchdog-bucket, что и провал, и идут ПЕРЕД ним: на старом слепом
-    cap-е рубка попадает в наполнители, и провал исчезает из вывода
-    (проба красная на 3ff88370)."""
+    """OA1b remediation 2 (Pytna P2): cap 4000 РЅРµ СѓРґР°Р»СЏРµС‚ СЂРµР°Р»СЊРЅСѓСЋ вќЊ-СЃС‚СЂРѕРєСѓ
+    РїСЂРѕРІР°Р»Р° вЂ” СЃ С…РІРѕСЃС‚Р° РїР°РґР°СЋС‚ С‚РѕР»СЊРєРѕ РёРЅС„РѕСЂРјР°С†РёРѕРЅРЅС‹Рµ СЃС‚СЂРѕРєРё; РїСЂРѕРІР°Р» Рё
+    OAuth-СЃРІРёРґРµС‚РµР»СЊСЃС‚РІРѕ РґРѕРµР·Р¶Р°СЋС‚ С†РµР»РёРєРѕРј. РќР°РїРѕР»РЅРёС‚РµР»Рё Р»РµР¶Р°С‚ РІ РўРћРњ Р¶Рµ
+    kit:watchdog-bucket, С‡С‚Рѕ Рё РїСЂРѕРІР°Р», Рё РёРґСѓС‚ РџР•Р Р•Р” РЅРёРј: РЅР° СЃС‚Р°СЂРѕРј СЃР»РµРїРѕРј
+    cap-Рµ СЂСѓР±РєР° РїРѕРїР°РґР°РµС‚ РІ РЅР°РїРѕР»РЅРёС‚РµР»Рё, Рё РїСЂРѕРІР°Р» РёСЃС‡РµР·Р°РµС‚ РёР· РІС‹РІРѕРґР°
+    (РїСЂРѕР±Р° РєСЂР°СЃРЅР°СЏ РЅР° 3ff88370)."""
     long_label = "kit " + "k" * 280
     rows = [_oa1b_row(f"kit:fill{i}", long_label, "ok", "env")
             for i in range(15)]
@@ -1194,16 +1194,16 @@ def probe_oa1b_full_failure_survives_cap(wh):
                           "HTTP 500"))
     rows.append(_oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"))
     text = wh._render_integrations_full(_oa1b_report(rows), {})
-    evidence_line = ("🔐 oauth nous — учётные данные обнаружены · "
-                     "runtime-статус не проверяется")
-    fail_line = "❌ kit failure — HTTP 500"
+    evidence_line = ("рџ”ђ oauth nous вЂ” СѓС‡С‘С‚РЅС‹Рµ РґР°РЅРЅС‹Рµ РѕР±РЅР°СЂСѓР¶РµРЅС‹ В· "
+                     "runtime-СЃС‚Р°С‚СѓСЃ РЅРµ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ")
+    fail_line = "вќЊ kit failure вЂ” HTTP 500"
     out_lines = text.split("\n")
-    healthy_left = sum(1 for l in out_lines if l == "✅ " + long_label)
+    healthy_left = sum(1 for l in out_lines if l == "вњ… " + long_label)
     ok = (len(text) <= 4000
           and fail_line in out_lines
           and evidence_line in out_lines
           and healthy_left < 15
-          and "🛡 Watchdog kit" in out_lines)
+          and "рџ›Ў Watchdog kit" in out_lines)
     check("oa1b_full_failure_survives_cap", ok,
           f"len={len(text)} failure={fail_line in out_lines} "
           f"evidence_complete={evidence_line in out_lines} "
@@ -1211,45 +1211,45 @@ def probe_oa1b_full_failure_survives_cap(wh):
 
 
 def probe_oa1b_quick_oauth_only_not_blank_green(wh):
-    """OA1b §7.3: quick view на healthy+OAuth-only — не «всё в порядке», не
-    «пропущены политикой», имена видны, runtime-статус заявлен непроверенным."""
+    """OA1b В§7.3: quick view РЅР° healthy+OAuth-only вЂ” РЅРµ В«РІСЃС‘ РІ РїРѕСЂСЏРґРєРµВ», РЅРµ
+    В«РїСЂРѕРїСѓС‰РµРЅС‹ РїРѕР»РёС‚РёРєРѕР№В», РёРјРµРЅР° РІРёРґРЅС‹, runtime-СЃС‚Р°С‚СѓСЃ Р·Р°СЏРІР»РµРЅ РЅРµРїСЂРѕРІРµСЂРµРЅРЅС‹Рј."""
     report = _oa1b_report([
         _oa1b_row("provider:dummy", "provider dummy", "ok", "env"),
         _oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"),
         _oa1b_row("oauth:openai-codex", "oauth openai-codex", "skipped", "oauth"),
     ])
     text = wh._render_integrations_quick(report)
-    ok = ("всё в порядке" not in text
-          and "пропущены политикой" not in text and "⏸" not in text
+    ok = ("РІСЃС‘ РІ РїРѕСЂСЏРґРєРµ" not in text
+          and "РїСЂРѕРїСѓС‰РµРЅС‹ РїРѕР»РёС‚РёРєРѕР№" not in text and "вЏё" not in text
           and "nous" in text and "openai-codex" in text
-          and "учётные данные обнаружены" in text
-          and "runtime-статус не проверяется" in text)
+          and "СѓС‡С‘С‚РЅС‹Рµ РґР°РЅРЅС‹Рµ РѕР±РЅР°СЂСѓР¶РµРЅС‹" in text
+          and "runtime-СЃС‚Р°С‚СѓСЃ РЅРµ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ" in text)
     check("oa1b_quick_oauth_only_not_blank_green", ok, f"text={text!r}")
 
 
 def probe_oa1b_quick_mixed_failure_and_oauth(wh):
-    """OA1b §7.4: реальный провал виден, OAuth-свидетельство — informational-
-    контекст, зелёного заявления нет; generic-skipped quick-контроль прежний."""
+    """OA1b В§7.4: СЂРµР°Р»СЊРЅС‹Р№ РїСЂРѕРІР°Р» РІРёРґРµРЅ, OAuth-СЃРІРёРґРµС‚РµР»СЊСЃС‚РІРѕ вЂ” informational-
+    РєРѕРЅС‚РµРєСЃС‚, Р·РµР»С‘РЅРѕРіРѕ Р·Р°СЏРІР»РµРЅРёСЏ РЅРµС‚; generic-skipped quick-РєРѕРЅС‚СЂРѕР»СЊ РїСЂРµР¶РЅРёР№."""
     fail_report = _oa1b_report([
         _oa1b_row("provider:dummy#http", "provider dummy root", "fail", "http",
                   "HTTP 503"),
         _oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"),
     ])
     text = wh._render_integrations_quick(fail_report)
-    mixed_ok = ("❌" in text and "provider dummy root" in text
-                and "учётные данные обнаружены" in text
-                and "всё в порядке" not in text)
+    mixed_ok = ("вќЊ" in text and "provider dummy root" in text
+                and "СѓС‡С‘С‚РЅС‹Рµ РґР°РЅРЅС‹Рµ РѕР±РЅР°СЂСѓР¶РµРЅС‹" in text
+                and "РІСЃС‘ РІ РїРѕСЂСЏРґРєРµ" not in text)
     generic_report = _oa1b_report([
         _oa1b_row("kit:tg-auth", "kit tg-auth", "skipped", "env"),
     ])
     generic_text = wh._render_integrations_quick(generic_report)
-    generic_ok = "⏸ 1 проверок пропущены политикой" in generic_text
+    generic_ok = "вЏё 1 РїСЂРѕРІРµСЂРѕРє РїСЂРѕРїСѓС‰РµРЅС‹ РїРѕР»РёС‚РёРєРѕР№" in generic_text
     check("oa1b_quick_mixed_failure_and_oauth",
           mixed_ok and generic_ok, f"mixed={text!r} generic={generic_text!r}")
 
 
 def probe_oa1b_report_not_mutated(wh):
-    """OA1b §7.5: рендер не мутирует канонический отчёт (JSON summary неизменен)."""
+    """OA1b В§7.5: СЂРµРЅРґРµСЂ РЅРµ РјСѓС‚РёСЂСѓРµС‚ РєР°РЅРѕРЅРёС‡РµСЃРєРёР№ РѕС‚С‡С‘С‚ (JSON summary РЅРµРёР·РјРµРЅРµРЅ)."""
     report = _oa1b_report([
         _oa1b_row("oauth:nous", "oauth nous", "skipped", "oauth"),
         _oa1b_row("kit:tg-auth", "kit tg-auth", "skipped", "env"),
@@ -1262,8 +1262,8 @@ def probe_oa1b_report_not_mutated(wh):
 
 
 def probe_oa1b_helpers_are_pure():
-    """OA1b §4: OAuth-свидетельства классифицируются по структурным полям
-    (verdict + primitive) — без имён провайдеров и без сравнения detail-текста."""
+    """OA1b В§4: OAuth-СЃРІРёРґРµС‚РµР»СЊСЃС‚РІР° РєР»Р°СЃСЃРёС„РёС†РёСЂСѓСЋС‚СЃСЏ РїРѕ СЃС‚СЂСѓРєС‚СѓСЂРЅС‹Рј РїРѕР»СЏРј
+    (verdict + primitive) вЂ” Р±РµР· РёРјС‘РЅ РїСЂРѕРІР°Р№РґРµСЂРѕРІ Рё Р±РµР· СЃСЂР°РІРЅРµРЅРёСЏ detail-С‚РµРєСЃС‚Р°."""
     src = (REPO / "scripts" / "webhook.py").read_text(encoding="utf-8")
     banned = ('"nous"', '"codex"', '"openai-codex"', '"xai"', '"minimax"',
               'get("detail") ==')
@@ -1275,7 +1275,7 @@ def probe_oa1b_helpers_are_pure():
 
 
 def probe_oa1_helpers_are_pure():
-    """OA1 §8: хелперы дискавери — чистая структурная логика, без I/O-поверхности."""
+    """OA1 В§8: С…РµР»РїРµСЂС‹ РґРёСЃРєР°РІРµСЂРё вЂ” С‡РёСЃС‚Р°СЏ СЃС‚СЂСѓРєС‚СѓСЂРЅР°СЏ Р»РѕРіРёРєР°, Р±РµР· I/O-РїРѕРІРµСЂС…РЅРѕСЃС‚Рё."""
     src = (REPO / "scripts" / "integration-discover.py").read_text(encoding="utf-8")
     body = src[src.index("def _nonempty_credential"):src.index("def load_registry")]
     banned = ("subprocess", "urllib", "requests", "socket", "curl", "hermes",
@@ -1414,20 +1414,20 @@ def probe_deploy_gh_heartbeat_secret_not_in_argv(tmp: Path):
         "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
         "CRON_PROFILE": "minimal", "CRON_FILE": str(tmp / "gh-cron.txt"),
     })
-    # input в binary-режиме: text=True на Windows переводит "\n" в "\r\n",
-    # и read в deploy.sh получает "y\r" — ответ не матчится.
+    # input РІ binary-СЂРµР¶РёРјРµ: text=True РЅР° Windows РїРµСЂРµРІРѕРґРёС‚ "\n" РІ "\r\n",
+    # Рё read РІ deploy.sh РїРѕР»СѓС‡Р°РµС‚ "y\r" вЂ” РѕС‚РІРµС‚ РЅРµ РјР°С‚С‡РёС‚СЃСЏ.
     result = subprocess.run(["bash", str(REPO / "deploy.sh"), str(config)],
                             cwd=REPO, env=env, input=b"y\n",
                             capture_output=True, timeout=120)
     gh_argv_text = gh_argv.read_text(encoding="utf-8") if gh_argv.exists() else ""
     git_argv_text = git_argv.read_text(encoding="utf-8") if git_argv.exists() else ""
     gh_stdin_text = gh_stdin.read_text(encoding="utf-8") if gh_stdin.exists() else ""
-    # git получает и -c-опции, поэтому push ищем внутри строки лога
+    # git РїРѕР»СѓС‡Р°РµС‚ Рё -c-РѕРїС†РёРё, РїРѕСЌС‚РѕРјСѓ push РёС‰РµРј РІРЅСѓС‚СЂРё СЃС‚СЂРѕРєРё Р»РѕРіР°
     push_lines = [line for line in git_argv_text.splitlines() if " push " in line]
     push_ok = bool(push_lines) and "https://github.com/dummyuser/" in push_lines[0]
-    # gh 2.45 не имеет --body-file и читает значение из stdin только когда
-    # --body не передан: любая форма флага тела в argv = регрессия к
-    # нерабочему/утекающему варианту
+    # gh 2.45 РЅРµ РёРјРµРµС‚ --body-file Рё С‡РёС‚Р°РµС‚ Р·РЅР°С‡РµРЅРёРµ РёР· stdin С‚РѕР»СЊРєРѕ РєРѕРіРґР°
+    # --body РЅРµ РїРµСЂРµРґР°РЅ: Р»СЋР±Р°СЏ С„РѕСЂРјР° С„Р»Р°РіР° С‚РµР»Р° РІ argv = СЂРµРіСЂРµСЃСЃРёСЏ Рє
+    # РЅРµСЂР°Р±РѕС‡РµРјСѓ/СѓС‚РµРєР°СЋС‰РµРјСѓ РІР°СЂРёР°РЅС‚Сѓ
     no_body_flag = "--body" not in gh_argv_text
     check("deploy_gh_heartbeat_secret_not_in_argv",
           result.returncode == 0
@@ -1485,11 +1485,11 @@ def probe_deploy_gh_secret_failure_gates_deploy(tmp: Path):
     argv_text = gh_argv.read_text(encoding="utf-8") if gh_argv.exists() else ""
     check("deploy_gh_secret_failure_gates_deploy",
           result.returncode != 0
-          and "GH Heartbeat готов" not in stdout
+          and "GH Heartbeat РіРѕС‚РѕРІ" not in stdout
           and not (tmp / "ghfail-cron.txt").exists()
           and token not in argv_text,
           f"rc={result.returncode} ready_msg_suppressed="
-          f"{'GH Heartbeat готов' not in stdout}")
+          f"{'GH Heartbeat РіРѕС‚РѕРІ' not in stdout}")
 
 
 def probe_gh_secret_stdin_flag_supported(tmp: Path):
@@ -1551,7 +1551,7 @@ def probe_git_credential_helper_real(tmp: Path):
           f"rc={result.returncode} filled={filled} no_store={no_store}")
 
 
-# ── Пробы: R1b Telegram token-in-argv (shell + child curl) ──────────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: R1b Telegram token-in-argv (shell + child curl) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 R1B_TOKEN = "ARGUS_CANARY_R1B"
 R1B_CHAT = "ARGUS_CHAT_R1B"
@@ -1769,7 +1769,7 @@ def probe_telegram_getme_module_canary(hc, tmp: Path):
 
 def probe_healthcheck_check_url_canary(tmp: Path):
     """R1b shape D shell variant: verbatim check_url() from
-    health-check-integrations.sh (getMe caller) — canary off argv, URL on
+    health-check-integrations.sh (getMe caller) вЂ” canary off argv, URL on
     stdin, proxy arg preserved, expected-code match still drives the verdict."""
     src = (REPO / "scripts" / "health-check-integrations.sh").read_text(encoding="utf-8")
     fn = _extract_bash_fn(src, "check_url")
@@ -1839,7 +1839,7 @@ def probe_telegram_static_audit_no_argv_leak(tmp: Path):
     and modules/ (recursive).
 
     Forbidden: a curl command line (or its continuation window) carrying the
-    token URL — literal or via the TG_API/TELEGRAM_API aliases — and any
+    token URL вЂ” literal or via the TG_API/TELEGRAM_API aliases вЂ” and any
     standalone token-URL line that is not a config-stdin delivery line, alias
     assignment, comment, check_url argument (its body is guarded by the
     file-level delivery requirement), or in-process urllib Request.
@@ -1863,7 +1863,7 @@ def probe_telegram_static_audit_no_argv_leak(tmp: Path):
             # aliases: braced and unbraced forms
             has_alias = bool(re.search(r"\$\{?TG_API\}?", line)
                              or re.search(r"\$\{?TELEGRAM_API\}?", line))
-            # токен как аргумент python-ребёнка (env-чтение в коде это не спасает)
+            # С‚РѕРєРµРЅ РєР°Рє Р°СЂРіСѓРјРµРЅС‚ python-СЂРµР±С‘РЅРєР° (env-С‡С‚РµРЅРёРµ РІ РєРѕРґРµ СЌС‚Рѕ РЅРµ СЃРїР°СЃР°РµС‚)
             python_token_argv = ("python" in line
                                  and re.search(r"\$\{?(WATCHDOG_BOT_TOKEN|"
                                                r"TELEGRAM_BOT_TOKEN|BOT_TOKEN)\}?", line)
@@ -1892,9 +1892,9 @@ def probe_telegram_static_audit_no_argv_leak(tmp: Path):
                 elif mode == "fn":
                     pass
                 else:
-                    # URL внутри curl-команды или вне разрешённых форм — утечка
+                    # URL РІРЅСѓС‚СЂРё curl-РєРѕРјР°РЅРґС‹ РёР»Рё РІРЅРµ СЂР°Р·СЂРµС€С‘РЅРЅС‹С… С„РѕСЂРј вЂ” СѓС‚РµС‡РєР°
                     offenders.append(f"{path.relative_to(REPO).as_posix()}:{i}")
-            # команда продолжается, пока строки кончаются на "\"
+            # РєРѕРјР°РЅРґР° РїСЂРѕРґРѕР»Р¶Р°РµС‚СЃСЏ, РїРѕРєР° СЃС‚СЂРѕРєРё РєРѕРЅС‡Р°СЋС‚СЃСЏ РЅР° "\"
             window = mode if ends_cont else None
     required = {
         "scripts/auto-remediate.sh": "printf 'url = ",
@@ -1958,7 +1958,7 @@ def probe_register_commands_env_token_canary(tmp: Path):
           f"env_ok={R1B_TOKEN in env_token}")
 
 
-# ── Пробы: D0a schema v2 (envelope, projection, dual-read) ──────────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: D0a schema v2 (envelope, projection, dual-read) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 # Explicit environment allowlist for wrapper subprocesses (review pass):
 # notification tokens, proxies and credentials are deliberately NOT inherited,
@@ -1982,7 +1982,7 @@ def _probe_subprocess_env(home: Path, extra: dict | None = None) -> dict:
     return env
 
 
-# ── Пробы: R1c Authorization headers out of child argv ──────────────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: R1c Authorization headers out of child argv в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 R1C_TOKEN = "ARGUS_CANARY_R1C_AUTH"
 R1C_TG = "ARGUS_CANARY_R1C_TGURL"
@@ -1991,10 +1991,10 @@ R1C_PROXY = "http://127.0.0.1:8444"
 
 
 def _r1c_shell_curl_shim(shim_dir: Path, tmp: Path, tag: str) -> tuple[Path, Path]:
-    """curl shim для shell-проб R1c: логирует argv и stdin каждого вызова и
-    эмулирует разбираемые скриптом формы ответа (code-only для -w, body+code
-    для getMe — getMe ищем в STDIN, потому что token-bearing URL идёт через
-    config, 302 для socks, JSON для status-hint). Сети нет."""
+    """curl shim РґР»СЏ shell-РїСЂРѕР± R1c: Р»РѕРіРёСЂСѓРµС‚ argv Рё stdin РєР°Р¶РґРѕРіРѕ РІС‹Р·РѕРІР° Рё
+    СЌРјСѓР»РёСЂСѓРµС‚ СЂР°Р·Р±РёСЂР°РµРјС‹Рµ СЃРєСЂРёРїС‚РѕРј С„РѕСЂРјС‹ РѕС‚РІРµС‚Р° (code-only РґР»СЏ -w, body+code
+    РґР»СЏ getMe вЂ” getMe РёС‰РµРј РІ STDIN, РїРѕС‚РѕРјСѓ С‡С‚Рѕ token-bearing URL РёРґС‘С‚ С‡РµСЂРµР·
+    config, 302 РґР»СЏ socks, JSON РґР»СЏ status-hint). РЎРµС‚Рё РЅРµС‚."""
     argv_log = tmp / f"{tag}-argv.log"
     stdin_log = tmp / f"{tag}-stdin.log"
     body = (
@@ -2024,8 +2024,8 @@ def _r1c_shell_curl_shim(shim_dir: Path, tmp: Path, tag: str) -> tuple[Path, Pat
 
 
 def _r1c_dc_curl_shim(shim_dir: Path, tmp: Path, tag: str) -> tuple[Path, Path]:
-    """curl shim для проб ai-deep-check: тот же capture, но ответ в форме
-    `-w "\\n%{http_code}"` — body JSON + код (curl_json парсит rpartition)."""
+    """curl shim РґР»СЏ РїСЂРѕР± ai-deep-check: С‚РѕС‚ Р¶Рµ capture, РЅРѕ РѕС‚РІРµС‚ РІ С„РѕСЂРјРµ
+    `-w "\\n%{http_code}"` вЂ” body JSON + РєРѕРґ (curl_json РїР°СЂСЃРёС‚ rpartition)."""
     argv_log = tmp / f"{tag}-argv.log"
     stdin_log = tmp / f"{tag}-stdin.log"
     body = (
@@ -2040,16 +2040,16 @@ def _r1c_dc_curl_shim(shim_dir: Path, tmp: Path, tag: str) -> tuple[Path, Path]:
 
 
 def _r1c_save_outcome(tmp: Path, tag: str, result) -> None:
-    """Сохранить stdout/stderr пробы как артефакты для boundary-скана (§7.6)."""
+    """РЎРѕС…СЂР°РЅРёС‚СЊ stdout/stderr РїСЂРѕР±С‹ РєР°Рє Р°СЂС‚РµС„Р°РєС‚С‹ РґР»СЏ boundary-СЃРєР°РЅР° (В§7.6)."""
     write(tmp / f"{tag}-out.txt", result.stdout)
     write(tmp / f"{tag}-err.txt", result.stderr)
 
 
 def probe_r1c_shell_full_auth_not_in_argv(tmp: Path):
-    """R1c §7.1/§7.3: full-режим — 5 authenticated check_url доставляют
-    Authorization через stdin-канал (не argv); token-bearing Telegram URL
-    остаётся в stdin (R1b не регрессировал); --proxy сохранён; unauthenticated
-    вызовы работают (shim 200 → нет строки сбоя SearXNG)."""
+    """R1c В§7.1/В§7.3: full-СЂРµР¶РёРј вЂ” 5 authenticated check_url РґРѕСЃС‚Р°РІР»СЏСЋС‚
+    Authorization С‡РµСЂРµР· stdin-РєР°РЅР°Р» (РЅРµ argv); token-bearing Telegram URL
+    РѕСЃС‚Р°С‘С‚СЃСЏ РІ stdin (R1b РЅРµ СЂРµРіСЂРµСЃСЃРёСЂРѕРІР°Р»); --proxy СЃРѕС…СЂР°РЅС‘РЅ; unauthenticated
+    РІС‹Р·РѕРІС‹ СЂР°Р±РѕС‚Р°СЋС‚ (shim 200 в†’ РЅРµС‚ СЃС‚СЂРѕРєРё СЃР±РѕСЏ SearXNG)."""
     home = tmp / "r1c-full-home"
     shim = tmp / "r1c-shim-full"
     shim.mkdir()
@@ -2087,8 +2087,8 @@ def probe_r1c_shell_full_auth_not_in_argv(tmp: Path):
 
 
 def probe_r1c_quick_github_header_not_in_argv(tmp: Path):
-    """R1c §7.2/§7.3: quick GitHub — Authorization: token ... через stdin-канал,
-    не в argv; getMe URL остаётся в stdin; обе проверки проходят (shim 200)."""
+    """R1c В§7.2/В§7.3: quick GitHub вЂ” Authorization: token ... С‡РµСЂРµР· stdin-РєР°РЅР°Р»,
+    РЅРµ РІ argv; getMe URL РѕСЃС‚Р°С‘С‚СЃСЏ РІ stdin; РѕР±Рµ РїСЂРѕРІРµСЂРєРё РїСЂРѕС…РѕРґСЏС‚ (shim 200)."""
     home = tmp / "r1c-quick-home"
     shim = tmp / "r1c-shim-quick"
     shim.mkdir()
@@ -2110,18 +2110,18 @@ def probe_r1c_quick_github_header_not_in_argv(tmp: Path):
     ok = (R1C_GH not in argv_text and R1C_TG not in argv_text
           and gh_in_stdin
           and f"url = https://api.telegram.org/bot{R1C_TG}/getMe" in stdin_text
-          and "🔑 GitHub token" not in result.stdout
-          and "🤖 Telegram monitoring bot" not in result.stdout)
+          and "рџ”‘ GitHub token" not in result.stdout
+          and "рџ¤– Telegram monitoring bot" not in result.stdout)
     check("r1c_quick_github_header_not_in_argv", ok,
           f"rc={result.returncode} gh_stdin={gh_in_stdin} "
           f"secret_in_argv={R1C_GH in argv_text or R1C_TG in argv_text}")
 
 
 def probe_r1c_curl_config_header_seam(tmp: Path):
-    """R1c §7.1 (delivery proof): РЕАЛЬНЫЙ curl парсит `header = ...` из stdin
-    config и отправляет именно этот Authorization на провод; logging-exec shim
-    доказывает отсутствие canary в реальном argv. Негативный контроль: без
-    header-строки Authorization не уходит."""
+    """R1c В§7.1 (delivery proof): Р Р•РђР›Р¬РќР«Р™ curl РїР°СЂСЃРёС‚ `header = ...` РёР· stdin
+    config Рё РѕС‚РїСЂР°РІР»СЏРµС‚ РёРјРµРЅРЅРѕ СЌС‚РѕС‚ Authorization РЅР° РїСЂРѕРІРѕРґ; logging-exec shim
+    РґРѕРєР°Р·С‹РІР°РµС‚ РѕС‚СЃСѓС‚СЃС‚РІРёРµ canary РІ СЂРµР°Р»СЊРЅРѕРј argv. РќРµРіР°С‚РёРІРЅС‹Р№ РєРѕРЅС‚СЂРѕР»СЊ: Р±РµР·
+    header-СЃС‚СЂРѕРєРё Authorization РЅРµ СѓС…РѕРґРёС‚."""
     import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -2152,7 +2152,7 @@ def probe_r1c_curl_config_header_seam(tmp: Path):
         stdin_log = tmp / "r1c-seam-stdin.log"
         shim = tmp / "r1c-shim-seam"
         shim.mkdir()
-        # Лог argv + tee stdin → реальный curl (реальный запрос + capture argv).
+        # Р›РѕРі argv + tee stdin в†’ СЂРµР°Р»СЊРЅС‹Р№ curl (СЂРµР°Р»СЊРЅС‹Р№ Р·Р°РїСЂРѕСЃ + capture argv).
         _write_argv_shim(shim, "curl",
                          f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
                          f'tee "{stdin_log.as_posix()}" | '
@@ -2160,22 +2160,22 @@ def probe_r1c_curl_config_header_seam(tmp: Path):
         env = _probe_subprocess_env(tmp / "r1c-seam-home", {
             "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
         })
-        # Через bash -c: bash сам резолвит PATH (shim → tee → реальный curl).
-        # Прямой CreateProcess-вызов из python на Windows игнорирует PATH
-        # ребёнка и молча берёт реальный curl — capture был бы вакуумным.
+        # Р§РµСЂРµР· bash -c: bash СЃР°Рј СЂРµР·РѕР»РІРёС‚ PATH (shim в†’ tee в†’ СЂРµР°Р»СЊРЅС‹Р№ curl).
+        # РџСЂСЏРјРѕР№ CreateProcess-РІС‹Р·РѕРІ РёР· python РЅР° Windows РёРіРЅРѕСЂРёСЂСѓРµС‚ PATH
+        # СЂРµР±С‘РЅРєР° Рё РјРѕР»С‡Р° Р±РµСЂС‘С‚ СЂРµР°Р»СЊРЅС‹Р№ curl вЂ” capture Р±С‹Р» Р±С‹ РІР°РєСѓСѓРјРЅС‹Рј.
         curl_via_bash = 'exec curl -s -o /dev/null -w "%{http_code}" -K -'
         positive = subprocess.run(
             ["bash", "-c", curl_via_bash],
             input=f'url = {url}\nheader = "Authorization: Bearer {R1C_TOKEN}"\n'.encode(),
             env=env, capture_output=True, timeout=30)
-        # Негативный контроль 1: БЕЗ header-строки Authorization не уходит.
+        # РќРµРіР°С‚РёРІРЅС‹Р№ РєРѕРЅС‚СЂРѕР»СЊ 1: Р‘Р•Р— header-СЃС‚СЂРѕРєРё Authorization РЅРµ СѓС…РѕРґРёС‚.
         negative = subprocess.run(
             ["bash", "-c", curl_via_bash],
             input=f"url = {url}\n".encode(),
             env=env, capture_output=True, timeout=30)
-        # Негативный контроль 2 (ловушка R1c): НЕциклованный header = значение
-        # реальный curl молча не отправляет — проба красная, если сценарий
-        # вернётся к непроцитованной форме.
+        # РќРµРіР°С‚РёРІРЅС‹Р№ РєРѕРЅС‚СЂРѕР»СЊ 2 (Р»РѕРІСѓС€РєР° R1c): РќР•С†РёРєР»РѕРІР°РЅРЅС‹Р№ header = Р·РЅР°С‡РµРЅРёРµ
+        # СЂРµР°Р»СЊРЅС‹Р№ curl РјРѕР»С‡Р° РЅРµ РѕС‚РїСЂР°РІР»СЏРµС‚ вЂ” РїСЂРѕР±Р° РєСЂР°СЃРЅР°СЏ, РµСЃР»Рё СЃС†РµРЅР°СЂРёР№
+        # РІРµСЂРЅС‘С‚СЃСЏ Рє РЅРµРїСЂРѕС†РёС‚РѕРІР°РЅРЅРѕР№ С„РѕСЂРјРµ.
         unquoted = subprocess.run(
             ["bash", "-c", curl_via_bash],
             input=f"url = {url}\nheader = Authorization: Bearer {R1C_TOKEN}\n".encode(),
@@ -2190,9 +2190,9 @@ def probe_r1c_curl_config_header_seam(tmp: Path):
               and neg_header in (None, "")
               and unq_header in (None, "")
               and R1C_TOKEN not in argv_text
-              # fail-closed: capture-механизм обязан видеть все 3 вызова
+              # fail-closed: capture-РјРµС…Р°РЅРёР·Рј РѕР±СЏР·Р°РЅ РІРёРґРµС‚СЊ РІСЃРµ 3 РІС‹Р·РѕРІР°
               and captured == 3)
-        # §7.6: canary не печатается — только булевы исходы проверки.
+        # В§7.6: canary РЅРµ РїРµС‡Р°С‚Р°РµС‚СЃСЏ вЂ” С‚РѕР»СЊРєРѕ Р±СѓР»РµРІС‹ РёСЃС…РѕРґС‹ РїСЂРѕРІРµСЂРєРё.
         check("r1c_curl_config_header_seam", ok,
               f"pos_auth_ok={pos_header == f'Bearer {R1C_TOKEN}'} "
               f"neg_absent={neg_header in (None, '')} "
@@ -2207,12 +2207,12 @@ _DC_CURL_STDOUT = '{"data": [{"id": "m1"}]}\n200'
 
 def _r1c_run_deep_check(tmp: Path, tag: str,
                         payload: dict | None) -> tuple[str, str, str]:
-    """Прогон curl_json с capture. POSIX: дочерний python с PATH-shim curl
-    (os-level child-argv через лог shim'а). Windows: CreateProcess не исполняет
-    shebang-shim и молча уходит в реальный curl — therefore in-process capture
-    subprocess.run на границе (argv + input = ровно то, что ушло бы в os-argv/
-    stdin ребёнка; красная-способность сохраняется: на старом коде canary
-    оказывается в argv). Возвращает (stdout, argv_text, stdin_text)."""
+    """РџСЂРѕРіРѕРЅ curl_json СЃ capture. POSIX: РґРѕС‡РµСЂРЅРёР№ python СЃ PATH-shim curl
+    (os-level child-argv С‡РµСЂРµР· Р»РѕРі shim'Р°). Windows: CreateProcess РЅРµ РёСЃРїРѕР»РЅСЏРµС‚
+    shebang-shim Рё РјРѕР»С‡Р° СѓС…РѕРґРёС‚ РІ СЂРµР°Р»СЊРЅС‹Р№ curl вЂ” therefore in-process capture
+    subprocess.run РЅР° РіСЂР°РЅРёС†Рµ (argv + input = СЂРѕРІРЅРѕ С‚Рѕ, С‡С‚Рѕ СѓС€Р»Рѕ Р±С‹ РІ os-argv/
+    stdin СЂРµР±С‘РЅРєР°; РєСЂР°СЃРЅР°СЏ-СЃРїРѕСЃРѕР±РЅРѕСЃС‚СЊ СЃРѕС…СЂР°РЅСЏРµС‚СЃСЏ: РЅР° СЃС‚Р°СЂРѕРј РєРѕРґРµ canary
+    РѕРєР°Р·С‹РІР°РµС‚СЃСЏ РІ argv). Р’РѕР·РІСЂР°С‰Р°РµС‚ (stdout, argv_text, stdin_text)."""
     shim = tmp / f"r1c-shim-{tag}"
     shim.mkdir()
     argv_log, stdin_log = _r1c_dc_curl_shim(shim, tmp, f"r1c-dc-{tag}")
@@ -2245,17 +2245,17 @@ def _r1c_run_deep_check(tmp: Path, tag: str,
                       if l.startswith("ARGVLOG\t")]
         stdin_lines = [json.loads(l.split("\t", 1)[1]) for l in err.splitlines()
                        if l.startswith("STDINLOG\t")]
-        # repr-нормализация: двойные кавычки внутри элементов остаются сырыми,
-        # поэтому substring-утверждения работают так же, как на posix-логах.
+        # repr-РЅРѕСЂРјР°Р»РёР·Р°С†РёСЏ: РґРІРѕР№РЅС‹Рµ РєР°РІС‹С‡РєРё РІРЅСѓС‚СЂРё СЌР»РµРјРµРЅС‚РѕРІ РѕСЃС‚Р°СЋС‚СЃСЏ СЃС‹СЂС‹РјРё,
+        # РїРѕСЌС‚РѕРјСѓ substring-СѓС‚РІРµСЂР¶РґРµРЅРёСЏ СЂР°Р±РѕС‚Р°СЋС‚ С‚Р°Рє Р¶Рµ, РєР°Рє РЅР° posix-Р»РѕРіР°С….
         argv_text = "\n".join(repr(a) for a in argv_lines)
         stdin_text = "\n".join(repr(s) for s in stdin_lines)
-        # Сырой stderr ребёнка НЕ сохраняем: STDINLOG несёт canary по дизайну
-        # (это канал доставки), а boundary-скан §7.6 смотрит только stdout/err.
+        # РЎС‹СЂРѕР№ stderr СЂРµР±С‘РЅРєР° РќР• СЃРѕС…СЂР°РЅСЏРµРј: STDINLOG РЅРµСЃС‘С‚ canary РїРѕ РґРёР·Р°Р№РЅСѓ
+        # (СЌС‚Рѕ РєР°РЅР°Р» РґРѕСЃС‚Р°РІРєРё), Р° boundary-СЃРєР°РЅ В§7.6 СЃРјРѕС‚СЂРёС‚ С‚РѕР»СЊРєРѕ stdout/err.
         write(tmp / f"r1c-dc-{tag}-out.txt", result.stdout)
         return result.stdout, argv_text, stdin_text
     env = _probe_subprocess_env(tmp / f"r1c-dc-home-{tag}", {
         "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
-        # Windows-python в ребёнке требует USERPROFILE для Path.home() модуля.
+        # Windows-python РІ СЂРµР±С‘РЅРєРµ С‚СЂРµР±СѓРµС‚ USERPROFILE РґР»СЏ Path.home() РјРѕРґСѓР»СЏ.
         "USERPROFILE": str(tmp / f"r1c-dc-home-{tag}"),
     })
     if payload is not None:
@@ -2280,8 +2280,8 @@ def _r1c_run_deep_check(tmp: Path, tag: str,
 
 
 def probe_r1c_deep_check_get_not_in_argv(tmp: Path):
-    """R1c §7.4: catalog GET — Bearer canary не в child argv, header доставлен
-    через stdin, запрос/парсинг сохранены (200 + JSON catalog)."""
+    """R1c В§7.4: catalog GET вЂ” Bearer canary РЅРµ РІ child argv, header РґРѕСЃС‚Р°РІР»РµРЅ
+    С‡РµСЂРµР· stdin, Р·Р°РїСЂРѕСЃ/РїР°СЂСЃРёРЅРі СЃРѕС…СЂР°РЅРµРЅС‹ (200 + JSON catalog)."""
     out, argv_text, stdin_text = _r1c_run_deep_check(tmp, "get", None)
     ok = ("RC 200" in out and '"m1"' in out
           and R1C_TOKEN not in argv_text
@@ -2293,8 +2293,8 @@ def probe_r1c_deep_check_get_not_in_argv(tmp: Path):
 
 
 def probe_r1c_deep_check_post_not_in_argv(tmp: Path):
-    """R1c §7.5: chat POST — Bearer canary не в child argv, header через stdin,
-    payload/-d и Content-Type в argv сохранены (свойства запроса не изменились)."""
+    """R1c В§7.5: chat POST вЂ” Bearer canary РЅРµ РІ child argv, header С‡РµСЂРµР· stdin,
+    payload/-d Рё Content-Type РІ argv СЃРѕС…СЂР°РЅРµРЅС‹ (СЃРІРѕР№СЃС‚РІР° Р·Р°РїСЂРѕСЃР° РЅРµ РёР·РјРµРЅРёР»РёСЃСЊ)."""
     payload = {"model": "m1",
                "messages": [{"role": "user", "content": "ping"}],
                "max_tokens": 1}
@@ -2311,11 +2311,11 @@ def probe_r1c_deep_check_post_not_in_argv(tmp: Path):
 
 
 def probe_r1c_artifact_boundary(tmp: Path):
-    """R1c §7.6: canary присутствует ТОЛЬКО в stdin-логах доставки
-    (*-stdin.log — канал, по которому секрет уходит в curl) и отсутствует во
-    всех остальных r1c-артефактах (stdout/stderr-снимки, argv-логи). Печать
-    canary в check()-detail не допускается инвариантом проекта; suite-stdout
-    чистота обеспечивается булевыми detail-строками и внешним аудитом ревью."""
+    """R1c В§7.6: canary РїСЂРёСЃСѓС‚СЃС‚РІСѓРµС‚ РўРћР›Р¬РљРћ РІ stdin-Р»РѕРіР°С… РґРѕСЃС‚Р°РІРєРё
+    (*-stdin.log вЂ” РєР°РЅР°Р», РїРѕ РєРѕС‚РѕСЂРѕРјСѓ СЃРµРєСЂРµС‚ СѓС…РѕРґРёС‚ РІ curl) Рё РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚ РІРѕ
+    РІСЃРµС… РѕСЃС‚Р°Р»СЊРЅС‹С… r1c-Р°СЂС‚РµС„Р°РєС‚Р°С… (stdout/stderr-СЃРЅРёРјРєРё, argv-Р»РѕРіРё). РџРµС‡Р°С‚СЊ
+    canary РІ check()-detail РЅРµ РґРѕРїСѓСЃРєР°РµС‚СЃСЏ РёРЅРІР°СЂРёР°РЅС‚РѕРј РїСЂРѕРµРєС‚Р°; suite-stdout
+    С‡РёСЃС‚РѕС‚Р° РѕР±РµСЃРїРµС‡РёРІР°РµС‚СЃСЏ Р±СѓР»РµРІС‹РјРё detail-СЃС‚СЂРѕРєР°РјРё Рё РІРЅРµС€РЅРёРј Р°СѓРґРёС‚РѕРј СЂРµРІСЊСЋ."""
     canaries = (R1C_TOKEN, R1C_TG, R1C_GH)
     leaked = []
     delivery = 0
@@ -2578,7 +2578,7 @@ def probe_wrapper_v2_healthy_recover_reset(tmp: Path):
         tmp, "d0a-v2-healthy", json.dumps(_v2_report("healthy")), {"kit:DUMMY_KEY": 2})
     check("wrapper_v2_healthy_recover_reset",
           rc == 0 and state.get("kit:DUMMY_KEY") == 0
-          and "🟢 dummy (fixture)" in log,
+          and "рџџў dummy (fixture)" in log,
           f"rc={rc} state={state}")
 
 
@@ -2645,7 +2645,7 @@ def probe_wrapper_invalid_json_preserves(tmp: Path):
           f"rc={rc} state={state}")
 
 
-# ── Пробы: webhook-потребители отчёта (fail-closed) ─────────────────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: webhook-РїРѕС‚СЂРµР±РёС‚РµР»Рё РѕС‚С‡С‘С‚Р° (fail-closed) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 def _fresh_ts() -> str:
     from datetime import datetime, timezone
@@ -2661,7 +2661,7 @@ def _webhook_report_home(tmp: Path, name: str, report_obj: dict) -> Path:
 
 def _webhook_home_env(home: Path) -> dict:
     # webhook.py resolves ~ via os.path.expanduser: USERPROFILE on Windows,
-    # HOME on posix — set both so the handlers read the fixture home.
+    # HOME on posix вЂ” set both so the handlers read the fixture home.
     return {"HOME": str(home), "USERPROFILE": str(home)}
 
 
@@ -2674,7 +2674,7 @@ def probe_webhook_quick_v1_accepted(wh, tmp: Path):
     home = _webhook_report_home(tmp, "wh-v1-fail", fail_report)
     with override_environ(**_webhook_home_env(home)):
         out = wh.handle_integrations_check()
-    ok_fail = "❌ dummy: down" in out and "всё в порядке" not in out
+    ok_fail = "вќЊ dummy: down" in out and "РІСЃС‘ РІ РїРѕСЂСЏРґРєРµ" not in out
     ok_report = dict(fail_report, ok=1, fail=0,
                      checks=[{"id": "kit:DUMMY_KEY", "label": "dummy",
                               "status": "ok", "detail": "up"}])
@@ -2682,7 +2682,7 @@ def probe_webhook_quick_v1_accepted(wh, tmp: Path):
     with override_environ(**_webhook_home_env(home2)):
         out2 = wh.handle_integrations_check()
     check("webhook_quick_v1_accepted",
-          ok_fail and "✅ Argus:" in out2 and "всё в порядке" in out2,
+          ok_fail and "вњ… Argus:" in out2 and "РІСЃС‘ РІ РїРѕСЂСЏРґРєРµ" in out2,
           f"fail_out={out[:60]!r} ok_out={out2[:60]!r}")
 
 
@@ -2696,8 +2696,8 @@ def probe_webhook_quick_v2_mixed(wh, tmp: Path):
     home = _webhook_report_home(tmp, "wh-v2-mixed", report)
     with override_environ(**_webhook_home_env(home)):
         out = wh.handle_integrations_check()
-    ok = ("1/3 ok" in out and "❌ beta: down" in out
-          and "⚠️ gamma: inconclusive" in out and "всё в порядке" not in out)
+    ok = ("1/3 ok" in out and "вќЊ beta: down" in out
+          and "вљ пёЏ gamma: inconclusive" in out and "РІСЃС‘ РІ РїРѕСЂСЏРґРєРµ" not in out)
     check("webhook_quick_v2_mixed", ok, f"out={out[:100]!r}")
 
 
@@ -2709,7 +2709,7 @@ def probe_webhook_quick_skipped_not_green(wh, tmp: Path):
     with override_environ(**_webhook_home_env(home)):
         out = wh.handle_integrations_check()
     check("webhook_quick_skipped_not_green",
-          "всё в порядке" not in out and "⏸" in out,
+          "РІСЃС‘ РІ РїРѕСЂСЏРґРєРµ" not in out and "вЏё" in out,
           f"out={out[:100]!r}")
 
 
@@ -2721,7 +2721,7 @@ def probe_webhook_quick_malformed_rejected(wh, tmp: Path):
     with override_environ(**_webhook_home_env(home)):
         out = wh.handle_integrations_check()
     check("webhook_quick_malformed_rejected",
-          "отклонён" in out and "всё в порядке" not in out,
+          "РѕС‚РєР»РѕРЅС‘РЅ" in out and "РІСЃС‘ РІ РїРѕСЂСЏРґРєРµ" not in out,
           f"out={out[:100]!r}")
 
 
@@ -2733,15 +2733,15 @@ def probe_webhook_schema_future_rejected(wh, tmp: Path):
     with override_environ(**_webhook_home_env(home)):
         quick = wh.handle_integrations_check()
         full = wh.handle_integrations_all()
-    ok = ("отклонён" in quick and "✅ Argus:" not in quick
-          and "всё в порядке" not in quick
-          and "отклонён" in full and "✅" not in full.split("\n")[0])
+    ok = ("РѕС‚РєР»РѕРЅС‘РЅ" in quick and "вњ… Argus:" not in quick
+          and "РІСЃС‘ РІ РїРѕСЂСЏРґРєРµ" not in quick
+          and "РѕС‚РєР»РѕРЅС‘РЅ" in full and "вњ…" not in full.split("\n")[0])
     check("webhook_schema_future_rejected", ok,
           f"quick={quick[:60]!r} full={full[:60]!r}")
 
 
 def probe_webhook_full_v2_unknown_skipped(wh, tmp: Path):
-    """Full view renders unknown as ⚠️ and skipped as ⏸ with honest counts."""
+    """Full view renders unknown as вљ пёЏ and skipped as вЏё with honest counts."""
     report = _v2_report_multi([
         _v2_check("kit:A", "alpha", "healthy", "d"),
         _v2_check("kit:B", "beta", "unknown", "unclear"),
@@ -2751,12 +2751,12 @@ def probe_webhook_full_v2_unknown_skipped(wh, tmp: Path):
     home = _webhook_report_home(tmp, "wh-v2-full", report)
     with override_environ(**_webhook_home_env(home)):
         out = wh.handle_integrations_all()
-    ok = ("⚠️ beta — unclear" in out and "⏸ delta — пропущено" in out
-          and "⚪ gamma" in out and "⚠️ 1" in out and "⏸ 1" in out)
+    ok = ("вљ пёЏ beta вЂ” unclear" in out and "вЏё delta вЂ” РїСЂРѕРїСѓС‰РµРЅРѕ" in out
+          and "вљЄ gamma" in out and "вљ пёЏ 1" in out and "вЏё 1" in out)
     check("webhook_full_v2_unknown_skipped", ok, f"out={out[:120]!r}")
 
 
-# ── Пробы: review pass 2 — mutation matrix на контракт отчёта ───────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: review pass 2 вЂ” mutation matrix РЅР° РєРѕРЅС‚СЂР°РєС‚ РѕС‚С‡С‘С‚Р° в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 def probe_webhook_v2_contract_fields_enforced(wh, tmp: Path):
     """Every D0a contract field is required in the v2 envelope and checks."""
@@ -2848,8 +2848,8 @@ def probe_webhook_full_bad_timestamp_not_green(wh, tmp: Path):
     with override_environ(**_webhook_home_env(home)):
         quick = wh.handle_integrations_check()
         full = wh.handle_integrations_all()
-    ok = ("отклонён" in quick and "✅ Argus:" not in quick
-          and "отклонён" in full and "Argus наблюдает" not in full)
+    ok = ("РѕС‚РєР»РѕРЅС‘РЅ" in quick and "вњ… Argus:" not in quick
+          and "РѕС‚РєР»РѕРЅС‘РЅ" in full and "Argus РЅР°Р±Р»СЋРґР°РµС‚" not in full)
     check("webhook_full_bad_timestamp_not_green", ok,
           f"quick={quick[:60]!r} full={full[:60]!r}")
 
@@ -2883,7 +2883,7 @@ def probe_wrapper_v2_contract_enforced(tmp: Path):
           f"missing={state1.get('kit:DUMMY_KEY')} bool={state2.get('kit:DUMMY_KEY')}")
 
 
-# ── Пробы: R2a fail-safe malformed YAML discovery ──────────────────────────
+# в”Ђв”Ђ РџСЂРѕР±С‹: R2a fail-safe malformed YAML discovery в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 R2A_CANARY = "R2A_CANARY_SECRET_VALUE"
 R2A_VALID_CFG = ("providers:\n"
@@ -3087,8 +3087,8 @@ def probe_r2c_no_effects():
 
 
 def _r2a_degraded_snapshot(tmp: Path, name: str) -> Path:
-    """Baseline с валидным конфигом → деградация; путь к деградированному
-    снапшоту (общая фикстура fail-closed проб консьюмеров)."""
+    """Baseline СЃ РІР°Р»РёРґРЅС‹Рј РєРѕРЅС„РёРіРѕРј в†’ РґРµРіСЂР°РґР°С†РёСЏ; РїСѓС‚СЊ Рє РґРµРіСЂР°РґРёСЂРѕРІР°РЅРЅРѕРјСѓ
+    СЃРЅР°РїС€РѕС‚Сѓ (РѕР±С‰Р°СЏ С„РёРєСЃС‚СѓСЂР° fail-closed РїСЂРѕР± РєРѕРЅСЃСЊСЋРјРµСЂРѕРІ)."""
     home = _r2a_home(tmp, name)
     write(home / "config.yaml", R2A_VALID_CFG)
     _r2a_run(home, args=["--baseline"])
@@ -3100,9 +3100,9 @@ def _r2a_degraded_snapshot(tmp: Path, name: str) -> Path:
 
 
 def probe_r2a_syntax_degraded_not_crash(tmp: Path):
-    """R2a-1: синтаксически битый config.yaml → явная деградация (exit 2,
-    без traceback), снапшот/отчёт помечены degraded со стабильным
-    reason_code; без last-good инвентаризация пуста и updated пуст."""
+    """R2a-1: СЃРёРЅС‚Р°РєСЃРёС‡РµСЃРєРё Р±РёС‚С‹Р№ config.yaml в†’ СЏРІРЅР°СЏ РґРµРіСЂР°РґР°С†РёСЏ (exit 2,
+    Р±РµР· traceback), СЃРЅР°РїС€РѕС‚/РѕС‚С‡С‘С‚ РїРѕРјРµС‡РµРЅС‹ degraded СЃРѕ СЃС‚Р°Р±РёР»СЊРЅС‹Рј
+    reason_code; Р±РµР· last-good РёРЅРІРµРЅС‚Р°СЂРёР·Р°С†РёСЏ РїСѓСЃС‚Р° Рё updated РїСѓСЃС‚."""
     home = _r2a_home(tmp, "r2a-syntax")
     write(home / "config.yaml", R2A_CORRUPT_CFG)
     r = _r2a_run(home, {"DISCOVER_REPORT": str(tmp / "r2a-syntax-report.json")})
@@ -3119,9 +3119,9 @@ def probe_r2a_syntax_degraded_not_crash(tmp: Path):
 
 
 def probe_r2a_wrong_shape_degraded(tmp: Path):
-    """R2a-2: валидный YAML с верхним уровнем не-словарь (list, затем string)
-    — деградация config_yaml_shape, а не пустой здоровый инвентарь; повтор с
-    тем же reason_code тихий."""
+    """R2a-2: РІР°Р»РёРґРЅС‹Р№ YAML СЃ РІРµСЂС…РЅРёРј СѓСЂРѕРІРЅРµРј РЅРµ-СЃР»РѕРІР°СЂСЊ (list, Р·Р°С‚РµРј string)
+    вЂ” РґРµРіСЂР°РґР°С†РёСЏ config_yaml_shape, Р° РЅРµ РїСѓСЃС‚РѕР№ Р·РґРѕСЂРѕРІС‹Р№ РёРЅРІРµРЅС‚Р°СЂСЊ; РїРѕРІС‚РѕСЂ СЃ
+    С‚РµРј Р¶Рµ reason_code С‚РёС…РёР№."""
     home = _r2a_home(tmp, "r2a-shape")
     write(home / "config.yaml", R2A_SHAPE_CFG)
     r1 = _r2a_run(home)
@@ -3136,8 +3136,8 @@ def probe_r2a_wrong_shape_degraded(tmp: Path):
 
 
 def probe_r2a_valid_control_unchanged(tmp: Path):
-    """R2a-3: валидный конфиг — прежняя семантика: baseline тихий (0), статус
-    ok, сущности извлечены; повтор без изменений тихий."""
+    """R2a-3: РІР°Р»РёРґРЅС‹Р№ РєРѕРЅС„РёРі вЂ” РїСЂРµР¶РЅСЏСЏ СЃРµРјР°РЅС‚РёРєР°: baseline С‚РёС…РёР№ (0), СЃС‚Р°С‚СѓСЃ
+    ok, СЃСѓС‰РЅРѕСЃС‚Рё РёР·РІР»РµС‡РµРЅС‹; РїРѕРІС‚РѕСЂ Р±РµР· РёР·РјРµРЅРµРЅРёР№ С‚РёС…РёР№."""
     home = _r2a_home(tmp, "r2a-valid")
     write(home / "config.yaml", R2A_VALID_CFG)
     r1 = _r2a_run(home, args=["--baseline"])
@@ -3152,7 +3152,7 @@ def probe_r2a_valid_control_unchanged(tmp: Path):
 
 
 def probe_r2a_missing_config_control(tmp: Path):
-    """R2a-4: отсутствие config.yaml — прежняя семантика (ок, не деградация)."""
+    """R2a-4: РѕС‚СЃСѓС‚СЃС‚РІРёРµ config.yaml вЂ” РїСЂРµР¶РЅСЏСЏ СЃРµРјР°РЅС‚РёРєР° (РѕРє, РЅРµ РґРµРіСЂР°РґР°С†РёСЏ)."""
     home = _r2a_home(tmp, "r2a-missing")
     r1 = _r2a_run(home, args=["--baseline"])
     snap = _r2a_snap(home)
@@ -3163,9 +3163,9 @@ def probe_r2a_missing_config_control(tmp: Path):
 
 
 def probe_r2a_last_good_preserved(tmp: Path):
-    """R2a-5: при деградации last-good entities/updated/config_hash сохранены
-    дословно; свежесть не переписана; attempted_at отделяет попытку,
-    last_good_at указывает на последний успешный прогон."""
+    """R2a-5: РїСЂРё РґРµРіСЂР°РґР°С†РёРё last-good entities/updated/config_hash СЃРѕС…СЂР°РЅРµРЅС‹
+    РґРѕСЃР»РѕРІРЅРѕ; СЃРІРµР¶РµСЃС‚СЊ РЅРµ РїРµСЂРµРїРёСЃР°РЅР°; attempted_at РѕС‚РґРµР»СЏРµС‚ РїРѕРїС‹С‚РєСѓ,
+    last_good_at СѓРєР°Р·С‹РІР°РµС‚ РЅР° РїРѕСЃР»РµРґРЅРёР№ СѓСЃРїРµС€РЅС‹Р№ РїСЂРѕРіРѕРЅ."""
     home = _r2a_home(tmp, "r2a-lastgood")
     write(home / "config.yaml", R2A_VALID_CFG)
     _r2a_run(home, args=["--baseline"])
@@ -3185,8 +3185,8 @@ def probe_r2a_last_good_preserved(tmp: Path):
 
 
 def probe_r2a_no_false_removals(tmp: Path):
-    """R2a-6: деградация не создаёт removed/changed событий по сущностям —
-    единственное событие отчёта: discovery_degraded."""
+    """R2a-6: РґРµРіСЂР°РґР°С†РёСЏ РЅРµ СЃРѕР·РґР°С‘С‚ removed/changed СЃРѕР±С‹С‚РёР№ РїРѕ СЃСѓС‰РЅРѕСЃС‚СЏРј вЂ”
+    РµРґРёРЅСЃС‚РІРµРЅРЅРѕРµ СЃРѕР±С‹С‚РёРµ РѕС‚С‡С‘С‚Р°: discovery_degraded."""
     home = _r2a_home(tmp, "r2a-nofalse")
     write(home / "config.yaml", R2A_VALID_CFG)
     _r2a_run(home, args=["--baseline"])
@@ -3200,8 +3200,8 @@ def probe_r2a_no_false_removals(tmp: Path):
 
 
 def probe_r2a_repetition_quiet(tmp: Path):
-    """R2a-7: первая деградация отчётная (2), повтор идентичной — тихий (0),
-    статус в снапшоте остаётся degraded."""
+    """R2a-7: РїРµСЂРІР°СЏ РґРµРіСЂР°РґР°С†РёСЏ РѕС‚С‡С‘С‚РЅР°СЏ (2), РїРѕРІС‚РѕСЂ РёРґРµРЅС‚РёС‡РЅРѕР№ вЂ” С‚РёС…РёР№ (0),
+    СЃС‚Р°С‚СѓСЃ РІ СЃРЅР°РїС€РѕС‚Рµ РѕСЃС‚Р°С‘С‚СЃСЏ degraded."""
     home = _r2a_home(tmp, "r2a-repeat")
     write(home / "config.yaml", R2A_CORRUPT_CFG)
     r1 = _r2a_run(home)
@@ -3214,9 +3214,9 @@ def probe_r2a_repetition_quiet(tmp: Path):
 
 
 def probe_r2a_recovery_diff_last_good(tmp: Path):
-    """R2a-8: восстановление отчётное; diff считается от last-good —
-    легитимное добавление видно один раз, замороженные сущности не
-    «удаляются» из-за malformed-интервала."""
+    """R2a-8: РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ РѕС‚С‡С‘С‚РЅРѕРµ; diff СЃС‡РёС‚Р°РµС‚СЃСЏ РѕС‚ last-good вЂ”
+    Р»РµРіРёС‚РёРјРЅРѕРµ РґРѕР±Р°РІР»РµРЅРёРµ РІРёРґРЅРѕ РѕРґРёРЅ СЂР°Р·, Р·Р°РјРѕСЂРѕР¶РµРЅРЅС‹Рµ СЃСѓС‰РЅРѕСЃС‚Рё РЅРµ
+    В«СѓРґР°Р»СЏСЋС‚СЃСЏВ» РёР·-Р·Р° malformed-РёРЅС‚РµСЂРІР°Р»Р°."""
     home = _r2a_home(tmp, "r2a-recovery")
     write(home / "config.yaml", R2A_VALID_CFG)
     _r2a_run(home, args=["--baseline"])
@@ -3234,8 +3234,8 @@ def probe_r2a_recovery_diff_last_good(tmp: Path):
 
 
 def probe_r2a_recovery_reportable_no_change(tmp: Path):
-    """R2a-9: восстановление с неизменённым конфигом — отчётное событие
-    recovery и ровно ноль entity-событий (нет remove/add-бури)."""
+    """R2a-9: РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ СЃ РЅРµРёР·РјРµРЅС‘РЅРЅС‹Рј РєРѕРЅС„РёРіРѕРј вЂ” РѕС‚С‡С‘С‚РЅРѕРµ СЃРѕР±С‹С‚РёРµ
+    recovery Рё СЂРѕРІРЅРѕ РЅРѕР»СЊ entity-СЃРѕР±С‹С‚РёР№ (РЅРµС‚ remove/add-Р±СѓСЂРё)."""
     home = _r2a_home(tmp, "r2a-rec2")
     write(home / "config.yaml", R2A_VALID_CFG)
     _r2a_run(home, args=["--baseline"])
@@ -3251,9 +3251,9 @@ def probe_r2a_recovery_reportable_no_change(tmp: Path):
 
 
 def probe_r2a_health_fail_closed(tmp: Path):
-    """R2a-10: health-check-v2 на деградированном снапшоте — exit 2 через
-    существующий config-error path ДО сетевых/MCP-примитивов; свежий
-    health-отчёт не переписывается."""
+    """R2a-10: health-check-v2 РЅР° РґРµРіСЂР°РґРёСЂРѕРІР°РЅРЅРѕРј СЃРЅР°РїС€РѕС‚Рµ вЂ” exit 2 С‡РµСЂРµР·
+    СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ config-error path Р”Рћ СЃРµС‚РµРІС‹С…/MCP-РїСЂРёРјРёС‚РёРІРѕРІ; СЃРІРµР¶РёР№
+    health-РѕС‚С‡С‘С‚ РЅРµ РїРµСЂРµРїРёСЃС‹РІР°РµС‚СЃСЏ."""
     home = _r2a_degraded_snapshot(tmp, "r2a-hc")
     hc = load_module("health-check-v2")
     registry = write(tmp / "r2a-registry.yaml", "kit_entries: []\n")
@@ -3282,8 +3282,8 @@ def probe_r2a_health_fail_closed(tmp: Path):
 
 
 def probe_r2a_deep_check_fail_closed(tmp: Path):
-    """R2a-11: ai-deep-check на деградированном снапшоте — отказ ДО curl
-    (ноль вызовов curl_json) с понятной диагностикой."""
+    """R2a-11: ai-deep-check РЅР° РґРµРіСЂР°РґРёСЂРѕРІР°РЅРЅРѕРј СЃРЅР°РїС€РѕС‚Рµ вЂ” РѕС‚РєР°Р· Р”Рћ curl
+    (РЅРѕР»СЊ РІС‹Р·РѕРІРѕРІ curl_json) СЃ РїРѕРЅСЏС‚РЅРѕР№ РґРёР°РіРЅРѕСЃС‚РёРєРѕР№."""
     home = _r2a_degraded_snapshot(tmp, "r2a-dc")
     dc = load_module("ai-deep-check")
     registry = write(tmp / "r2a-dc-registry.yaml", "free_models: {}\n")
@@ -3310,9 +3310,9 @@ def probe_r2a_deep_check_fail_closed(tmp: Path):
 
 
 def probe_r2a_legacy_snapshot_compat(tmp: Path):
-    """R2a: legacy-снапшот без конверта discovery — pre-R2a успешный:
-    discover при деградации сохраняет его инвентаризацию (last_good_at =
-    legacy updated), а health-check-v2 НЕ закрывается на нём."""
+    """R2a: legacy-СЃРЅР°РїС€РѕС‚ Р±РµР· РєРѕРЅРІРµСЂС‚Р° discovery вЂ” pre-R2a СѓСЃРїРµС€РЅС‹Р№:
+    discover РїСЂРё РґРµРіСЂР°РґР°С†РёРё СЃРѕС…СЂР°РЅСЏРµС‚ РµРіРѕ РёРЅРІРµРЅС‚Р°СЂРёР·Р°С†РёСЋ (last_good_at =
+    legacy updated), Р° health-check-v2 РќР• Р·Р°РєСЂС‹РІР°РµС‚СЃСЏ РЅР° РЅС‘Рј."""
     home = _r2a_home(tmp, "r2a-legacy")
     legacy = {"updated": "2026-09-01T00:00:00+00:00", "config_hash": "legacy12",
               "entities": {"provider:alpha": {"type": "provider", "name": "alpha",
@@ -3325,7 +3325,7 @@ def probe_r2a_legacy_snapshot_compat(tmp: Path):
     r = _r2a_run(home)
     snap = _r2a_snap(home)
     disc = snap["discovery"]
-    # health: legacy-снапшот (без конверта, пустые сущности) не fail-closed
+    # health: legacy-СЃРЅР°РїС€РѕС‚ (Р±РµР· РєРѕРЅРІРµСЂС‚Р°, РїСѓСЃС‚С‹Рµ СЃСѓС‰РЅРѕСЃС‚Рё) РЅРµ fail-closed
     hc = load_module("health-check-v2")
     registry = write(tmp / "r2a-legacy-registry.yaml", "kit_entries: []\n")
     legacy_snap = write(tmp / "r2a-legacy-snap.json",
@@ -3345,14 +3345,14 @@ def probe_r2a_legacy_snapshot_compat(tmp: Path):
 
 
 def probe_r2a_wrapper_renders_transitions(tmp: Path):
-    """R2a-12: wrapper рендерит деградацию и восстановление человекочитаемо:
-    payload содержит humans-текст причины без сырых event-имён/reason_code и
-    без содержимого конфига; токен доставляется только через stdin."""
+    """R2a-12: wrapper СЂРµРЅРґРµСЂРёС‚ РґРµРіСЂР°РґР°С†РёСЋ Рё РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ С‡РµР»РѕРІРµРєРѕС‡РёС‚Р°РµРјРѕ:
+    payload СЃРѕРґРµСЂР¶РёС‚ humans-С‚РµРєСЃС‚ РїСЂРёС‡РёРЅС‹ Р±РµР· СЃС‹СЂС‹С… event-РёРјС‘РЅ/reason_code Рё
+    Р±РµР· СЃРѕРґРµСЂР¶РёРјРѕРіРѕ РєРѕРЅС„РёРіР°; С‚РѕРєРµРЅ РґРѕСЃС‚Р°РІР»СЏРµС‚СЃСЏ С‚РѕР»СЊРєРѕ С‡РµСЂРµР· stdin."""
     home = tmp / "r2a-wrap-home"
     scripts = home / "scripts"
     hermes = home / ".hermes"
     scripts.mkdir(parents=True, exist_ok=True)
-    # ~/.hermes/logs в проде создаёт deploy.sh; фикстура повторяет это
+    # ~/.hermes/logs РІ РїСЂРѕРґРµ СЃРѕР·РґР°С‘С‚ deploy.sh; С„РёРєСЃС‚СѓСЂР° РїРѕРІС‚РѕСЂСЏРµС‚ СЌС‚Рѕ
     (hermes / "logs").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(REPO / "scripts" / "integration-discover.py",
                     scripts / "integration-discover.py")
@@ -3373,9 +3373,9 @@ def probe_r2a_wrapper_renders_transitions(tmp: Path):
             env=_probe_subprocess_env(home, {
                 "PATH": str(shim_dir) + os.pathsep + os.environ.get("PATH", ""),
                 "R2A_ARGVLOG": str(argvlog), "R2A_STDINLOG": str(stdinlog),
-                # discover-child пинаем на фикстуру: allowlist env режет
-                # USERPROFILE, а discover зовёт Path.home() при любом раскладе
-                # (default-аргумент os.environ.get вычисляется всегда) — урок R1c
+                # discover-child РїРёРЅР°РµРј РЅР° С„РёРєСЃС‚СѓСЂСѓ: allowlist env СЂРµР¶РµС‚
+                # USERPROFILE, Р° discover Р·РѕРІС‘С‚ Path.home() РїСЂРё Р»СЋР±РѕРј СЂР°СЃРєР»Р°РґРµ
+                # (default-Р°СЂРіСѓРјРµРЅС‚ os.environ.get РІС‹С‡РёСЃР»СЏРµС‚СЃСЏ РІСЃРµРіРґР°) вЂ” СѓСЂРѕРє R1c
                 "HERMES_DIR": str(hermes), "USERPROFILE": str(home)}))
 
     write(hermes / "config.yaml", R2A_CORRUPT_CFG)
@@ -3387,8 +3387,8 @@ def probe_r2a_wrapper_renders_transitions(tmp: Path):
         if stdinlog.exists() else ""
     argv_text = argvlog.read_text(encoding="utf-8", errors="ignore") \
         if argvlog.exists() else ""
-    # Payload с rendered-текстом уходит в argv curl (-d), а русский текст
-    # JSON-эскейпится (ensure_ascii) — разбираем text-поля обоих прогонов.
+    # Payload СЃ rendered-С‚РµРєСЃС‚РѕРј СѓС…РѕРґРёС‚ РІ argv curl (-d), Р° СЂСѓСЃСЃРєРёР№ С‚РµРєСЃС‚
+    # JSON-СЌСЃРєРµР№РїРёС‚СЃСЏ (ensure_ascii) вЂ” СЂР°Р·Р±РёСЂР°РµРј text-РїРѕР»СЏ РѕР±РѕРёС… РїСЂРѕРіРѕРЅРѕРІ.
     payloads = []
     for chunk in argv_text.split('"text": "')[1:]:
         esc = chunk.split('", "parse_mode"')[0]
@@ -3399,9 +3399,9 @@ def probe_r2a_wrapper_renders_transitions(tmp: Path):
     msg_text = "\n".join(payloads)
     check("r2a_wrapper_renders_transitions",
           r1.returncode == 0 and r2.returncode == 0
-          and "Деградация обнаружения" in msg_text
-          and "синтаксическая ошибка" in msg_text
-          and "восстановлено" in msg_text
+          and "Р”РµРіСЂР°РґР°С†РёСЏ РѕР±РЅР°СЂСѓР¶РµРЅРёСЏ" in msg_text
+          and "СЃРёРЅС‚Р°РєСЃРёС‡РµСЃРєР°СЏ РѕС€РёР±РєР°" in msg_text
+          and "РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРѕ" in msg_text
           and "discovery_degraded" not in argv_text
           and "config_yaml_syntax" not in msg_text
           and "R2A_K1" not in argv_text
@@ -3412,8 +3412,8 @@ def probe_r2a_wrapper_renders_transitions(tmp: Path):
 
 
 def probe_r2a_secret_error_boundary(tmp: Path):
-    """R2a-13: canary в битом YAML (похож на секрет) не появляется в
-    stdout/stderr/снапшоте/отчёте — сырой текст ошибки парсера не выводится."""
+    """R2a-13: canary РІ Р±РёС‚РѕРј YAML (РїРѕС…РѕР¶ РЅР° СЃРµРєСЂРµС‚) РЅРµ РїРѕСЏРІР»СЏРµС‚СЃСЏ РІ
+    stdout/stderr/СЃРЅР°РїС€РѕС‚Рµ/РѕС‚С‡С‘С‚Рµ вЂ” СЃС‹СЂРѕР№ С‚РµРєСЃС‚ РѕС€РёР±РєРё РїР°СЂСЃРµСЂР° РЅРµ РІС‹РІРѕРґРёС‚СЃСЏ."""
     home = _r2a_home(tmp, "r2a-secret")
     write(home / "config.yaml", f'providers: "{R2A_CANARY}\n')
     r = _r2a_run(home, {"DISCOVER_REPORT": str(tmp / "r2a-secret-report.json")})
@@ -3427,9 +3427,9 @@ def probe_r2a_secret_error_boundary(tmp: Path):
 
 
 def probe_r2a_recovery_reportable_via_baseline(tmp: Path):
-    """R2a (Pytna Finding 2): --baseline глушит entity-diff, но НЕ обязательный
-    degraded→ok переход: recovery через baseline-прогон отчётный (2), следующий
-    обычный прогон тихий (без дубля)."""
+    """R2a (Pytna Finding 2): --baseline РіР»СѓС€РёС‚ entity-diff, РЅРѕ РќР• РѕР±СЏР·Р°С‚РµР»СЊРЅС‹Р№
+    degradedв†’ok РїРµСЂРµС…РѕРґ: recovery С‡РµСЂРµР· baseline-РїСЂРѕРіРѕРЅ РѕС‚С‡С‘С‚РЅС‹Р№ (2), СЃР»РµРґСѓСЋС‰РёР№
+    РѕР±С‹С‡РЅС‹Р№ РїСЂРѕРіРѕРЅ С‚РёС…РёР№ (Р±РµР· РґСѓР±Р»СЏ)."""
     home = _r2a_home(tmp, "r2a-recbase")
     write(home / "config.yaml", R2A_VALID_CFG)
     _r2a_run(home, args=["--baseline"])
@@ -3448,8 +3448,8 @@ def probe_r2a_recovery_reportable_via_baseline(tmp: Path):
 
 
 def probe_r2a_unreadable_encoding_degraded(tmp: Path):
-    """R2a (Pytna Finding 1): config.yaml с битой UTF-8 последовательностью —
-    деградация config_unreadable (RC 2, без traceback), не крах чтения."""
+    """R2a (Pytna Finding 1): config.yaml СЃ Р±РёС‚РѕР№ UTF-8 РїРѕСЃР»РµРґРѕРІР°С‚РµР»СЊРЅРѕСЃС‚СЊСЋ вЂ”
+    РґРµРіСЂР°РґР°С†РёСЏ config_unreadable (RC 2, Р±РµР· traceback), РЅРµ РєСЂР°С… С‡С‚РµРЅРёСЏ."""
     home = _r2a_home(tmp, "r2a-encoding")
     (home / "config.yaml").write_bytes(b'providers: "\xff\xfe broken"\n')
     r = _r2a_run(home)
@@ -3463,11 +3463,11 @@ def probe_r2a_unreadable_encoding_degraded(tmp: Path):
 
 
 def probe_r2a1_plugin_nonmapping_skipped(tmp: Path):
-    """R2a.1: plugin.yaml с YAML-list/битым YAML пропускается безопасно
-    (дискавери завершается, RC 0, без traceback), авторитетный config.yaml
-    не деградирует; валидный mapping сохраняет прежнюю семантику.
-    Пустой/comment-only валидный YAML — тоже прежняя семантика: entity
-    с именем каталога (Pytna R2a.1-1 Finding 1); явный scalar null — skip."""
+    """R2a.1: plugin.yaml СЃ YAML-list/Р±РёС‚С‹Рј YAML РїСЂРѕРїСѓСЃРєР°РµС‚СЃСЏ Р±РµР·РѕРїР°СЃРЅРѕ
+    (РґРёСЃРєР°РІРµСЂРё Р·Р°РІРµСЂС€Р°РµС‚СЃСЏ, RC 0, Р±РµР· traceback), Р°РІС‚РѕСЂРёС‚РµС‚РЅС‹Р№ config.yaml
+    РЅРµ РґРµРіСЂР°РґРёСЂСѓРµС‚; РІР°Р»РёРґРЅС‹Р№ mapping СЃРѕС…СЂР°РЅСЏРµС‚ РїСЂРµР¶РЅСЋСЋ СЃРµРјР°РЅС‚РёРєСѓ.
+    РџСѓСЃС‚РѕР№/comment-only РІР°Р»РёРґРЅС‹Р№ YAML вЂ” С‚РѕР¶Рµ РїСЂРµР¶РЅСЏСЏ СЃРµРјР°РЅС‚РёРєР°: entity
+    СЃ РёРјРµРЅРµРј РєР°С‚Р°Р»РѕРіР° (Pytna R2a.1-1 Finding 1); СЏРІРЅС‹Р№ scalar null вЂ” skip."""
     home = _r2a_home(tmp, "r2a1-plugin")
     write(home / "config.yaml", "")
     plugins = home / "plugins" / "model-providers"
@@ -3491,9 +3491,9 @@ def probe_r2a1_plugin_nonmapping_skipped(tmp: Path):
 
 
 def probe_r2a_baseline_degraded_reportable(tmp: Path):
-    """R2a baseline follow-up (внешний ревью P2): первая деградация отчётная
-    даже через --baseline (exit 2, events=[discovery_degraded]); следующий
-    обычный прогон с тем же reason тихий (exit 0, events=[])."""
+    """R2a baseline follow-up (РІРЅРµС€РЅРёР№ СЂРµРІСЊСЋ P2): РїРµСЂРІР°СЏ РґРµРіСЂР°РґР°С†РёСЏ РѕС‚С‡С‘С‚РЅР°СЏ
+    РґР°Р¶Рµ С‡РµСЂРµР· --baseline (exit 2, events=[discovery_degraded]); СЃР»РµРґСѓСЋС‰РёР№
+    РѕР±С‹С‡РЅС‹Р№ РїСЂРѕРіРѕРЅ СЃ С‚РµРј Р¶Рµ reason С‚РёС…РёР№ (exit 0, events=[])."""
     home = _r2a_home(tmp, "r2a-base")
     write(home / "config.yaml", R2A_CORRUPT_CFG)
     r1 = _r2a_run(home, args=["--baseline"],
@@ -3556,7 +3556,174 @@ def probe_rr0a_webhook_heartbeat_paths(wh, tmp: Path):
           f"legacy={next((l for l in legacy_status.splitlines() if 'Heartbeat (' in l), '')!r}")
 
 
-# ── runner ──────────────────────────────────────────────────────────────────
+def probe_ux0_bot_interaction(mon, wh: object):
+    """UX0 native keyboard, de-duplicated menu, alert keyboard, and poll auth."""
+    keyboard = mon.reply_keyboard()
+    buttons = [button["text"] for row in keyboard["keyboard"] for button in row]
+    settings_index = buttons.index("⚙️ Настройки")
+    maintenance_index = buttons.index("🛠 Обслуживание")
+    check("ux0_reply_keyboard_collapsible",
+          "is_persistent" not in keyboard
+          and keyboard.get("resize_keyboard") is True
+          and len(buttons) == 8,
+          f"is_persistent={keyboard.get('is_persistent')!r} buttons={len(buttons)}")
+    check("ux0_reply_keyboard_order", maintenance_index < settings_index,
+          f"maintenance={maintenance_index} settings={settings_index}")
+
+    menu_actions = [button["callback_data"]
+                    for row in wh.menu_keyboard()["inline_keyboard"]
+                    for button in row]
+    expected_menu_actions = ["restart_gw", "restart_dash", "reboot",
+                             "silence_menu", "deep_ai", "show_logs"]
+    check("ux0_maintenance_menu_actions",
+          menu_actions == expected_menu_actions, f"actions={menu_actions}")
+
+    watchdog_text = (REPO / "scripts" / "hermes-watchdog.sh").read_text(
+        encoding="utf-8", errors="ignore")
+    problem_line = next(line for line in watchdog_text.splitlines()
+                        if 'send_tg "$ALERT_MSG"' in line)
+    recovery_line = next(line for line in watchdog_text.splitlines()
+                         if 'send_tg "$R_MSG"' in line)
+    check("ux0_automatic_alert_no_keyboard",
+          'send_tg "$ALERT_MSG" "pin"' in problem_line
+          and "keyboard" not in problem_line
+          and 'send_tg "$R_MSG"' in recovery_line
+          and "keyboard" not in recovery_line,
+          f"problem={problem_line!r} recovery={recovery_line!r}")
+
+    captured = {"messages": [], "denials": [], "callback_answers": [],
+                "commands": [], "callbacks": []}
+
+    def fake_send_message(text, **kwargs):
+        captured["messages"].append((text, kwargs))
+
+    def fake_reply_to(chat_id, text, **kwargs):
+        captured["denials"].append((chat_id, text))
+
+    def fake_tg_api(method, data):
+        if method == "answerCallbackQuery":
+            captured["callback_answers"].append(data.get("callback_query_id"))
+    def fake_time():
+        return fake_time.value
+
+    fake_time.value = 1000.0
+
+
+    def fake_route_command(text):
+        captured["commands"].append(text)
+
+    def fake_handle_callback_query(query):
+        captured["callbacks"].append(query.get("data"))
+
+    def fake_deny(chat_id=None, callback_id=None, query=None):
+        user_id = (query or {}).get("from", {}).get("id")
+        key = str(user_id or chat_id or "anon")
+        now = fake_time.value
+        last = mon._DENY_LOG.get(key, 0.0)
+        fresh = now - last >= mon._DENY_COOLDOWN_S
+        if fresh:
+            mon._DENY_LOG[key] = now
+            captured["denials"].append((chat_id, bool(callback_id)))
+        if callback_id:
+            captured["callback_answers"].append(callback_id)
+
+    authorized_id = "123456789"
+    unauthorized_id = 99999
+    health_label = next(text for text, command in mon.REPLY_LABELS.items()
+                        if command == "/health")
+    service_update = {"update_id": 1, "message": {
+        "message_id": 11, "date": 0,
+        "chat": {"id": unauthorized_id, "type": "private"},
+        "pinned_message": {"message_id": 10, "date": 0,
+                           "chat": {"id": unauthorized_id, "type": "private"}},
+    }}
+    unsupported_update = {"update_id": 2, "edited_message": {
+        "text": "/health", "from": {"id": unauthorized_id},
+        "chat": {"id": unauthorized_id, "type": "private"},
+    }}
+
+    with override_attr(mon, "is_authorized", lambda user_id: str(user_id) == authorized_id), \
+            override_attr(mon, "ALLOWED_USER_ID", authorized_id), \
+            override_attr(mon, "_time", fake_time), \
+            override_attr(mon, "send_message", fake_send_message), \
+            override_attr(mon, "reply_to", fake_reply_to), \
+            override_attr(mon, "tg_api", fake_tg_api), \
+            override_attr(mon, "route_command", fake_route_command), \
+            override_attr(mon, "_send_deny", fake_deny), \
+            override_attr(mon, "is_authorized", lambda user_id: str(user_id) == authorized_id), \
+            override_attr(mon.webhook, "handle_callback_query",
+                          fake_handle_callback_query):
+        mon._DENY_LOG.clear()
+        mon.PENDING_SECRET.clear()
+        mon._handle_update(service_update)
+        service_ignored = not any(captured[name] for name in
+                                  ("messages", "denials", "callback_answers",
+                                   "commands", "callbacks"))
+
+        for key in captured:
+            captured[key].clear()
+        mon._DENY_LOG.clear()
+        mon._handle_update(unsupported_update)
+        unsupported_ignored = not any(captured[name] for name in
+                                      ("messages", "denials", "callback_answers",
+                                       "commands", "callbacks"))
+
+        fake_time.value = 1000.0
+        mon._handle_update({"update_id": 3, "message": {
+            "text": "/health", "from": {"id": unauthorized_id},
+            "chat": {"id": unauthorized_id, "type": "private"},
+        }})
+        unauthorized_denied = len(captured["denials"]) == 1
+
+        for key in captured:
+            captured[key].clear()
+        mon._DENY_LOG.clear()
+        fake_time.value = 1100.0
+        mon._handle_update({"update_id": 4, "callback_query": {
+            "id": "callback-1", "data": "restart_gw",
+            "from": {"id": unauthorized_id},
+            "message": {"chat": {"id": unauthorized_id, "type": "private"}},
+        }})
+        mon._handle_update({"update_id": 5, "callback_query": {
+            "id": "callback-2", "data": "health",
+            "from": {"id": unauthorized_id},
+            "message": {"chat": {"id": unauthorized_id, "type": "private"}},
+        }})
+        cooldown_per_user = (len(captured["denials"]) == 1
+                             and len(captured["callback_answers"]) == 2)
+
+        for key in captured:
+            captured[key].clear()
+        mon._DENY_LOG.clear()
+        mon._handle_update({"update_id": 6, "message": {
+            "text": "/health", "from": {"id": int(authorized_id)},
+            "chat": {"id": int(authorized_id), "type": "private"},
+        }})
+        mon._handle_update({"update_id": 7, "message": {
+            "text": health_label, "from": {"id": int(authorized_id)},
+            "chat": {"id": int(authorized_id), "type": "private"},
+        }})
+        mon._handle_update({"update_id": 8, "callback_query": {
+            "id": "callback-3", "data": "restart_gw",
+            "from": {"id": int(authorized_id)},
+            "message": {"chat": {"id": int(authorized_id), "type": "private"}},
+        }})
+        authorized_routed = (captured["commands"] == ["/health", "/health"]
+                             and captured["callbacks"] == ["restart_gw"])
+
+    check("ux0_service_update_ignored", service_ignored,
+          f"messages={captured['messages']} denials={captured['denials']}")
+    check("ux0_unsupported_update_ignored", unsupported_ignored,
+          f"messages={captured['messages']} denials={captured['denials']}")
+    check("ux0_unauthorized_text_denied", unauthorized_denied,
+          f"denials={int(unauthorized_denied)}")
+    check("ux0_callback_cooldown_per_user", cooldown_per_user,
+          f"denials={int(cooldown_per_user)}")
+    check("ux0_authorized_paths_routed", authorized_routed,
+          f"commands={captured['commands']} callbacks={captured['callbacks']}")
+
+
+# в”Ђв”Ђ runner в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="argus-probes-"))
@@ -3566,6 +3733,7 @@ def main() -> int:
     hp = load_module("health_patterns")
     disc = load_module("integration-discover")
     wh = load_module("webhook")
+    mon = load_module("monitoring-bot-poller")
 
     probe_catalog_429(hc)
     probe_catalog_401_then_public200(hc)
@@ -3590,6 +3758,7 @@ def main() -> int:
 
     # D0a: schema-v2 envelope, projection, dual-read hysteresis
     probe_rr0a_webhook_heartbeat_paths(wh, tmp)
+    probe_ux0_bot_interaction(mon, wh)
     probe_report_v2_envelope(hc, tmp)
     probe_engine_two_runs_independent(hc, tmp)
     probe_wrapper_v1_report_accepted(tmp)
@@ -3646,7 +3815,7 @@ def main() -> int:
     probe_discover_url_secret_leak(disc, tmp)
     probe_discover_url_shape_and_literals(disc, tmp)
 
-    # OA1: структурный account-auth discovery + не-зелёная health-семантика
+    # OA1: СЃС‚СЂСѓРєС‚СѓСЂРЅС‹Р№ account-auth discovery + РЅРµ-Р·РµР»С‘РЅР°СЏ health-СЃРµРјР°РЅС‚РёРєР°
     probe_oa1_discovery_fixtures(disc, tmp)
     probe_oa1_storage_shape_stability(disc, tmp)
     probe_oa1_malformed_ignored(disc, tmp)
@@ -3656,7 +3825,7 @@ def main() -> int:
     probe_oa1_health_pat_only_unconfigured(hc, tmp)
     probe_oa1_quick_report_not_green(wh)
     probe_oa1_helpers_are_pure()
-    # OA1b: презентационная семантика OAuth-свидетельств (webhook-рендер)
+    # OA1b: РїСЂРµР·РµРЅС‚Р°С†РёРѕРЅРЅР°СЏ СЃРµРјР°РЅС‚РёРєР° OAuth-СЃРІРёРґРµС‚РµР»СЊСЃС‚РІ (webhook-СЂРµРЅРґРµСЂ)
     probe_oa1b_full_oauth_evidence(wh)
     probe_oa1b_full_generic_skipped_control(wh)
     probe_oa1b_full_counts_split(wh)

@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Make the Telegram reply keyboard natively collapsible and swap the Settings
+  and Maintenance positions. Remove duplicated status/monitoring buttons from
+  the Maintenance action menu and stop attaching action keyboards to automatic
+  watchdog alerts while preserving critical-alert pinning.
+- Classify Telegram updates before authorization: service messages and other
+  non-action updates are silently ignored, while unauthorized commands and
+  callback presses are still denied. Denial cooldown is keyed by Telegram user
+  instead of callback-query id.
 - Harden community plugin metadata discovery (R2a.1): a `plugin.yaml` that is
   unreadable, malformed YAML, or valid YAML with a non-mapping top level now
   skips the plugin instead of crashing discovery; a valid mapping keeps the

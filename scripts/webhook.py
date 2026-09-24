@@ -1154,10 +1154,6 @@ def menu_keyboard():
                 {"text": "\U0001f9ea Deep AI", "callback_data": "deep_ai"},
                 {"text": "\U0001f4cb Логи", "callback_data": "show_logs"},
             ],
-            [
-                {"text": "\U0001f4ca Статус", "callback_data": "health"},
-                {"text": "\U0001f50d Мониторинг", "callback_data": "watchdog"},
-            ],
         ]
     }
 
@@ -1278,4 +1274,3 @@ def handle_callback_query(query: dict) -> None:
         send_message(handle_reboot_confirm(), silent=True)
     elif action == "reboot_cancel":
         send_message(handle_reboot_cancel(), silent=True)
-
