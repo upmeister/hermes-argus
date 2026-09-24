@@ -240,7 +240,7 @@ drift.
 
 Current supported research baseline:
 
-- Hermes Agent v0.21.3 / `v2026.9.14`;
+- Hermes Agent v0.21.4 / `v2026.9.21`;
 - Linux/systemd-oriented personal-server deployment;
 - Ubuntu 24.04 is the current installer test target.
 
@@ -259,18 +259,20 @@ The current path to the first public release is intentionally bounded:
 
 ```text
 R1c  Authorization headers out of child argv — DONE
- -> R2a  malformed YAML fail-safe — NOW
- -> R2c.1  canonical fallback_providers inventory
- -> installer/dependency/managed-cron hardening
- -> runtime i18n: English + Russian
- -> clean install / upgrade / uninstall acceptance
+ -> R2a/R2a.1  fail-safe discovery hardening — DONE
+ -> R2c.1  canonical fallback_providers inventory — NOW
+ -> RR0  legacy/personal-dependency reduction
+ -> RR1  installer/dependency/managed-cron hardening
+ -> RR2  runtime i18n: English + Russian
+ -> RR3  clean install / upgrade / uninstall acceptance
  -> v0.1.0-rc.1
  -> soak
  -> v0.1.0
 ```
 
-Broader auxiliary discovery, cleanup/reduction and multi-profile monitoring are
-separate follow-up tracks.
+Broader auxiliary fallback-role discovery (R2c.2) and multi-profile monitoring
+remain separate post-RC/deferred tracks. Release-affecting legacy/personal
+cleanup is now an explicit pre-RC gate (RR0).
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the detailed public plan.
 
@@ -299,6 +301,8 @@ contract under [docs/handoffs/](docs/handoffs/).
 ## Documentation
 
 - [Public roadmap](docs/ROADMAP.md)
+- [Hermes upstream watch — 2026-09-24](docs/research/2026-09-24-hermes-upstream-watch.md)
+- [Pre-release legacy/personal-dependency audit](docs/research/2026-09-21-pre-release-legacy-audit.md)
 - [Project/agent contract](AGENTS.md)
 - [Integration evidence policy](docs/adr/0001-integration-evidence-policy.md)
 - [Hermes discovery boundary ADR](docs/adr/0002-hermes-discovery-sync-boundary.md)
