@@ -5,7 +5,7 @@ handoffs. **Old handoff presence is not implementation authority.**
 
 Repository `AGENTS.md` scope-control rules apply to every document here.
 
-## Active baseline — updated 2026-09-21
+## Active baseline — updated 2026-09-24
 
 Read in this order:
 
@@ -14,8 +14,7 @@ Read in this order:
 
 Current selected task:
 
-- none — R2a closed (baseline follow-up + R2a.1 batch); R2c.1 is
-  PREPARED / HOLD awaiting an explicit maintainer go
+- `r2c-static-discovery-compat-contract.md` — **R2c.1 NOW / READY**
 
 Completed:
 
@@ -26,34 +25,30 @@ Completed:
 - OA1 generic static account-auth discovery — **DONE / PR #35**
 - OA1b OAuth evidence rendering — **DONE / PR #39**
 - OA-close acceptance — **DONE / PR #40 / OA PHASE COMPLETE**
-- R2a malformed YAML fail-safe — **DONE / PR #44 (+ #46 docs)**
-- R2a.1 plugin metadata hardening + baseline follow-up — **DONE / R2a.1 batch**
+- R2a malformed authoritative YAML fail-safe — **DONE / PR #44**
+- R2a.1 plugin metadata hardening + baseline follow-up — **DONE / PR #47**
 
 Closed/upstream-gated:
 
 - `oa2-hermes-status-shadow-reopen-gate.md`
 
-## R1c accepted baseline
+## Exact current baseline
 
 ```text
-contract baseline = 96149309dba4b5b539ba6f111e375355b2ab4cfd
-candidate head    = b477d2bbd4d892b3fee97dd188110d4c7bbff94e
-merged main       = 133931a8242de0e61cecace5f75905bf63615383
-CI #81            = success
-probes            = 115 pass / 0 fail
-swap tests        = 8 pass / 0 fail
+Argus main = 5c38fa2381a11974d5b3691def8b5c7fa7849f81
+PR #47 candidate = 25601493e9bd2986b09f55a82dbe9837843bf30c
+CI #92 = success
+probes = 133/133
+swap tests = 8/8
+candidate/main changed blobs = identical
 ```
-
-All four changed blobs are identical between candidate and merged main.
-The final Pytna remediation changed only `tests/probes.py` and strengthened the
-artifact/capture boundary; production code was unchanged.
 
 ## Release-oriented execution order
 
 ```text
 R1c DONE
- -> R2a DONE (PR #44 + baseline follow-up + R2a.1 batch)
- -> R2c.1 fallback_providers compatibility PREPARED / HOLD
+ -> R2a/R2a.1 DONE
+ -> R2c.1 NOW
  -> RR0 legacy/personal-dependency reduction
  -> RR1 installer/dependency/managed-cron
  -> RR2 runtime i18n: en + ru
@@ -66,33 +61,25 @@ R1c DONE
 After the RC:
 
 ```text
-R2c.2 bounded auxiliary coverage
- -> R3 reduction/stabilization
+R2c.2 bounded scoped/auxiliary fallback coverage
+ -> low-risk archive cleanup
 ```
-
-Deferred/separate:
-
-- R2b gateway-liveness redesign;
-- MP0-MP5 multi-profile track;
-- OA2 dynamic account-status shadow.
 
 ## Current upstream authority
 
 ```text
-Hermes stable = v2026.9.14 / v0.21.3
-stable commit = 345cd2b057a452236de401d3534b8502a7465e8d
-warning-source main = 5171ea18dc4b699e14f0092388be326dc4fc81ab
+Hermes stable = v2026.9.21 / v0.21.4
+stable tag commit = d337b736aa1e8ebecfab043842d13e4a2d2f48a3
+warning-source main = 35b14ad5e24137b836d5c47c21a50c6ea7aeb785
 ```
+
+Stable behavior is implementation authority. Main is warning/research only.
 
 ## Current contracts
 
 Current:
 
-- none (R2c.1 held)
-
-Prepared / held:
-
-- `r2c-static-discovery-compat-contract.md` (R2c.1 before RC; R2c.2 after)
+- `r2c-static-discovery-compat-contract.md` — R2c.1
 
 Completed:
 
@@ -113,14 +100,16 @@ Deferred:
 
 - `r2b-gateway-liveness-contract.md`
 
-## Workflow
+## Role-based workflow
+
+Contracts are agent-agnostic:
 
 ```text
-one selected contract
- -> one implementation/research pass
- -> one focused review
+Maintainer selects one contract
+ -> Builder performs one implementation pass
+ -> Focused reviewer performs one adversarial review
  -> at most one remediation by default
- -> exact-head reread
+ -> Maintainer exact-head reread
  -> merge/decision OR blocker
 ```
 
