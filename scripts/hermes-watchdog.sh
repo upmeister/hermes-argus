@@ -335,6 +335,7 @@ else
 fi
 
 # ── 5. Проверка свежести health-state.json (deep health-check жив?) ──────
+if [ "@MODULE_ANALYZER@" = "ON" ]; then
 log "🔍 Проверка свежести health-state.json..."
 if [ -f "$HEALTH_STATE_FILE" ]; then
     # Извлекаем last_check timestamp из JSON
@@ -370,24 +371,36 @@ except:
             OKS+=("🔬 Health-check свежий (${AGE_H}ч назад)")
             log "✅ health-state.json свежий: ${STATE_AGE}с назад"
         else
+            track_problem "health_state_unreadable" "health-state.json" \
+                "⚠️ <b>health-state.json содержит некорректный timestamp</b>" 1
             log "⚠️ Не удалось распарсить timestamp из health-state.json"
         fi
     else
+        track_problem "health_state_unreadable" "health-state.json" \
+            "⚠️ <b>health-state.json не содержит last_check</b>" 1
         log "⚠️ last_check пустой в health-state.json"
     fi
 else
     track_problem "health_state_missing" "health-state.json" "⚠️ <b>health-state.json не найден!</b> Deep health-check никогда не запускался" 1
     log "⚠️ health-state.json отсутствует"
 fi
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 6. Проверка API-ключей и интеграций (каждый watchdog-цикл)
 # ═══════════════════════════════════════════════════════════════════════════
 
-log "🔍 Проверка API-ключей и интеграций..."
+if [ "@MODULE_INTEGRATIONS@" = "ON" ]; then
+    log "🔍 Проверка API-ключей и интеграций..."
+    INTEGRATION_CHECKER="$HERMES_DIR/scripts/health-check-integrations.sh"
+    if [ ! -f "$INTEGRATION_CHECKER" ]; then
+        track_problem "integration_check_missing" "Integration checker" \
+            "⚠️ <b>health-check-integrations.sh не найден:</b> $INTEGRATION_CHECKER" 1
+        log "❌ health-check-integrations.sh missing: $INTEGRATION_CHECKER"
+    else
 # check-integrations может вернуть exit 1 (найдены проблемы) — НЕ должен убивать watchdog
 set +e
-INTEGRATION_OUTPUT=$(bash "$HOME_DIR/scripts/check-integrations.sh" 2>&1)
+INTEGRATION_OUTPUT=$(bash "$INTEGRATION_CHECKER" --quick 2>&1)
 INTEGRATION_EXIT=$?
 set -e
 
@@ -413,6 +426,8 @@ if [ $INTEGRATION_EXIT -ne 0 ]; then
 else
     OKS+=("🔌 Интеграции: OK")
     log "✅ Интеграции: OK"
+fi
+    fi
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════

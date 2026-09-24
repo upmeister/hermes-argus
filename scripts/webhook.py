@@ -371,7 +371,10 @@ def handle_watchdog_status() -> str:
     else:
         lines.append("⚪ Analyzer не установлен (MODULE_ANALYZER)")
 
-    hb = os.path.join(h, "hermes-infra", "heartbeat.txt")
+    gh_heartbeat_dir = os.path.join(h, "gh-heartbeat")
+    if not os.path.isdir(gh_heartbeat_dir):
+        gh_heartbeat_dir = os.path.join(h, "hermes-infra")
+    hb = os.path.join(gh_heartbeat_dir, "heartbeat.txt")
     if os.path.exists(hb):
         age = int(_time.time()) - os.path.getmtime(hb)
         lines.append(f"{_CHECK if age < 900 else _WARN} Heartbeat ({age}s ago)")
