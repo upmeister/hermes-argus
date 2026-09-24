@@ -3510,6 +3510,52 @@ def probe_r2a_baseline_degraded_reportable(tmp: Path):
           f"disc={snap.get('discovery')}")
 
 
+def probe_rr0a_webhook_heartbeat_paths(wh, tmp: Path):
+    """RR0a: canonical heartbeat directory wins, with legacy-only fallback."""
+    def status_at(home: Path) -> str:
+        def expanduser(path: str) -> str:
+            if path == "~":
+                return str(home)
+            if path.startswith("~/"):
+                return str(home / path[2:])
+            return path
+
+        def fake_run(args, capture_output=False, text=False, timeout=None, **kwargs):
+            if args[0] == "systemctl":
+                stdout = "not-found\n" if "show" in args else "inactive\n"
+            elif args[0] == "crontab":
+                stdout = "hermes-watchdog gateway-liveness dashboard-liveness\n"
+            else:
+                stdout = "000"
+            return subprocess.CompletedProcess(args, 0, stdout, "")
+
+        with override_attr(wh.os.path, "expanduser", expanduser), \
+                override_attr(wh.subprocess, "run", fake_run), \
+                override_attr(wh._time, "time", lambda: 20_000):
+            return wh.handle_watchdog_status()
+
+    canonical_home = tmp / "rr0a-heartbeat-canonical-home"
+    canonical = canonical_home / ".hermes" / "gh-heartbeat"
+    legacy = canonical_home / ".hermes" / "hermes-infra"
+    write(canonical / "heartbeat.txt", "canonical\n")
+    write(legacy / "heartbeat.txt", "legacy\n")
+    os.utime(canonical / "heartbeat.txt", (1_000, 1_000))
+    os.utime(legacy / "heartbeat.txt", (19_999, 19_999))
+    canonical_status = status_at(canonical_home)
+
+    legacy_home = tmp / "rr0a-heartbeat-legacy-home"
+    write(legacy_home / ".hermes" / "hermes-infra" / "heartbeat.txt", "legacy\n")
+    os.utime(legacy_home / ".hermes" / "hermes-infra" / "heartbeat.txt",
+             (19_900, 19_900))
+    legacy_status = status_at(legacy_home)
+
+    check("rr0a_webhook_heartbeat_paths",
+          "Heartbeat (19000.0s ago)" in canonical_status
+          and "Heartbeat (100.0s ago)" in legacy_status,
+          f"canonical={next((l for l in canonical_status.splitlines() if 'Heartbeat (' in l), '')!r} "
+          f"legacy={next((l for l in legacy_status.splitlines() if 'Heartbeat (' in l), '')!r}")
+
+
 # ── runner ──────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -3543,6 +3589,7 @@ def main() -> int:
     probe_health_cli_entrypoint(tmp)
 
     # D0a: schema-v2 envelope, projection, dual-read hysteresis
+    probe_rr0a_webhook_heartbeat_paths(wh, tmp)
     probe_report_v2_envelope(hc, tmp)
     probe_engine_two_runs_independent(hc, tmp)
     probe_wrapper_v1_report_accepted(tmp)

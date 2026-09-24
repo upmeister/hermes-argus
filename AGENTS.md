@@ -62,6 +62,21 @@ agent product:
 
 Changing which tool or model fills a role does not change the contract.
 
+Pytna is the default focused reviewer across projects and is reached through
+the Peetna MCP. Unless the task names another reviewer, send Pytna the
+implementation PR link and the source handoff from the contract/docs PR, plus
+the exact candidate head, scope, acceptance criteria, constraints, and focused
+review questions. Check Peetna health first; start the review only after the
+handoff is ready, then read the completed result before deciding on remediation.
+
+A task assignment that links a documentation PR as its active contract counts
+as acceptance and authorizes merging that contract PR before implementation.
+Base implementation work on the resulting `main`. An implementation task
+authorizes a task branch, commit, push, and opening or updating its PR by
+default, unless the maintainer sets a local-only or no-publication constraint.
+Implementation PR merges, deploys, releases, and production actions require
+separate authorization.
+
 ### Reviewer authority
 
 A reviewer may fix only a defect that directly violates an explicit acceptance

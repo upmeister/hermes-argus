@@ -61,8 +61,12 @@ fi
 # Pushes a fresh timestamp into the private heartbeat repo; the repo's
 # Actions workflow alerts when the timestamp goes stale. GITHUB_REPO comes
 # from ~/.hermes/.env (set by the GH heartbeat module setup).
-if [ -n "${GITHUB_REPO:-}" ] && [ -n "${GH_TOKEN:-}" ] && [ -d "$H/hermes-infra" ]; then
-    cd "$H/hermes-infra" || exit 0
+GH_HEARTBEAT_DIR="$H/gh-heartbeat"
+if [ ! -d "$GH_HEARTBEAT_DIR" ]; then
+    GH_HEARTBEAT_DIR="$H/hermes-infra"
+fi
+if [ -n "${GITHUB_REPO:-}" ] && [ -n "${GH_TOKEN:-}" ] && [ -d "$GH_HEARTBEAT_DIR" ]; then
+    cd "$GH_HEARTBEAT_DIR" || exit 0
     # Pull before push: the Actions workflow commits the .heartbeat-alert flag
     # file — without pull the server push fails (non-fast-forward)
     git pull --rebase --autostash -q 2>/dev/null || true

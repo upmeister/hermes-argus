@@ -13,6 +13,7 @@ NOW=$(date +%s)
 problems=""
 
 # 1. health-state.json свежий? (не старше 2 часов)
+if [ "@MODULE_ANALYZER@" = "ON" ]; then
 if [ -f "$STATE_FILE" ]; then
     LAST_CHECK=$(python3 -c "import json; print(json.load(open('$STATE_FILE')).get('last_check',''))" 2>/dev/null)
     if [ -n "$LAST_CHECK" ]; then
@@ -26,6 +27,7 @@ if [ -f "$STATE_FILE" ]; then
     fi
 else
     problems="$problems\n⚠️ L3 health-state.json: not found"
+fi
 fi
 
 # 2. watchdog cron работает?
@@ -52,18 +54,25 @@ if ! crontab -l 2>/dev/null | grep -q "dashboard-liveness.sh"; then
 fi
 
 # 5. Мониторинг-бот активен?
-if ! systemctl --user is-active monitoring-bot-poller.service >/dev/null 2>&1; then
-    problems="$problems\n⚠️ monitoring-bot-poller.service not active"
+if [ "@MODULE_TG_BOT@" = "ON" ]; then
+    if ! systemctl --user is-active monitoring-bot-poller.service >/dev/null 2>&1; then
+        problems="$problems\n⚠️ monitoring-bot-poller.service not active"
+    fi
 fi
 
 # 6. Netdata health
-if ! systemctl is-active netdata.service >/dev/null 2>&1; then
+NETDATA_LOAD_STATE=$(systemctl show -p LoadState --value netdata.service 2>/dev/null || echo unknown)
+if [ "$NETDATA_LOAD_STATE" != "not-found" ] && ! systemctl is-active netdata.service >/dev/null 2>&1; then
     problems="$problems\n⚠️ netdata.service not active (system)"
 fi
 
 # 7. Heartbeat работает?
-if [ -f "$H/hermes-infra/heartbeat.txt" ]; then
-    HB_AGE=$(( NOW - $(stat -c %Y "$H/hermes-infra/heartbeat.txt" 2>/dev/null || echo 0) ))
+GH_HEARTBEAT_DIR="$H/gh-heartbeat"
+if [ ! -d "$GH_HEARTBEAT_DIR" ]; then
+    GH_HEARTBEAT_DIR="$H/hermes-infra"
+fi
+if [ -f "$GH_HEARTBEAT_DIR/heartbeat.txt" ]; then
+    HB_AGE=$(( NOW - $(stat -c %Y "$GH_HEARTBEAT_DIR/heartbeat.txt" 2>/dev/null || echo 0) ))
     if [ "$HB_AGE" -gt 900 ]; then  # 15 минут
         problems="$problems\n⚠️ Heartbeat stale: ${HB_AGE}s ago"
     fi
