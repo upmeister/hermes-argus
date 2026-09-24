@@ -49,6 +49,19 @@ finding would require any of:
 These are not forbidden forever. They require an explicit maintainer scope/value
 decision before implementation continues.
 
+### Delivery roles
+
+Active contracts are role-based, not tied to a particular model, vendor, or
+agent product:
+
+- **Builder** — implements exactly the selected contract and supplies evidence.
+- **Focused reviewer** — adversarially checks the contract and may request one
+  bounded remediation.
+- **Maintainer** — selects scope, resolves blockers, performs the final exact-head
+  gate, and alone authorizes merge/deploy/release actions.
+
+Changing which tool or model fills a role does not change the contract.
+
 ### Reviewer authority
 
 A reviewer may fix only a defect that directly violates an explicit acceptance
@@ -151,8 +164,10 @@ branch-protection changes require explicit maintainer authorization.
 
 ## Known traps
 
-- `hermes mcp test` can return exit code zero for a failed connection; parse
-  its output markers.
+- Supported Hermes stable v0.21.4 gives `hermes mcp test` useful exit codes:
+  0 connected, 1 connection failed, 3 server missing. Argus still parses the
+  established output markers for backward compatibility; do not assume the old
+  "always zero" behavior or remove marker parsing inside an unrelated task.
 - API roots may return `404` by design; use authenticated semantic routes.
 - Systemd `.path` units need explicit `Unit=` when the service name differs.
 - After deployment, inspect installed files and service state; successful shell
@@ -165,12 +180,13 @@ branch-protection changes require explicit maintainer authorization.
 Public release path:
 
 ```text
-R1c
- -> R2a
- -> R2c.1
- -> installer/dependency/managed-cron hardening
- -> runtime i18n (en + ru)
- -> release acceptance
+R1c DONE
+ -> R2a/R2a.1 DONE
+ -> R2c.1 NOW
+ -> RR0 legacy/personal-dependency reduction
+ -> RR1 installer/dependency/managed-cron hardening
+ -> RR2 runtime i18n (en + ru)
+ -> RR3 release acceptance
  -> v0.1.0-rc.1
 ```
 
@@ -189,3 +205,14 @@ release-readiness task, not permission to duplicate documentation.
 - `tests/probes.py` — regression/security probes.
 - Canonical planning roadmap in the Obsidian vault:
   `projects/hermes-argus/plans/2026-09-20-public-release-roadmap.md`.
+
+
+## Current upstream authority — 2026-09-24
+
+```text
+Hermes stable = v2026.9.21 / v0.21.4
+stable tag commit = d337b736aa1e8ebecfab043842d13e4a2d2f48a3
+warning-source main = 35b14ad5e24137b836d5c47c21a50c6ea7aeb785
+```
+
+Stable authority wins. Upstream `main` is a warning/research source only.
