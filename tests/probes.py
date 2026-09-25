@@ -3558,6 +3558,173 @@ def probe_rr0a_webhook_heartbeat_paths(wh, tmp: Path):
 
 # ── runner ──────────────────────────────────────────────────────────────────
 
+
+
+def probe_ux0_bot_interaction(mon, wh: object):
+    """UX0 native keyboard, de-duplicated menu, alert keyboard, and poll auth."""
+    keyboard = mon.reply_keyboard()
+    buttons = [button["text"] for row in keyboard["keyboard"] for button in row]
+    settings_index = buttons.index("⚙️ Настройки")
+    maintenance_index = buttons.index("🛠 Обслуживание")
+    check("ux0_reply_keyboard_collapsible",
+          "is_persistent" not in keyboard
+          and keyboard.get("resize_keyboard") is True
+          and len(buttons) == 8,
+          f"is_persistent={keyboard.get('is_persistent')!r} buttons={len(buttons)}")
+    check("ux0_reply_keyboard_order", maintenance_index < settings_index,
+          f"maintenance={maintenance_index} settings={settings_index}")
+
+    menu_actions = [button["callback_data"]
+                    for row in wh.menu_keyboard()["inline_keyboard"]
+                    for button in row]
+    expected_menu_actions = ["restart_gw", "restart_dash", "reboot",
+                             "silence_menu", "deep_ai", "show_logs"]
+    check("ux0_maintenance_menu_actions",
+          menu_actions == expected_menu_actions, f"actions={menu_actions}")
+
+    watchdog_text = (REPO / "scripts" / "hermes-watchdog.sh").read_text(
+        encoding="utf-8", errors="ignore")
+    problem_line = next(line for line in watchdog_text.splitlines()
+                        if 'send_tg "$ALERT_MSG"' in line)
+    recovery_line = next(line for line in watchdog_text.splitlines()
+                         if 'send_tg "$R_MSG"' in line)
+    check("ux0_automatic_alert_no_keyboard",
+          'send_tg "$ALERT_MSG" "pin"' in problem_line
+          and "keyboard" not in problem_line
+          and 'send_tg "$R_MSG"' in recovery_line
+          and "keyboard" not in recovery_line,
+          f"problem={problem_line!r} recovery={recovery_line!r}")
+
+    captured = {"messages": [], "denials": [], "callback_answers": [],
+                "commands": [], "callbacks": []}
+
+    def fake_send_message(text, **kwargs):
+        captured["messages"].append((text, kwargs))
+
+    def fake_reply_to(chat_id, text, **kwargs):
+        captured["denials"].append((chat_id, text))
+
+    def fake_tg_api(method, data):
+        if method == "answerCallbackQuery":
+            captured["callback_answers"].append(data.get("callback_query_id"))
+    def fake_time():
+        return fake_time.value
+
+    fake_time.value = 1000.0
+
+    def fake_route_command(text):
+        captured["commands"].append(text)
+
+    def fake_handle_callback_query(query):
+        captured["callbacks"].append(query.get("data"))
+
+    def fake_deny(chat_id=None, callback_id=None, query=None):
+        user_id = (query or {}).get("from", {}).get("id")
+        key = str(user_id or chat_id or "anon")
+        now = fake_time.value
+        last = mon._DENY_LOG.get(key, 0.0)
+        fresh = now - last >= mon._DENY_COOLDOWN_S
+        if fresh:
+            mon._DENY_LOG[key] = now
+            captured["denials"].append((chat_id, bool(callback_id)))
+        if callback_id:
+            captured["callback_answers"].append(callback_id)
+
+    authorized_id = "123456789"
+    unauthorized_id = 99999
+    health_label = next(text for text, command in mon.REPLY_LABELS.items()
+                        if command == "/health")
+    service_update = {"update_id": 1, "message": {
+        "message_id": 11, "date": 0,
+        "chat": {"id": unauthorized_id, "type": "private"},
+        "pinned_message": {"message_id": 10, "date": 0,
+                           "chat": {"id": unauthorized_id, "type": "private"}},
+    }}
+    unsupported_update = {"update_id": 2, "edited_message": {
+        "text": "/health", "from": {"id": unauthorized_id},
+        "chat": {"id": unauthorized_id, "type": "private"},
+    }}
+
+    with override_attr(mon, "is_authorized", lambda user_id: str(user_id) == authorized_id), \
+            override_attr(mon, "ALLOWED_USER_ID", authorized_id), \
+            override_attr(mon, "_time", fake_time), \
+            override_attr(mon, "send_message", fake_send_message), \
+            override_attr(mon, "reply_to", fake_reply_to), \
+            override_attr(mon, "tg_api", fake_tg_api), \
+            override_attr(mon, "route_command", fake_route_command), \
+            override_attr(mon, "_send_deny", fake_deny), \
+            override_attr(mon.webhook, "handle_callback_query",
+                          fake_handle_callback_query):
+        mon._DENY_LOG.clear()
+        mon.PENDING_SECRET.clear()
+        mon._handle_update(service_update)
+        service_ignored = not any(captured[name] for name in
+                                  ("messages", "denials", "callback_answers",
+                                   "commands", "callbacks"))
+
+        for key in captured:
+            captured[key].clear()
+        mon._DENY_LOG.clear()
+        mon._handle_update(unsupported_update)
+        unsupported_ignored = not any(captured[name] for name in
+                                      ("messages", "denials", "callback_answers",
+                                       "commands", "callbacks"))
+
+        fake_time.value = 1000.0
+        mon._handle_update({"update_id": 3, "message": {
+            "text": "/health", "from": {"id": unauthorized_id},
+            "chat": {"id": unauthorized_id, "type": "private"},
+        }})
+        unauthorized_denied = len(captured["denials"]) == 1
+
+        for key in captured:
+            captured[key].clear()
+        mon._DENY_LOG.clear()
+        fake_time.value = 1100.0
+        mon._handle_update({"update_id": 4, "callback_query": {
+            "id": "callback-1", "data": "restart_gw",
+            "from": {"id": unauthorized_id},
+            "message": {"chat": {"id": unauthorized_id, "type": "private"}},
+        }})
+        mon._handle_update({"update_id": 5, "callback_query": {
+            "id": "callback-2", "data": "health",
+            "from": {"id": unauthorized_id},
+            "message": {"chat": {"id": unauthorized_id, "type": "private"}},
+        }})
+        cooldown_per_user = (len(captured["denials"]) == 1
+                             and len(captured["callback_answers"]) == 2)
+
+        for key in captured:
+            captured[key].clear()
+        mon._DENY_LOG.clear()
+        mon._handle_update({"update_id": 6, "message": {
+            "text": "/health", "from": {"id": int(authorized_id)},
+            "chat": {"id": int(authorized_id), "type": "private"},
+        }})
+        mon._handle_update({"update_id": 7, "message": {
+            "text": health_label, "from": {"id": int(authorized_id)},
+            "chat": {"id": int(authorized_id), "type": "private"},
+        }})
+        mon._handle_update({"update_id": 8, "callback_query": {
+            "id": "callback-3", "data": "restart_gw",
+            "from": {"id": int(authorized_id)},
+            "message": {"chat": {"id": int(authorized_id), "type": "private"}},
+        }})
+        authorized_routed = (captured["commands"] == ["/health", "/health"]
+                             and captured["callbacks"] == ["restart_gw"])
+
+    check("ux0_service_update_ignored", service_ignored,
+          f"messages={captured['messages']} denials={captured['denials']}")
+    check("ux0_unsupported_update_ignored", unsupported_ignored,
+          f"messages={captured['messages']} denials={captured['denials']}")
+    check("ux0_unauthorized_text_denied", unauthorized_denied,
+          f"denials={int(unauthorized_denied)}")
+    check("ux0_callback_cooldown_per_user", cooldown_per_user,
+          f"denials={int(cooldown_per_user)}")
+    check("ux0_authorized_paths_routed", authorized_routed,
+          f"commands={captured['commands']} callbacks={captured['callbacks']}")
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="argus-probes-"))
     hc = load_module("health-check-v2")
@@ -3566,6 +3733,7 @@ def main() -> int:
     hp = load_module("health_patterns")
     disc = load_module("integration-discover")
     wh = load_module("webhook")
+    mon = load_module("monitoring-bot-poller")
 
     probe_catalog_429(hc)
     probe_catalog_401_then_public200(hc)
@@ -3592,6 +3760,7 @@ def main() -> int:
     probe_rr0a_webhook_heartbeat_paths(wh, tmp)
     probe_report_v2_envelope(hc, tmp)
     probe_engine_two_runs_independent(hc, tmp)
+    probe_ux0_bot_interaction(mon, wh)
     probe_wrapper_v1_report_accepted(tmp)
     probe_wrapper_v2_failed_increments(tmp)
     probe_wrapper_v2_unknown_preserves(tmp)
