@@ -109,7 +109,8 @@ deploy_template() {
 # CORE: локальный мониторинг и самозащита (внешнее — только TG-алерты)
 CORE_HOME_SCRIPTS=(hermes-watchdog.sh auto-remediate.sh check-updates.sh \
                    network-guard.sh collect-metrics.sh send-monitoring-report.sh)
-CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.sh ssl-expiry-check.sh)
+CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.sh ssl-expiry-check.sh \
+                     service-status-snapshot.py)
 CORE_SYSTEMD=(hermes-dashboard.service hermes-dashboard.service.d/memory-limits.conf \
               hermes-gateway.service hermes-gateway.service.d/memory-limits.conf)
 
@@ -329,6 +330,9 @@ CRON_TMP=$(mktemp)
         echo "0 3 * * 1 $HOME_DIR/scripts/check-updates.sh"
         echo "30 * * * * $HERMES_DIR/scripts/watchdog-health.sh >> $HERMES_DIR/logs/watchdog-health-cron.log 2>&1"
         echo "0 6 * * * $HERMES_DIR/scripts/ssl-expiry-check.sh >> $HERMES_DIR/logs/ssl-expiry-cron.log 2>&1"
+        # Сводка запущенного в один json-файл: расписание нечастое (5 мин хватит), потому
+        # что отчёт читается как состояние, а не как событийный поток.
+        echo "*/5 * * * * python3 $HERMES_DIR/scripts/service-status-snapshot.py --quiet >> $HERMES_DIR/logs/service-status.log 2>&1"
     fi
     if module_enabled MODULE_INTEGRATIONS; then
         echo "*/10 * * * * $HOME_DIR/scripts/integration-discover-wrapper.sh >> $HERMES_DIR/logs/integration-discover-cron.log 2>&1"
