@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -213,6 +214,28 @@ check("живой хост: reboot_risk=ok",
       f"reboot_risk={rr['reboot_risk']}, not_enabled={rr['active_user_units_not_enabled']}")
 check("живой хост: есть поле transient",
       "active_user_units_transient" in rr, f"ключи: {sorted(rr)}")
+
+print("T8: запуск из cron (без XDG_RUNTIME_DIR) даёт тот же результат, что и из сессии")
+# Это был самый коварный баг: в cron нет XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS,
+# `systemctl --user` молча возвращает пустоту, и отчёт показывал «0 user-юнитов»,
+# reboot_risk=ok — то есть мониторинг БЫЛ СЛЕПЫМ ровно там, где слепота опаснее всего
+# (а именно: пропущенный не-enabled юнит = сервис, который не поднимется после ребута).
+saved_env = {k: os.environ.pop(k, None) for k in
+             ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "USER")}
+try:
+    cron_user = mod._run_units("user")
+finally:
+    for k, v in saved_env.items():
+        if v is not None:
+            os.environ[k] = v
+check("без XDG_RUNTIME_DIR находятся user-юниты", len(cron_user) > 0,
+      f"получено {len(cron_user)} — это баг cron-окружения")
+check("в cron-режиме виден nail-bot",
+      any(u["name"] == "nail-bot.service" for u in cron_user),
+      "nail-bot должен попадать в отчёт независимо от окружения")
+check("user-scope совпадает с интерактивным",
+      {u["name"] for u in cron_user} == {u["name"] for u in user},
+      "состав юнитов не должен зависеть от наличия XDG_RUNTIME_DIR")
 
 print()
 if FAILS:

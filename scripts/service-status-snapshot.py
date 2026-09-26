@@ -96,6 +96,24 @@ def _run_units(scope: str) -> list[dict]:
     флага», а юнит с пустым именем. Поэтому флаг строим списком, а не склейкой строк;
     пустой scope даёт команду без `--user` (системный режим)."""
     user_flag = ["--user"] if scope == "user" else []
+    # В cron окружении нет XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS, и `systemctl --user`
+    # падает с «Failed to connect to bus: No medium found», возвращая ПУСТОЙ вывод.
+    # Раньше это давало ложный отчёт «0 user-юнитов» и reboot_risk=ok при слепом user-скопе.
+    # Подставляем окружение пользовательского менеджера явно, с проверкой, что он существует.
+    if scope == "user":
+        uid = os.getuid()
+        runtime = f"/run/user/{uid}"
+        if not os.path.isdir(runtime):
+            return [{
+                "name": "(user systemd недоступен)",
+                "active": "unknown",
+                "enabled": "unknown",
+                "unit_state": "unknown",
+                "restart": "unknown",
+                "kind": "user",
+            }]
+        os.environ.setdefault("XDG_RUNTIME_DIR", runtime)
+        os.environ.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={runtime}/bus")
     files = _run(["systemctl", *user_flag, "--no-legend", "--no-pager", "--plain",
                   "list-unit-files", "--type=service"]).splitlines()
     out: list[dict] = []
