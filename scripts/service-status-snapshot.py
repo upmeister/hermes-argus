@@ -104,6 +104,10 @@ def _run_units(scope: str) -> list[dict]:
         if len(parts) < 2 or not parts[0].endswith(".service"):
             continue
         name = parts[0]
+        # колонка unit_state из list-unit-files: enabled/disabled/linked/transient/…
+        # Именно здесь systemd честно помечает transient-юниты, поэтому признак
+        # «не переживёт ребут» берём отсюда, а не угадываем по имени.
+        unit_state = parts[1] if len(parts) > 1 else "unknown"
         if name in (USER_NOISE if scope == "user" else SYSTEM_NOISE):
             continue
         # отсекаем шаблонные/чужие имена (getty@ssh, systemd-*, sshd@…), оставляя наши
@@ -120,6 +124,7 @@ def _run_units(scope: str) -> list[dict]:
             "name": name,
             "active": active[0] or "unknown",
             "enabled": enabled[0] or "unknown",
+            "unit_state": unit_state,
             "restart": restart or "no",
             "kind": scope,
         })
@@ -291,23 +296,43 @@ def _reboot_ready(user_units: list[dict], system_units: list[dict]) -> dict:
     Поэтому linger проверяем явно, а не «по умолчанию считаем что есть»."""
     linger = _run(["loginctl", "show-user", os.environ.get("USER", "ubuntu"),
                    "-p", "Linger", "--value"]).strip() or "unknown"
+
+    def _survives_reboot(unit: dict) -> bool:
+        """Отсекаем то, что НЕ обязано переживать ребут.
+
+        Transient-юниты (созданные `systemd-run --user`) и `.scope`-юниты по
+        определению не имеют unit-файла в постоянном хранилище: они не могут быть
+        `enabled`, и их пересоздаёт то, что их породило (например, c6-tunnel поднимает
+        провайдерский туннель по таймеру). Считать их «не переживёт ребут» — ложная
+        тревога, которая со временем приучает оператора игнорировать reboot_risk.
+        """
+        name = str(unit.get("name", ""))
+        return (not name.endswith(".scope")
+                and "transient" not in str(unit.get("unit_state", "")).lower())
+
+    persistent_user = [s for s in user_units if _survives_reboot(s)]
     not_enabled = sorted(
-        s["name"] for s in user_units
+        s["name"] for s in persistent_user
         if s["active"] == "active" and s["enabled"] != "enabled"
     )
-    active_total = sum(1 for s in user_units if s["active"] == "active")
+    transient_active = sorted(
+        s["name"] for s in user_units if not _survives_reboot(s) and s["active"] == "active"
+    )
+    active_total = sum(1 for s in persistent_user if s["active"] == "active")
     # системные юниты, активные, но disabled — ssh.service здесь норма (есть ssh.socket)
     sys_not_enabled = sorted(
         s["name"] for s in system_units
         if s["active"] == "active" and s["enabled"] == "disabled"
     )
-    risk = "ok" if (not_enabled or [] == [] and linger == "yes") else "check"
     if not_enabled or linger != "yes":
         risk = "reboot_risk"
+    else:
+        risk = "ok"
     return {
         "linger": linger,
         "active_user_units_total": active_total,
         "active_user_units_not_enabled": not_enabled,
+        "active_user_units_transient": transient_active,
         "active_system_units_disabled": sys_not_enabled,
         "reboot_risk": risk,
     }

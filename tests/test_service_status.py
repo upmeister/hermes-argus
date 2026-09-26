@@ -168,6 +168,52 @@ check("в отчёте нет значений секретов",
       .replace("restart", "").replace("unauthorized", ""),
       "в отчёте не должно быть полей с токенами")
 
+print("T7: transient-юниты не считаются риском для ребута (ложная тревога)")
+# Проверяем _reboot_ready() на СИНТЕТИЧЕСКИХ данных, а не на живом хосте: c6-tunnel
+# существует только пока поднят туннель (его создаёт systemd-run), поэтому проверка
+# «есть ли он сейчас» была бы нестабильной и мигала бы между прогонами.
+synthetic_user = [
+    {"name": "nail-bot.service", "active": "active", "enabled": "enabled",
+     "unit_state": "enabled", "kind": "user"},
+    # transient: enabled невозможен, но и переживать ребут ему не нужно —
+    # его пересоздаёт таймер, который его и породил.
+    {"name": "c6-tunnel.service", "active": "active", "enabled": "transient",
+     "unit_state": "transient", "kind": "user"},
+    {"name": "session-42.scope", "active": "active", "enabled": "generated",
+     "unit_state": "generated", "kind": "user"},
+    # настоящая проблема: активен, но не включён → после ребута не поднимется
+    {"name": "rogue.service", "active": "active", "enabled": "disabled",
+     "unit_state": "disabled", "kind": "user"},
+]
+rr_test = mod._reboot_ready(synthetic_user, [])
+check("transient уведён из not_enabled",
+      rr_test["active_user_units_not_enabled"] == ["rogue.service"],
+      f"получено: {rr_test['active_user_units_not_enabled']}")
+check("transient и scope перечислены отдельно",
+      set(rr_test["active_user_units_transient"]) == {"c6-tunnel.service", "session-42.scope"},
+      f"получено: {rr_test['active_user_units_transient']}")
+check("реальный rogue.service даёт reboot_risk",
+      rr_test["reboot_risk"] == "reboot_risk",
+      f"получено: {rr_test['reboot_risk']}")
+check("без rogue — risk=ok при linger=yes",
+      mod._reboot_ready(synthetic_user[:2], [])["reboot_risk"] == "ok",
+      "только transient+enabled должен давать ok")
+check("без linger — всегда риск (юниты не стартуют без логина)",
+      mod._reboot_ready(synthetic_user[:2], []) is not None
+      and "linger" in mod._reboot_ready(synthetic_user[:2], []))
+
+# и сверка с живым хостом: наши постоянные сервисы обязаны быть enabled
+rr = report["reboot_ready"]
+check("живой хост: наши три юнита enabled",
+      all(u["enabled"] == "enabled" for u in report["services"]["user"]
+          if u["name"] in ("nail-bot.service", "2ch-monitor.service", "hermes-gateway.service")),
+      "проверь, что эти три действительно enabled")
+check("живой хост: reboot_risk=ok",
+      rr["reboot_risk"] == "ok",
+      f"reboot_risk={rr['reboot_risk']}, not_enabled={rr['active_user_units_not_enabled']}")
+check("живой хост: есть поле transient",
+      "active_user_units_transient" in rr, f"ключи: {sorted(rr)}")
+
 print()
 if FAILS:
     print(f"ПРОВАЛЕНО {len(FAILS)}:")
