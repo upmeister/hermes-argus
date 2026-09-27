@@ -4122,6 +4122,81 @@ def probe_ls_silence_mutes_but_preserves(lsc, tmp: Path):
           f"sends={sends!r} state={state['targets']['nail-bot']!r}")
 
 
+def probe_ls_marker_snapshot_is_blind_not_recovery(lsc, tmp: Path):
+    """Ревью-блокер 1: маркерный снимок (user-systemd недоступен) — валидный
+    schema-1 файл, но НЕ наблюдение: blind-диагностика срабатывает, ложного
+    «восстановлено» нет, выход из слепоты — только по реальному снимку."""
+    state_file = tmp / "ls-marker-state.json"
+    sends: list[str] = []
+
+    def send(text: str) -> tuple[bool, str]:
+        sends.append(text)
+        return True, ""
+
+    manifest, _ = lsc.load_manifest(
+        write(tmp / "ls-marker-manifest.json", json.dumps(_LS_MANIFEST)))
+    assert manifest is not None
+    marker = _ls_snapshot(_LS_NOW - 60, [
+        _ls_row(lsc.USER_SYSTEMD_UNAVAILABLE, "unknown")])
+    real = _ls_snapshot(_LS_NOW - 60, [
+        _ls_row("2ch-monitor.service", "active"),
+        _ls_row("nail-bot.service", "active")])
+    with override_attr(lsc, "STATE_PATH", state_file), \
+            override_attr(lsc, "SILENCE_PATH", tmp / "ls-marker-no-silence.txt"):
+        for _ in range(20):
+            lsc.process(manifest, marker, "", _LS_NOW, send=send)
+        after_persistent = len(sends)
+        persistent = json.loads(state_file.read_text(encoding="utf-8"))
+        lsc.process(manifest, None, "snapshot missing", _LS_NOW, send=send)
+        lsc.process(manifest, None, "snapshot missing", _LS_NOW, send=send)
+        lsc.process(manifest, marker, "", _LS_NOW, send=send)
+        after_marker_after_diag = len(sends)
+        lsc.process(manifest, real, "", _LS_NOW, send=send)
+        state_done = json.loads(state_file.read_text(encoding="utf-8"))
+    check("ls_marker_snapshot_is_blind_not_recovery",
+          persistent["blind"] == {"consecutive_unknown_runs": 20, "diag_sent": True}
+          and after_persistent == 1 and "недоступно" in sends[0]
+          and after_marker_after_diag == 1
+          and len(sends) == 2 and "восстановлено" in sends[1]
+          and state_done["blind"] == {"consecutive_unknown_runs": 0, "diag_sent": False},
+          f"sends={sends!r} persistent={persistent['blind']!r} "
+          f"done={state_done['blind']!r}")
+
+
+def probe_ls_bounded_reflection(lsc, tmp: Path):
+    """Ревью-блокер 2: содержимое снимка/манифеста отражается в reasons и
+    сообщения оператора только bounded — лимит Telegram не нарушается."""
+    huge = "x" * 4096
+    _, schema_reason = lsc.load_snapshot(write(
+        tmp / "ls-bound-schema.json", json.dumps(
+            {"schema": huge, "generated_at": _ls_iso(_LS_NOW - 60),
+             "services": {"user": [], "system": []}})), now=_LS_NOW)
+    _, keys_reason = lsc.load_manifest(write(
+        tmp / "ls-bound-manifest.json", json.dumps(
+            {"schema": 1, "targets": [], huge: "v"})))
+    snap_huge_active = _ls_snapshot(_LS_NOW - 60, [
+        {"name": "nail-bot.service", "active": "z" * 4096,
+         "enabled": "enabled", "unit_state": "enabled", "restart": "no",
+         "kind": "user"}])
+    verdict, observed = lsc.evaluate_target(_LS_MANIFEST["targets"][1],
+                                            snap_huge_active)
+    sends: list[str] = []
+    manifest, _ = lsc.load_manifest(
+        write(tmp / "ls-bound-manifest2.json", json.dumps(_LS_MANIFEST)))
+    assert manifest is not None
+    with override_attr(lsc, "STATE_PATH", tmp / "ls-bound-state.json"), \
+            override_attr(lsc, "SILENCE_PATH", tmp / "ls-bound-no-silence.txt"):
+        log = lsc.process(manifest, snap_huge_active, "", _LS_NOW,
+                          send=lambda t: (sends.append(t), (True, ""))[1])
+    check("ls_bounded_reflection",
+          len(schema_reason) < 200 and "обрезано" in schema_reason
+          and len(keys_reason) < 200
+          and verdict == "unknown" and len(observed) < 100
+          and sends == [] and all(len(line) <= 300 for line in log),
+          f"reasons={len(schema_reason)}/{len(keys_reason)} "
+          f"observed={len(observed)} verdict={verdict} sends={sends!r}")
+
+
 def probe_ls_alert_gate_fail_closed(lsc):
     """Доставка: fail closed без allowlist; HTTP attempt ≠ delivery accepted;
     причины не содержат значений токенов."""
@@ -4485,6 +4560,8 @@ def main() -> int:
     probe_ls_hysteresis_two_distinct(lsc, tmp)
     probe_ls_blind_diagnostics(lsc, tmp)
     probe_ls_silence_mutes_but_preserves(lsc, tmp)
+    probe_ls_marker_snapshot_is_blind_not_recovery(lsc, tmp)
+    probe_ls_bounded_reflection(lsc, tmp)
     probe_ls_alert_gate_fail_closed(lsc)
     probe_ls_ui_states(wh, lsc, tmp)
     probe_ls_keyboard_module_dependent(mon, wh)

@@ -45,8 +45,11 @@ LOCK_STALE_SECONDS = 240         # старше — считаем crash-ост�
 
 SUPPORTED_SOURCES = ("systemd_user",)
 SUPPORTED_EXPECTS = ("active",)
-INCONCLUSIVE_ACTIVE = ("activating", "deactivating", "reloading", "maintenance", "unknown")
 FAILED_ACTIVE = ("inactive", "failed")
+
+# Предел отражения содержимого снимка/манифеста в reason и сообщения:
+# данные источника — не доверенный текст, Telegram ограничен 4096.
+REFLECT_LIMIT = 64
 
 # Маркер отсутствия user-systemd из продюсера (service-status-snapshot.py):
 # schema-1 не доказывает полный обход юнитов, поэтому пустой/ошибочный источник
@@ -119,10 +122,10 @@ def load_manifest(path: Path | None = None) -> tuple[dict | None, str]:
     if not isinstance(manifest, dict):
         return None, "manifest is not an object"
     if manifest.get("schema") != SCHEMA or isinstance(manifest.get("schema"), bool):
-        return None, f"unsupported manifest schema {manifest.get('schema')!r}"
+        return None, f"unsupported manifest schema {_bounded(manifest.get('schema'))}"
     unknown_keys = sorted(set(manifest) - {"schema", "targets"})
     if unknown_keys:
-        return None, f"unsupported manifest keys: {', '.join(unknown_keys)}"
+        return None, f"unsupported manifest keys: {_bounded(', '.join(unknown_keys))}"
     targets = manifest.get("targets")
     if not isinstance(targets, list):
         return None, "manifest targets must be a list"
@@ -170,6 +173,12 @@ def _validate_target(target: object, index: int, seen_ids: set[str],
     return ""
 
 
+def _bounded(value: object, limit: int = REFLECT_LIMIT) -> str:
+    """Отражение недоверенных данных в текст для оператора — всегда bounded."""
+    text = str(value)
+    return text if len(text) <= limit else text[:limit] + "…[обрезано]"
+
+
 def _valid_service_name(name: str) -> bool:
     if not name.endswith(".service") or len(name) > 128:
         return False
@@ -206,7 +215,7 @@ def load_snapshot(path: Path | None = None, now: float | None = None
     if not isinstance(snapshot, dict):
         return None, "snapshot is not an object"
     if snapshot.get("schema") != SCHEMA or isinstance(snapshot.get("schema"), bool):
-        return None, f"unsupported snapshot schema {snapshot.get('schema')!r}"
+        return None, f"unsupported snapshot schema {_bounded(snapshot.get('schema'))}"
     generated_at = snapshot.get("generated_at")
     if not isinstance(generated_at, str) or not generated_at:
         return None, "snapshot generated_at missing"
@@ -250,7 +259,7 @@ def evaluate_target(target: dict, snapshot: dict) -> tuple[str, str]:
         # Отсутствие строки в ином валидном снимке — подозрение на удалённый
         # юнит, но не подтверждённый not-found: unknown, никакого алерта.
         return "unknown", "unit missing from snapshot"
-    observed = row.get("active", "unknown")
+    observed = _bounded(row.get("active", "unknown"))
     if target.get("expect") == "active":
         if observed == "active":
             return "healthy", observed
@@ -355,27 +364,31 @@ def process(manifest: dict, snapshot: dict, snapshot_reason: str, now: float,
     log: list[str] = []
 
     # Blind monitoring: только когда цели настроены. Две отдельные попытки
-    # сбора подряд без свежего валидного снимка — один дедуплицированный
+    # сбора подряд без свежего валидного наблюдения — один дедуплицированный
     # диагностика-эпизод; выход из слепоты — только по реальным новым данным.
+    # Маркерный снимок (user-systemd недоступен) — ВАЛИДНЫЙ schema-1 файл, но
+    # это НЕ наблюдение: он идёт в ту же ветку недоступного источника и не
+    # может ни сбросить счётчик, ни породить «восстановление» (ADR 0001).
     blind = state["blind"]
-    if snapshot is None:
+    if snapshot is None or user_source_unavailable(snapshot):
+        reason = snapshot_reason if snapshot is None else "source unavailable"
         blind["consecutive_unknown_runs"] = int(blind.get("consecutive_unknown_runs", 0)) + 1
         runs = blind["consecutive_unknown_runs"]
         if runs >= 2 and not blind.get("diag_sent"):
             text = (f"🖥 Локальные сервисы: наблюдение недоступно "
-                    f"({snapshot_reason}); попыток подряд: {runs}. "
+                    f"({reason}); попыток подряд: {runs}. "
                     "Статусы целей неизвестны, сервисные алерты приостановлены.")
             if muted:
                 log.append(f"blind diagnostic muted by silence (runs={runs})")
             else:
-                ok, reason = send(text)
+                ok, why = send(text)
                 if ok:
                     blind["diag_sent"] = True
                     log.append("blind diagnostic sent")
                 else:
-                    log.append(f"blind diagnostic not delivered: {reason}")
+                    log.append(f"blind diagnostic not delivered: {why}")
         for target in manifest["targets"]:
-            log.append(f"{target['id']}: unknown ({snapshot_reason})")
+            log.append(f"{target['id']}: unknown ({reason})")
         save_state(state)
         return log
 
