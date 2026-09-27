@@ -53,7 +53,7 @@ HERMES_DIR="${HERMES_DIR:-$HOME_DIR/.hermes}"
 echo "🔧 Развёртка hermes-argus"
 echo "   Хост: $HERMES_HOST:$HERMES_PORT"
 echo "   Hermes директория: $HERMES_DIR"
-echo "   Модули: CORE=$(module_enabled MODULE_CORE && echo ON || echo OFF) INTEGRATIONS=$(module_enabled MODULE_INTEGRATIONS && echo ON || echo OFF) TG_BOT=$(module_enabled MODULE_TG_BOT && echo ON || echo OFF) ANALYZER=$(module_enabled MODULE_ANALYZER && echo ON || echo OFF) HEARTBEAT=$(module_enabled MODULE_HEARTBEAT && echo ON || echo OFF) GH_HEARTBEAT=$(module_enabled MODULE_GH_HEARTBEAT && echo ON || echo OFF)"
+echo "   Модули: CORE=$(module_enabled MODULE_CORE && echo ON || echo OFF) INTEGRATIONS=$(module_enabled MODULE_INTEGRATIONS && echo ON || echo OFF) TG_BOT=$(module_enabled MODULE_TG_BOT && echo ON || echo OFF) ANALYZER=$(module_enabled MODULE_ANALYZER && echo ON || echo OFF) HEARTBEAT=$(module_enabled MODULE_HEARTBEAT && echo ON || echo OFF) GH_HEARTBEAT=$(module_enabled MODULE_GH_HEARTBEAT && echo ON || echo OFF) DISCORD_BOT=$(module_enabled MODULE_DISCORD_BOT && echo ON || echo OFF) LOCAL_SERVICES=$(module_enabled MODULE_LOCAL_SERVICES && echo ON || echo OFF)"
 echo ""
 
 # ── Функция: развернуть bash-шаблон ──────────────────────────────────────
@@ -112,8 +112,9 @@ CORE_HOME_SCRIPTS=(hermes-watchdog.sh auto-remediate.sh check-updates.sh \
                    network-guard.sh collect-metrics.sh send-monitoring-report.sh)
 CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.sh ssl-expiry-check.sh)
 
-# LOCAL_SERVICES: opt-in collector; UI/alerts arrive in a separate implementation PR.
-LOCAL_SERVICES_HERMES_SCRIPTS=(service-status-snapshot.py)
+# LOCAL_SERVICES: opt-in сборщик снимка + консьюмер (манифест, гистерезис,
+# алерты). UI/клавиатура — при MODULE_TG_BOT; переключение в /settings.
+LOCAL_SERVICES_HERMES_SCRIPTS=(service-status-snapshot.py local_services_check.py)
 CORE_SYSTEMD=(hermes-dashboard.service hermes-dashboard.service.d/memory-limits.conf \
               hermes-gateway.service hermes-gateway.service.d/memory-limits.conf)
 
@@ -142,6 +143,49 @@ ANALYZER_HERMES_SCRIPTS=(health-analyzer.py health_decay.py health_patterns.py h
 HEARTBEAT_HOME_SCRIPTS=(heartbeat.sh)
 
 # ── Функции развёртки ──────────────────────────────────────────────────────
+
+# ── LOCAL_SERVICES: owned-cron reconciliation (узкая, контракт docs PR #55) ─
+# deploy.sh исторически только ПЕЧАТАЛ cron-строки; установленная вручную
+# строка продолжала работать и после ON→OFF. Это единственный модуль, чью
+# строку deploy.sh сам ставит/снимает в живом crontab. Совпадение СТРОГО по
+# именам наших двух скриптов: посторонние строки и комментарии не трогаются.
+# Сбой записи crontab — fail closed: deploy прерывается, ложного «OFF готов»
+# не бывает. Другие модули остаются proposal-only (RR1 — отдельная задача).
+LOCAL_SERVICES_CRON_LINE="*/5 * * * * python3 $HERMES_DIR/scripts/service-status-snapshot.py --quiet >> $HERMES_DIR/logs/service-status.log 2>&1; set -a; source $HERMES_DIR/.env; set +a; python3 $HERMES_DIR/scripts/local_services_check.py >> $HERMES_DIR/logs/local-services.log 2>&1"
+
+reconcile_local_services_cron() {
+    local want="$1"
+    local current kept line removed=0 added=0
+    if ! command -v crontab >/dev/null 2>&1; then
+        if [ "$want" = "ON" ]; then
+            echo "   ⚠️  crontab недоступен — расписание НЕ установлено; поставь строку из $CRON_FILE вручную"
+        fi
+        return 0
+    fi
+    current="$(crontab -l 2>/dev/null || true)"
+    kept=""
+    while IFS= read -r line; do
+        if [[ "$line" == *service-status-snapshot.py* || "$line" == *local_services_check.py* ]]; then
+            removed=$((removed + 1))
+            continue
+        fi
+        kept+="$line"$'\n'
+    done <<< "$current"
+    if [ "$want" = "ON" ]; then
+        kept+="$LOCAL_SERVICES_CRON_LINE"$'\n'
+        added=1
+    fi
+    if [ "$removed" -gt 0 ] || [ "$added" -gt 0 ]; then
+        if printf '%s' "$kept" | crontab - 2>/dev/null; then
+            echo "   🕒 crontab: local-services расписание ${want} (снято строк: $removed)"
+        else
+            echo "   🚨 не удалось обновить crontab — fail closed, deploy прерван" >&2
+            return 1
+        fi
+    fi
+    return 0
+}
+
 deploy_scripts() {
     local dest_dir="$1"; shift
     local script
@@ -198,8 +242,20 @@ fi
 
 if module_enabled MODULE_LOCAL_SERVICES; then
     echo ""
-    echo "📁 [LOCAL_SERVICES] локальный снимок топологии..."
+    echo "📁 [LOCAL_SERVICES] локальный снимок топологии + консьюмер..."
     deploy_scripts "$HERMES_DIR/scripts" "${LOCAL_SERVICES_HERMES_SCRIPTS[@]}"
+    reconcile_local_services_cron "ON"
+    # Начальный сбор сразу после успешного деплоя — не ждём первый cron-тик.
+    if python3 "$HERMES_DIR/scripts/service-status-snapshot.py" --quiet; then
+        echo "   ✅ начальный снимок собран: $HERMES_DIR/state/service-status.json"
+    else
+        echo "   ⚠️  начальный снимок не удался — повторит cron-запуск через ≤5 мин (лог: service-status.log)"
+    fi
+else
+    # OFF: снять и ранее установленную вручную строку тоже (главный унаследованный
+    # разрыв PR #54). Установленные скрипты остаются, но без флага они no-op,
+    # а старый снимок читается как unknown (все читатели закрыты флагом).
+    reconcile_local_services_cron "OFF"
 fi
 
 if module_enabled MODULE_TG_BOT; then
@@ -341,8 +397,9 @@ CRON_TMP=$(mktemp)
         echo "0 6 * * * $HERMES_DIR/scripts/ssl-expiry-check.sh >> $HERMES_DIR/logs/ssl-expiry-cron.log 2>&1"
     fi
     if module_enabled MODULE_LOCAL_SERVICES; then
-        # Снимок — состояние, а не поток событий. Нет флага — нет фонового сбора.
-        echo "*/5 * * * * python3 $HERMES_DIR/scripts/service-status-snapshot.py --quiet >> $HERMES_DIR/logs/service-status.log 2>&1"
+        # Один последовательный джоб: снимок → консьюмер (не конкурирующие cron'ы).
+        # Креденшелы алертов — из ~/.hermes/.env (set -a, значения не в argv).
+        echo "$LOCAL_SERVICES_CRON_LINE"
     fi
     if module_enabled MODULE_INTEGRATIONS; then
         echo "*/10 * * * * $HOME_DIR/scripts/integration-discover-wrapper.sh >> $HERMES_DIR/logs/integration-discover-cron.log 2>&1"

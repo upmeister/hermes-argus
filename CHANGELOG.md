@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opt-in `MODULE_LOCAL_SERVICES` monitoring (OFF by default): deploy now ships a
+  read-only consumer alongside the topology snapshot producer, installs a single
+  sequential cron job (snapshot every 5 minutes followed by the check), and
+  reconciles its own crontab lines on ON→OFF so a previously hand-installed
+  collector line cannot outlive the flag while unrelated operator crontab
+  entries are preserved. The consumer compares an operator-authored
+  `~/.config/hermes-argus/local-services.json` manifest (strict schema-1
+  validation, no auto-discovery) against the cached snapshot with
+  healthy/failed/unknown verdicts, alerts once after two distinct fresh
+  snapshots show a configured user unit inactive/failed, treats stale, missing
+  or unreadable snapshots as unknown that never recovers or escalates an alert,
+  emits a deduplicated blind-monitoring diagnostic after two separate
+  collection attempts, and reports through the existing Telegram delivery
+  (fail-closed without `WATCHDOG_ALLOWED_USER_ID`; silence mutes delivery but
+  never fabricates recovery). The Telegram bot gains a `/services` view and a
+  module-gated reply-keyboard button, and toggles now re-send the reply
+  keyboard after a successful deploy (the previous completion report crashed
+  silently). Hosted topology (containers, listeners, addresses) never appears
+  in alerts or bot output.
+
 - Inventory the ordered Hermes `fallback_providers` chain, append unique legacy
   `fallback_model` entries, and keep route metadata sanitized. This is static
   configuration evidence, not a claim about the route used for a request.

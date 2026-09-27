@@ -969,7 +969,7 @@ def handle_settings() -> str:
 
 
 MODULE_NAMES = ("CORE", "INTEGRATIONS", "TG_BOT", "ANALYZER",
-                "HEARTBEAT", "GH_HEARTBEAT", "DISCORD_BOT")
+                "HEARTBEAT", "GH_HEARTBEAT", "DISCORD_BOT", "LOCAL_SERVICES")
 
 
 def _config_env_path() -> str:
@@ -1033,20 +1033,128 @@ def _set_config_module(key: str, value: str) -> str:
     return path
 
 
+# ── Локальные сервисы (MODULE_LOCAL_SERVICES, docs PR #55) ────────────────
+
+LOCAL_SERVICES_LABEL = "🖥 Локальные сервисы"
+_LS_CHECK_PATH = "~/.hermes/scripts/local_services_check.py"
+
+
+def local_services_enabled() -> bool:
+    """Эффективное состояние модуля из config.env (каждый вызов — свежее
+    чтение: тоггл из бота перезапускает deploy, но не poller)."""
+    for cand in (os.path.expanduser("~/hermes-argus/config.env"),
+                 os.path.expanduser("~/hermes-vps-kit/config.env")):
+        if os.path.exists(cand):
+            try:
+                for line in open(cand, encoding="utf-8", errors="replace"):
+                    m = re.match(r'\s*MODULE_LOCAL_SERVICES\s*=\s*"?(\w+)"?', line)
+                    if m:
+                        return m.group(1).upper() == "ON"
+            except OSError:
+                pass
+            break
+    return False
+
+
+def _load_local_services_module():
+    """local_services_check живёт рядом с продюсером (~/.hermes/scripts,
+    деплой MODULE_LOCAL_SERVICES). Прямой import работает в poller-процессе;
+    в остальных — importlib по каноническому пути. None → модуль не
+    установлен: bounded error, не crash."""
+    try:
+        import local_services_check  # noqa: PLC0415 — ленивый опциональный модуль
+        return local_services_check
+    except ImportError:
+        pass
+    import importlib.util
+    path = os.path.expanduser(_LS_CHECK_PATH)
+    if not os.path.exists(path):
+        return None
+    spec = importlib.util.spec_from_file_location("local_services_check", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def handle_local_services() -> str:
+    """/services: только явно настроенные цели, возраст снимка, observed
+    systemd-статус и понятная причина unknown (контракт §5). Никакого сырого
+    JSON, слушателей, контейнеров или адресов. Fail closed без
+    WATCHDOG_ALLOWED_USER_ID — статус хоста чувствителен."""
+    if not ALLOWED_USER_ID:
+        return ("🖥 Локальные сервисы: доступ запрещён политикой модуля — "
+                "задай WATCHDOG_ALLOWED_USER_ID (например, через /setsecret) "
+                "и перезапусти poller.")
+    mod = _load_local_services_module()
+    if mod is None:
+        return ("🖥 Локальные сервисы: консьюмер не установлен "
+                "(включи MODULE_LOCAL_SERVICES и запусти deploy).")
+    manifest, manifest_reason = mod.load_manifest()
+    if manifest is None:
+        if manifest_reason:
+            return ("🖥 Локальные сервисы: ⚠️ ошибка конфигурации манифеста — "
+                    f"{manifest_reason}")
+        return ("🖥 Локальные сервисы: цели ещё не настроены.\n"
+                "Создай ~/.config/hermes-argus/local-services.json "
+                "(schema 1, массив targets: id/label/source/name/expect).\n"
+                f"Инструкция: {mod.DOCS_URL}")
+    now = _time.time()
+    snapshot, snapshot_reason = mod.load_snapshot(now=now)
+    if snapshot is None:
+        return ("🖥 Локальные сервисы: ⚠️ статус неизвестен — "
+                f"{snapshot_reason}.\n"
+                "Это состояние наблюдения, а не сбой сервиса; "
+                "сбор идёт cron-заданием каждые 5 минут.")
+    try:
+        generated = datetime.fromisoformat(snapshot["generated_at"])
+        age_min = max(int((now - generated.timestamp()) // 60), 0)
+        stamp = generated.astimezone().strftime("%H:%M")
+    except (ValueError, TypeError, OSError):
+        return "🖥 Локальные сервисы: ⚠️ снимок с некорректным generated_at — unknown."
+    lines = [f"🖥 Локальные сервисы (снимок {stamp}, {age_min} мин назад):"]
+    if mod.user_source_unavailable(snapshot):
+        lines.append("⚠️ источник user-systemd недоступен — статусы неизвестны")
+    for target in manifest["targets"]:
+        verdict, observed = mod.evaluate_target(target, snapshot)
+        icon = {"healthy": "✅", "failed": "❌"}.get(verdict, "⚠️")
+        note = " — юнита нет в снимке (возможно, удалён)" \
+            if observed == "unit missing from snapshot" else ""
+        lines.append(f"{icon} {target['label']} ({target['name']}): "
+                     f"systemd {observed}{note}")
+    lines.append("systemd-статус — не оценка приложения; алерт — после двух "
+                 "разных свежих снимков с failed.")
+    return "\n".join(lines)
+
+
+# Poller регистрирует здесь свою динамическую клавиатуру (module-dependent
+# navigation). После УСПЕШНОГО применения тоггла бот отправляет НОВОЕ
+# сообщение с новым ReplyKeyboardMarkup: запись в config.env и exit deploy
+# сами по себе существующую клавиатуру в чате не убирают (контракт §5).
+KEYBOARD_REFRESH = None
+
+
+def _deploy_worker(chat_send, cfg_path: str) -> None:
+    """Синхронное тело фонового деплоя (для тестов — без потоков)."""
+    try:
+        r = subprocess.run(["bash", "deploy.sh", cfg_path],
+                           cwd=os.path.dirname(cfg_path) or ".",
+                           capture_output=True, text=True, timeout=300)
+        NL = chr(10)
+        tail = NL.join((r.stdout or "").strip().splitlines()[-6:])
+        status = "✅ deploy завершён" if r.returncode == 0 else f"❌ deploy exit {r.returncode}"
+        markup = KEYBOARD_REFRESH() if r.returncode == 0 and callable(KEYBOARD_REFRESH) else None
+        chat_send(f"{status}{NL}{tail}", reply_markup=markup)
+    except Exception as e:
+        chat_send(f"❌ deploy error: {e}")
+
+
 def _run_deploy_async(chat_send, cfg_path: str) -> None:
-    """Background deploy (S2 apply). Reports the output tail to the chat."""
-    def worker():
-        try:
-            r = subprocess.run(["bash", "deploy.sh", cfg_path],
-                               cwd=os.path.dirname(cfg_path) or ".",
-                               capture_output=True, text=True, timeout=300)
-            NL = chr(10)
-            tail = NL.join((r.stdout or "").strip().splitlines()[-6:])
-            status = "✅ deploy завершён" if r.returncode == 0 else f"❌ deploy exit {r.returncode}"
-            chat_send(f"{status}{NL}{tail}", silent=True)
-        except Exception as e:
-            chat_send(f"❌ deploy error: {e}", silent=True)
-    threading.Thread(target=worker, daemon=True).start()
+    """Background deploy (S2 apply). Reports the output tail to the chat;
+    on success attaches the refreshed reply keyboard to the completion
+    message. chat_send — poller's send_message(text, reply_markup=None):
+    параметра silent у него нет, прежний silent=True ронял worker молча."""
+    threading.Thread(target=_deploy_worker, args=(chat_send, cfg_path),
+                     daemon=True).start()
 
 
 def handle_secret_value(key: str, value: str) -> tuple:

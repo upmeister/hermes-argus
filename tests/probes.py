@@ -3561,8 +3561,12 @@ def probe_rr0a_webhook_heartbeat_paths(wh, tmp: Path):
 
 
 def probe_ux0_bot_interaction(mon, wh: object):
-    """UX0 native keyboard, de-duplicated menu, alert keyboard, and poll auth."""
-    keyboard = mon.reply_keyboard()
+    """UX0 native keyboard, de-duplicated menu, alert keyboard, and poll auth.
+
+    Клавиатура стала module-dependent (local-services); UX0-инвариант проверяем
+    при выключенном модуле, независимо от config.env на хосте."""
+    with override_attr(wh, "local_services_enabled", lambda: False):
+        keyboard = mon.reply_keyboard()
     buttons = [button["text"] for row in keyboard["keyboard"] for button in row]
     settings_index = buttons.index("⚙️ Настройки")
     maintenance_index = buttons.index("🛠 Обслуживание")
@@ -3725,6 +3729,716 @@ def probe_ux0_bot_interaction(mon, wh: object):
           f"commands={captured['commands']} callbacks={captured['callbacks']}")
 
 
+# ── Локальные сервисы (MODULE_LOCAL_SERVICES): consumer, гистерезис, UI, cron ──
+
+_LS_MANIFEST = {
+    "schema": 1,
+    "targets": [
+        {"id": "2ch-monitor", "label": "2ch monitor", "source": "systemd_user",
+         "name": "2ch-monitor.service", "expect": "active"},
+        {"id": "nail-bot", "label": "Nail bot", "source": "systemd_user",
+         "name": "nail-bot.service", "expect": "active"},
+    ],
+}
+_LS_NOW = 1_700_000_000.0
+# Заведомо чувствительное содержимое снимка: ни UI, ни алерты не имеют права
+# его показывать (контракт §5: никакого сырого JSON/слушателей/контейнеров).
+_LS_SECRET_ADDR = "10.99.99.99"
+_LS_SECRET_PROC = "secretproc"
+
+
+def _ls_row(name: str, active: str) -> dict:
+    return {"name": name, "active": active, "enabled": "enabled",
+            "unit_state": "enabled", "restart": "no", "kind": "user"}
+
+
+def _ls_snapshot(generated_epoch: float, user_rows: list) -> dict:
+    from datetime import datetime, timezone
+    return {
+        "schema": 1,
+        "generated_at": datetime.fromtimestamp(
+            generated_epoch, timezone.utc).isoformat(timespec="seconds"),
+        "services": {"user": user_rows, "system": []},
+        "containers": [{"name": _LS_SECRET_PROC, "state": "running"}],
+        "listeners": [{"port": 9999, "addr": f"{_LS_SECRET_ADDR}:9999",
+                       "process": _LS_SECRET_PROC}],
+        "resources": {"kernel": "leak-kernel", "mem_total_mb": 1},
+        "reboot_ready": {"reboot_risk": "ok"},
+    }
+
+
+def _ls_iso(epoch: float) -> str:
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds")
+
+
+def probe_ls_module_flag_default_off(lsc):
+    """Флаг MODULE_LOCAL_SERVICES: OFF по умолчанию; env главнее config.env
+    (deploy экспортирует config.env, cron видит только config.env)."""
+    config = write(Path(tempfile.mkdtemp(prefix="ls-flag-")) / "config.env",
+                   'MODULE_LOCAL_SERVICES="ON"\n')
+    saved = os.environ.pop("MODULE_LOCAL_SERVICES", None)
+    try:
+        with override_attr(lsc, "config_env_paths",
+                           lambda: [Path(tempfile.mkdtemp(prefix="ls-none-")) / "nope.env"]):
+            check("ls_flag_default_off", lsc.module_enabled() is False)
+        with override_attr(lsc, "config_env_paths", lambda: [config]):
+            check("ls_flag_config_on", lsc.module_enabled() is True)
+            os.environ["MODULE_LOCAL_SERVICES"] = "OFF"
+            check("ls_flag_env_wins_off", lsc.module_enabled() is False)
+            os.environ["MODULE_LOCAL_SERVICES"] = "ON"
+            check("ls_flag_env_wins_on", lsc.module_enabled() is True)
+    finally:
+        if saved is None:
+            os.environ.pop("MODULE_LOCAL_SERVICES", None)
+        else:
+            os.environ["MODULE_LOCAL_SERVICES"] = saved
+
+
+def probe_ls_manifest_validation(lsc, tmp: Path):
+    """Strict v1-манифест: отсутствие/пустота — unconfigured (не «всё
+    здорово»), любая невалидность — configuration error, ни то ни другое
+    не healthy."""
+    m_missing = lsc.load_manifest(tmp / "ls-manifest-absent.json")
+    check("ls_manifest_missing_unconfigured", m_missing == (None, ""), str(m_missing))
+    m_empty = lsc.load_manifest(write(tmp / "ls-manifest-empty.json", "   \n"))
+    check("ls_manifest_empty_unconfigured", m_empty == (None, ""), str(m_empty))
+    manifest, reason = lsc.load_manifest(
+        write(tmp / "ls-manifest-good.json",
+              json.dumps(_LS_MANIFEST, ensure_ascii=False)))
+    check("ls_manifest_valid",
+          manifest is not None and reason == "" and len(manifest["targets"]) == 2,
+          reason)
+
+    dup_id = json.dumps({"schema": 1, "targets": [
+        _LS_MANIFEST["targets"][0], dict(_LS_MANIFEST["targets"][0])]},
+        ensure_ascii=False)
+    dup_unit = json.dumps({"schema": 1, "targets": [
+        _LS_MANIFEST["targets"][0],
+        {**_LS_MANIFEST["targets"][1], "id": "other", "name": "2ch-monitor.service"}]},
+        ensure_ascii=False)
+    bad: dict[str, str] = {
+        "unknown_key": '{"schema": 1, "targets": [], "extra": 1}',
+        "schema2": '{"schema": 2, "targets": []}',
+        "schema_bool": '{"schema": true, "targets": []}',
+        "targets_not_list": '{"schema": 1, "targets": {}}',
+        "dup_id": dup_id,
+        "dup_unit": dup_unit,
+        "name_no_suffix": json.dumps({"schema": 1, "targets": [
+            {**_LS_MANIFEST["targets"][0], "name": "2ch-monitor"}]}),
+        "name_other_type": json.dumps({"schema": 1, "targets": [
+            {**_LS_MANIFEST["targets"][0], "name": "2ch-monitor.timer"}]}),
+        "name_traversal": json.dumps({"schema": 1, "targets": [
+            {**_LS_MANIFEST["targets"][0], "name": "../evil.service"}]}),
+        "name_space": json.dumps({"schema": 1, "targets": [
+            {**_LS_MANIFEST["targets"][0], "name": "nail bot.service"}]}),
+        "expect_unsupported": json.dumps({"schema": 1, "targets": [
+            {**_LS_MANIFEST["targets"][0], "expect": "running"}]}),
+        "source_unsupported": json.dumps({"schema": 1, "targets": [
+            {**_LS_MANIFEST["targets"][0], "source": "docker"}]}),
+        "label_empty": json.dumps({"schema": 1, "targets": [
+            {**_LS_MANIFEST["targets"][0], "label": "  "}]}),
+        "label_control_char": json.dumps({"schema": 1, "targets": [
+            {**_LS_MANIFEST["targets"][0], "label": "a\x01b"}]}, ensure_ascii=False),
+        "not_json": "{broken",
+        "not_object": "[1,2]",
+        "target_not_object": '{"schema": 1, "targets": ["x"]}',
+        "extra_target_key": json.dumps({"schema": 1, "targets": [
+            {**_LS_MANIFEST["targets"][0], "command": "rm -rf /"}]}),
+    }
+    rejects = {}
+    for name, body in bad.items():
+        _, reject_reason = lsc.load_manifest(
+            write(tmp / f"ls-manifest-bad-{name}.json", body))
+        rejects[name] = reject_reason
+    check("ls_manifest_rejects_invalid", all(rejects.values()), str(rejects))
+
+    _, oversize_reason = lsc.load_manifest(write(
+        tmp / "ls-manifest-oversize.json",
+        '{"schema": 1, "targets": [], "pad": "' + "x" * (64 * 1024 + 10) + '"}'))
+    check("ls_manifest_oversize_rejected", "exceeds" in oversize_reason,
+          oversize_reason)
+    raw_path = tmp / "ls-manifest-nonutf8.json"
+    raw_path.write_bytes(b'{"schema": 1, "targets": ["\xff"]}')
+    _, nonutf8_reason = lsc.load_manifest(raw_path)
+    check("ls_manifest_nonutf8_rejected", "UTF-8" in nonutf8_reason, nonutf8_reason)
+
+
+def probe_ls_snapshot_validation(lsc, tmp: Path):
+    """Снимок: bounded read, schema==1, tz-aware generated_at без будущего,
+    freshness 12 минут, структурная валидация services.user."""
+    def body(generated: str, rows: list | object = None) -> str:
+        if rows is None:
+            rows = [_ls_row("2ch-monitor.service", "active")]
+        return json.dumps({"schema": 1, "generated_at": generated,
+                           "services": {"user": rows, "system": []}},
+                          ensure_ascii=False)
+
+    snapshot, reason = lsc.load_snapshot(
+        write(tmp / "ls-snap-good.json", body(_ls_iso(_LS_NOW - 60))), now=_LS_NOW)
+    check("ls_snapshot_valid_fresh", snapshot is not None and reason == "", reason)
+
+    from datetime import datetime, timezone
+    naive = datetime.fromtimestamp(_LS_NOW - 60, timezone.utc) \
+        .replace(tzinfo=None).isoformat(timespec="seconds")
+    bad = {
+        "stale": body(_ls_iso(_LS_NOW - 13 * 60)),
+        "future": body(_ls_iso(_LS_NOW + 600)),
+        "naive_ts": body(naive),
+        "no_ts": '{"schema": 1, "services": {"user": [], "system": []}}',
+        "schema2": body(_ls_iso(_LS_NOW - 60)).replace('"schema": 1', '"schema": 2'),
+        "bad_rows": body(_ls_iso(_LS_NOW - 60), rows=["not-a-dict"]),
+        "row_missing_fields": body(_ls_iso(_LS_NOW - 60),
+                                   rows=[{"name": "x.service"}]),
+        "services_missing": '{"schema": 1, "generated_at": "' + _ls_iso(_LS_NOW - 60) + '"}',
+        "not_object": '[]',
+        "not_json": "{oops",
+    }
+    rejects = {}
+    for name, text in bad.items():
+        _, reject_reason = lsc.load_snapshot(
+            write(tmp / f"ls-snap-bad-{name}.json", text), now=_LS_NOW)
+        rejects[name] = reject_reason
+    check("ls_snapshot_rejects_invalid", all(rejects.values()), str(rejects))
+
+    m_missing = lsc.load_snapshot(tmp / "ls-snap-absent.json", now=_LS_NOW)
+    check("ls_snapshot_missing_unknown", m_missing == (None, "snapshot missing"),
+          str(m_missing))
+    _, oversize_reason = lsc.load_snapshot(write(
+        tmp / "ls-snap-oversize.json",
+        '{"schema": 1, "generated_at": "' + _ls_iso(_LS_NOW - 60)
+        + '", "services": {"user": [], "system": []}, "pad": "'
+        + "x" * (2 * 1024 * 1024 + 10) + '"}'), now=_LS_NOW)
+    check("ls_snapshot_oversize_rejected", "exceeds" in oversize_reason,
+          oversize_reason)
+
+
+def probe_ls_verdicts(lsc):
+    """Вердикты: healthy/failed/unknown строго по контракту; недоступный
+    источник user-systemd — unknown, даже если строка юнита говорит inactive."""
+    snap = _ls_snapshot(_LS_NOW - 60, [
+        _ls_row("2ch-monitor.service", "active"),
+        _ls_row("nail-bot.service", "inactive"),
+        _ls_row("third.service", "activating"),
+    ])
+    t2ch, tnail = _LS_MANIFEST["targets"]
+    verdict, observed = lsc.evaluate_target(t2ch, snap)
+    check("ls_verdict_healthy", (verdict, observed) == ("healthy", "active"),
+          f"{verdict}/{observed}")
+    verdict, observed = lsc.evaluate_target(tnail, snap)
+    check("ls_verdict_failed", (verdict, observed) == ("failed", "inactive"),
+          f"{verdict}/{observed}")
+    t3 = {**tnail, "id": "third", "name": "third.service"}
+    verdict, observed = lsc.evaluate_target(t3, snap)
+    check("ls_verdict_inconclusive_unknown",
+          (verdict, observed) == ("unknown", "activating"), f"{verdict}/{observed}")
+    ghost = {**tnail, "id": "ghost", "name": "ghost.service"}
+    verdict, observed = lsc.evaluate_target(ghost, snap)
+    check("ls_verdict_missing_unknown",
+          (verdict, observed) == ("unknown", "unit missing from snapshot"),
+          f"{verdict}/{observed}")
+    marker = _ls_snapshot(_LS_NOW - 60, [
+        _ls_row(lsc.USER_SYSTEMD_UNAVAILABLE, "unknown"),
+        _ls_row("nail-bot.service", "inactive"),
+    ])
+    verdict, observed = lsc.evaluate_target(tnail, marker)
+    check("ls_verdict_unavailable_source_not_failed",
+          (verdict, observed) == ("unknown", "source unavailable"),
+          f"{verdict}/{observed}")
+    empty = _ls_snapshot(_LS_NOW - 60, [])
+    verdict, observed = lsc.evaluate_target(t2ch, empty)
+    check("ls_verdict_empty_enumeration_unknown",
+          verdict == "unknown" and observed == "unit missing from snapshot",
+          f"{verdict}/{observed}")
+
+
+def probe_ls_hysteresis_two_distinct(lsc, tmp: Path):
+    """Алерт — после двух подряд РАЗНЫХ свежих снимков с failed; повторное
+    чтение того же снимка — одно наблюдение; unknown не снимает и не
+    усиливает; один healthy — одно восстановление и сброс. Содержимое снимка
+    (адреса/контейнеры) не протекает в сообщения."""
+    state_file = tmp / "ls-hyst-state.json"
+    sends: list[str] = []
+
+    def send(text: str) -> tuple[bool, str]:
+        sends.append(text)
+        return True, ""
+
+    manifest, _ = lsc.load_manifest(
+        write(tmp / "ls-hyst-manifest.json", json.dumps(_LS_MANIFEST)))
+    assert manifest is not None
+    snap_fail_a = _ls_snapshot(_LS_NOW - 600, [
+        _ls_row("2ch-monitor.service", "active"),
+        _ls_row("nail-bot.service", "inactive")])
+    snap_fail_b = _ls_snapshot(_LS_NOW - 300, [
+        _ls_row("2ch-monitor.service", "active"),
+        _ls_row("nail-bot.service", "failed")])
+    snap_ok = _ls_snapshot(_LS_NOW - 60, [
+        _ls_row("2ch-monitor.service", "active"),
+        _ls_row("nail-bot.service", "active")])
+    with override_attr(lsc, "STATE_PATH", state_file), \
+            override_attr(lsc, "SILENCE_PATH", tmp / "ls-hyst-no-silence.txt"):
+        lsc.process(manifest, snap_fail_a, "", _LS_NOW, send=send)
+        lsc.process(manifest, snap_fail_a, "", _LS_NOW, send=send)
+        after_same = len(sends)
+        lsc.process(manifest, snap_fail_b, "", _LS_NOW, send=send)
+        after_alert = len(sends)
+        lsc.process(manifest, snap_fail_b, "", _LS_NOW, send=send)
+        after_repeat = len(sends)
+        lsc.process(manifest, None, "snapshot missing", _LS_NOW, send=send)
+        after_unknown = len(sends)
+        state_unknown = json.loads(state_file.read_text(encoding="utf-8"))
+        lsc.process(manifest, snap_ok, "", _LS_NOW, send=send)
+        after_recovery = len(sends)
+        lsc.process(manifest, snap_ok, "", _LS_NOW, send=send)
+        after_recovery_repeat = len(sends)
+        state_final = json.loads(state_file.read_text(encoding="utf-8"))
+    leaked = [s for s in sends
+              if _LS_SECRET_ADDR in s or _LS_SECRET_PROC in s or "leak-kernel" in s]
+    check("ls_hysteresis_two_distinct",
+          after_same == 0 and after_alert == 1 and after_repeat == 1
+          and after_unknown == 1
+          and "❌" in sends[0] and "Nail bot" in sends[0]
+          and after_recovery == 2 and "✅" in sends[1]
+          and after_recovery_repeat == 2
+          and state_unknown["targets"]["nail-bot"]["alerted"] is True
+          and state_final["targets"]["nail-bot"]["alerted"] is False
+          and state_final["targets"]["nail-bot"]["failed_ids"] == []
+          and not leaked,
+          f"sends={sends!r} unknown_state={state_unknown['targets']['nail-bot']!r}")
+
+
+def probe_ls_blind_diagnostics(lsc, tmp: Path):
+    """Слепое наблюдение при настроенных целях: диагностика после двух
+    отдельных попыток сбора, дедуп внутри эпизода, выход — по реальным новым
+    данным; unconfigured-манифест не порождает ни алертов, ни диагностики."""
+    state_file = tmp / "ls-blind-state.json"
+    sends: list[str] = []
+
+    def send(text: str) -> tuple[bool, str]:
+        sends.append(text)
+        return True, ""
+
+    manifest, _ = lsc.load_manifest(
+        write(tmp / "ls-blind-manifest.json", json.dumps(_LS_MANIFEST)))
+    assert manifest is not None
+    snap_ok = _ls_snapshot(_LS_NOW - 60, [
+        _ls_row("2ch-monitor.service", "active"),
+        _ls_row("nail-bot.service", "active")])
+    with override_attr(lsc, "STATE_PATH", state_file), \
+            override_attr(lsc, "SILENCE_PATH", tmp / "ls-blind-no-silence.txt"):
+        lsc.process(manifest, None, "snapshot missing", _LS_NOW, send=send)
+        after_first = len(sends)
+        lsc.process(manifest, None, "snapshot missing", _LS_NOW, send=send)
+        after_second = len(sends)
+        lsc.process(manifest, None, "snapshot missing", _LS_NOW, send=send)
+        after_third = len(sends)
+        lsc.process(manifest, snap_ok, "", _LS_NOW, send=send)
+        after_restore = len(sends)
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        lsc.process(manifest, None, "snapshot missing", _LS_NOW, send=send)
+        lsc.process(manifest, None, "snapshot missing", _LS_NOW, send=send)
+        after_new_episode = len(sends)
+    check("ls_blind_diagnostics",
+          after_first == 0 and after_second == 1 and after_third == 1
+          and after_restore == 2 and "недоступно" in sends[0]
+          and "восстановлено" in sends[1]
+          and state["blind"] == {"consecutive_unknown_runs": 0, "diag_sent": False}
+          and after_new_episode == 3,
+          f"sends={sends!r} state={state['blind']!r}")
+
+    # Unconfigured-манифест: main() выходит чисто ДО обработки — без state,
+    # без алертов, без диагностики (контракт: no alert for manifest absent/empty).
+    empty_manifest_path = tmp / "ls-blind-empty.json"
+    write(empty_manifest_path, '{"schema": 1, "targets": []}')
+    empty_manifest, empty_reason = lsc.load_manifest(empty_manifest_path)
+    empty_state = tmp / "ls-blind-empty-state.json"
+    saved_flag = os.environ.pop("MODULE_LOCAL_SERVICES", None)
+    sends.clear()
+    try:
+        os.environ["MODULE_LOCAL_SERVICES"] = "ON"
+        with override_attr(lsc, "MANIFEST_PATH", empty_manifest_path), \
+                override_attr(lsc, "STATE_PATH", empty_state), \
+                override_attr(lsc, "LOCK_PATH", tmp / "ls-blind-empty.lock"), \
+                override_attr(lsc, "SILENCE_PATH", tmp / "ls-blind-no-silence.txt"):
+            rc = lsc.main([])
+    finally:
+        if saved_flag is None:
+            os.environ.pop("MODULE_LOCAL_SERVICES", None)
+        else:
+            os.environ["MODULE_LOCAL_SERVICES"] = saved_flag
+    check("ls_unconfigured_no_alerts_no_diag",
+          empty_manifest is None and empty_reason == ""
+          and rc == 0 and sends == [] and not empty_state.exists(),
+          f"rc={rc} sends={sends!r} state_exists={empty_state.exists()}")
+
+
+def probe_ls_silence_mutes_but_preserves(lsc, tmp: Path):
+    """Тишина глушит отправку, но не наблюдение: после тишины свежий failed
+    алертит ровно один раз; deferred recovery доставляется после тишины."""
+    import time
+    state_file = tmp / "ls-silence-state.json"
+    silence_file = tmp / "ls-silence-until.txt"
+    sends: list[str] = []
+
+    def send(text: str) -> tuple[bool, str]:
+        sends.append(text)
+        return True, ""
+
+    real_now = time.time()
+    manifest, _ = lsc.load_manifest(
+        write(tmp / "ls-silence-manifest.json", json.dumps(_LS_MANIFEST)))
+    assert manifest is not None
+    snap_fail_a = _ls_snapshot(_LS_NOW - 600, [
+        _ls_row("2ch-monitor.service", "active"),
+        _ls_row("nail-bot.service", "inactive")])
+    snap_fail_b = _ls_snapshot(_LS_NOW - 300, [
+        _ls_row("2ch-monitor.service", "active"),
+        _ls_row("nail-bot.service", "failed")])
+    snap_ok = _ls_snapshot(_LS_NOW - 60, [
+        _ls_row("2ch-monitor.service", "active"),
+        _ls_row("nail-bot.service", "active")])
+    with override_attr(lsc, "STATE_PATH", state_file), \
+            override_attr(lsc, "SILENCE_PATH", silence_file):
+        silence_file.write_text(str(int(real_now + 3600)), encoding="utf-8")
+        lsc.process(manifest, snap_fail_a, "", _LS_NOW, send=send)
+        lsc.process(manifest, snap_fail_b, "", _LS_NOW, send=send)
+        muted_alerts = len(sends)
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        silence_file.write_text(str(int(real_now - 10)), encoding="utf-8")
+        lsc.process(manifest, snap_fail_b, "", _LS_NOW, send=send)
+        post_silence = len(sends)
+        lsc.process(manifest, snap_ok, "", _LS_NOW, send=send)
+        recovery = len(sends)
+        state_done = json.loads(state_file.read_text(encoding="utf-8"))
+    check("ls_silence_mutes_but_preserves",
+          muted_alerts == 0
+          and state["targets"]["nail-bot"]["alerted"] is False
+          and len(state["targets"]["nail-bot"]["failed_ids"]) == 2
+          and post_silence == 1 and "❌" in sends[0]
+          and recovery == 2 and "✅" in sends[1]
+          and state_done["targets"]["nail-bot"]["alerted"] is False,
+          f"sends={sends!r} state={state['targets']['nail-bot']!r}")
+
+
+def probe_ls_alert_gate_fail_closed(lsc):
+    """Доставка: fail closed без allowlist; HTTP attempt ≠ delivery accepted;
+    причины не содержат значений токенов."""
+    keys = ("WATCHDOG_BOT_TOKEN", "WATCHDOG_CHAT_ID", "WATCHDOG_ALLOWED_USER_ID")
+    saved = {k: os.environ.pop(k, None) for k in keys}
+    payloads: list[dict] = []
+    try:
+        ok_none, reason_none = lsc.send_telegram("probe")
+        check("ls_alert_fail_closed_no_allowlist",
+              ok_none is False and "ALLOWED_USER_ID" in reason_none, reason_none)
+        os.environ["WATCHDOG_BOT_TOKEN"] = "DUMMY_SECRET_TOKEN"
+        os.environ["WATCHDOG_CHAT_ID"] = "DUMMY_CHAT"
+        ok_no_allowed, reason_no_allowed = lsc.send_telegram("probe")
+        check("ls_alert_fail_closed_token_without_allowlist",
+              ok_no_allowed is False and "ALLOWED_USER_ID" in reason_no_allowed,
+              reason_no_allowed)
+        os.environ["WATCHDOG_ALLOWED_USER_ID"] = "123"
+
+        def fake_http(token, payload):
+            payloads.append(payload)
+            return {"ok": True}
+
+        with override_attr(lsc, "_telegram_http", fake_http):
+            ok_sent, reason_sent = lsc.send_telegram("probe")
+        check("ls_alert_delivered_requires_ok",
+              ok_sent is True and reason_sent == ""
+              and payloads and payloads[0]["text"] == "probe"
+              and payloads[0]["chat_id"] == "DUMMY_CHAT", reason_sent)
+        with override_attr(lsc, "_telegram_http",
+                           lambda token, payload: {"ok": False}):
+            ok_rejected, reason_rejected = lsc.send_telegram("probe")
+        check("ls_alert_http_rejected_is_gap",
+              ok_rejected is False and "accept" in reason_rejected, reason_rejected)
+
+        def boom(token, payload):
+            raise OSError("net down")
+
+        with override_attr(lsc, "_telegram_http", boom):
+            ok_error, reason_error = lsc.send_telegram("probe")
+        check("ls_alert_transport_error_is_gap",
+              ok_error is False and "telegram send failed" in reason_error,
+              reason_error)
+        reasons = reason_none + reason_no_allowed + reason_rejected + reason_error
+        check("ls_alert_reasons_no_token", "DUMMY_SECRET_TOKEN" not in reasons,
+              reasons)
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def probe_ls_ui_states(wh, lsc, tmp: Path):
+    """/services: fail-closed гейт, onboarding, конфиг-ошибка, blind, свежий
+    смешанный статус; топология в вывод не протекает."""
+    import time
+    ui_now = time.time()
+    manifest_file = write(tmp / "ls-ui-manifest.json",
+                          json.dumps(_LS_MANIFEST, ensure_ascii=False))
+    snap_fresh = _ls_snapshot(ui_now - 120, [
+        _ls_row("2ch-monitor.service", "active"),
+        _ls_row("nail-bot.service", "inactive")])
+    snap_file = write(tmp / "ls-ui-snap.json", json.dumps(snap_fresh, ensure_ascii=False))
+    absent_manifest = tmp / "ls-ui-absent-manifest.json"
+    absent_snap = tmp / "ls-ui-absent-snap.json"
+
+    with override_attr(lsc, "MANIFEST_PATH", absent_manifest), \
+            override_attr(lsc, "SNAPSHOT_PATH", absent_snap), \
+            override_attr(wh, "_load_local_services_module", lambda: lsc), \
+            override_attr(wh, "ALLOWED_USER_ID", ""):
+        gate = wh.handle_local_services()
+    with override_attr(lsc, "MANIFEST_PATH", absent_manifest), \
+            override_attr(lsc, "SNAPSHOT_PATH", absent_snap), \
+            override_attr(wh, "_load_local_services_module", lambda: lsc), \
+            override_attr(wh, "ALLOWED_USER_ID", "123"):
+        onboarding = wh.handle_local_services()
+        bad_manifest = write(tmp / "ls-ui-bad-manifest.json", "{broken")
+        with override_attr(lsc, "MANIFEST_PATH", bad_manifest):
+            config_error = wh.handle_local_services()
+        with override_attr(lsc, "MANIFEST_PATH", manifest_file):
+            blind = wh.handle_local_services()
+        with override_attr(lsc, "MANIFEST_PATH", manifest_file), \
+                override_attr(lsc, "SNAPSHOT_PATH", snap_file):
+            view = wh.handle_local_services()
+        partial_file = write(tmp / "ls-ui-snap-partial.json", json.dumps(
+            _ls_snapshot(ui_now - 120, [
+                _ls_row("2ch-monitor.service", "active")]), ensure_ascii=False))
+        with override_attr(lsc, "MANIFEST_PATH", manifest_file), \
+                override_attr(lsc, "SNAPSHOT_PATH", partial_file):
+            partial = wh.handle_local_services()
+    stale_file = write(tmp / "ls-ui-snap-stale.json", json.dumps(
+        _ls_snapshot(ui_now - 13 * 60, [
+            _ls_row("2ch-monitor.service", "active"),
+            _ls_row("nail-bot.service", "inactive")]), ensure_ascii=False))
+    with override_attr(lsc, "MANIFEST_PATH", manifest_file), \
+            override_attr(lsc, "SNAPSHOT_PATH", stale_file), \
+            override_attr(wh, "_load_local_services_module", lambda: lsc), \
+            override_attr(wh, "ALLOWED_USER_ID", "123"):
+        stale = wh.handle_local_services()
+
+    leaked = any(marker in output for output in (gate, onboarding, config_error,
+                                                 blind, view, partial, stale)
+                 for marker in (_LS_SECRET_ADDR, _LS_SECRET_PROC,
+                                "leak-kernel", "containers", "listeners"))
+    check("ls_ui_fail_closed_without_allowlist",
+          "доступ запрещён" in gate and _LS_SECRET_ADDR not in gate, gate)
+    check("ls_ui_onboarding",
+          "local-services.json" in onboarding and lsc.DOCS_URL in onboarding,
+          onboarding)
+    check("ls_ui_manifest_config_error", "ошибка конфигурации" in config_error,
+          config_error)
+    check("ls_ui_blind_unknown", "неизвестен" in blind and "не сбой" in blind, blind)
+    check("ls_ui_fresh_mixed_view",
+          "✅" in view and "❌" in view and "inactive" in view
+          and "2ch monitor" in view and "Nail bot" in view
+          and "systemd-статус" in view and not leaked, view)
+    check("ls_ui_missing_unit_flagged",
+          "юнита нет в снимке" in partial and "⚠️" in partial
+          and "❌" not in partial, partial)
+    check("ls_ui_stale_unknown", "неизвестен" in stale, stale)
+
+
+def probe_ls_keyboard_module_dependent(mon, wh):
+    """Кнопка/команда /services существуют только при включённом модуле;
+    зависшая команда при OFF — явный отказ + свежая клавиатура, обработчик
+    не вызывается. Патчим mon.webhook: poller импортирует СВОЙ экземпляр
+    модуля (load_module не пишет в sys.modules)."""
+    wh_mon = mon.webhook
+    with override_attr(wh_mon, "local_services_enabled", lambda: False):
+        kb_off = mon.reply_keyboard()
+        labels_off = mon.reply_labels()
+    with override_attr(wh_mon, "local_services_enabled", lambda: True):
+        kb_on = mon.reply_keyboard()
+        labels_on = mon.reply_labels()
+    off_buttons = [b["text"] for row in kb_off["keyboard"] for b in row]
+    on_buttons = [b["text"] for row in kb_on["keyboard"] for b in row]
+    check("ls_keyboard_button_gated",
+          wh.LOCAL_SERVICES_LABEL not in off_buttons and len(off_buttons) == 8
+          and wh.LOCAL_SERVICES_LABEL in on_buttons and len(on_buttons) == 9
+          and "/services" not in labels_off.values()
+          and labels_on.get(wh.LOCAL_SERVICES_LABEL) == "/services",
+          f"off={len(off_buttons)} on={len(on_buttons)}")
+    check("ls_keyboard_button_position",
+          on_buttons.index(wh.LOCAL_SERVICES_LABEL)
+          < on_buttons.index("🛠 Обслуживание"),
+          f"buttons={on_buttons!r}")
+
+    captured: list[tuple] = []
+    handler_calls: list[int] = []
+    with override_attr(mon, "send_message",
+                       lambda text, **kw: captured.append((text, kw))), \
+            override_attr(wh_mon, "local_services_enabled", lambda: False), \
+            override_attr(wh_mon, "handle_local_services",
+                          lambda: handler_calls.append(1) or "SHOULD_NOT_RENDER"):
+        mon.route_command("/services")
+    rejected = (len(handler_calls) == 0 and len(captured) == 1
+                and "выключен" in captured[0][0]
+                and captured[0][1].get("reply_markup") is not None)
+    with override_attr(mon, "send_message",
+                       lambda text, **kw: captured.append((text, kw))), \
+            override_attr(wh_mon, "local_services_enabled", lambda: True), \
+            override_attr(wh_mon, "handle_local_services", lambda: "🖥 ok-render"):
+        mon.route_command("/services")
+    routed = (captured[-1][0] == "🖥 ok-render" and len(handler_calls) == 0)
+    check("ls_stale_services_rejected", rejected,
+          f"captured={captured!r} handler={len(handler_calls)}")
+    check("ls_services_routed_when_on", routed,
+          f"captured={captured!r} handler={len(handler_calls)}")
+
+
+def probe_ls_toggle_keyboard_refresh(wh, tmp: Path):
+    """Успешный тоггл → сообщение с новым ReplyKeyboardMarkup; неудача → без
+    markup; никаких silent-kwargs (раньше silent=True молча убивал worker)."""
+    class _FakeCompleted:
+        def __init__(self, code: int):
+            self.returncode = code
+            self.stdout = "line1\nline2"
+            self.stderr = ""
+
+    class _FakeSubprocess:
+        def __init__(self, code: int):
+            self.code = code
+
+        def run(self, *args, **kwargs):
+            return _FakeCompleted(self.code)
+
+    captured: list[tuple] = []
+
+    def chat_send(text, **kw):
+        captured.append((text, kw))
+
+    fresh = {"keyboard": [[{"text": "FRESH"}]], "resize_keyboard": True}
+    with override_attr(wh, "subprocess", _FakeSubprocess(0)), \
+            override_attr(wh, "KEYBOARD_REFRESH", lambda: fresh):
+        wh._deploy_worker(chat_send, str(tmp / "ls-unused.cfg"))
+    success = (len(captured) == 1 and captured[0][0].startswith("✅")
+               and captured[0][1].get("reply_markup") is fresh
+               and "silent" not in captured[0][1])
+    check("ls_toggle_success_sends_fresh_markup", success, f"captured={captured!r}")
+    captured.clear()
+    with override_attr(wh, "subprocess", _FakeSubprocess(1)):
+        wh._deploy_worker(chat_send, str(tmp / "ls-unused.cfg"))
+    failure = (len(captured) == 1 and captured[0][0].startswith("❌")
+               and captured[0][1].get("reply_markup") is None
+               and "silent" not in captured[0][1])
+    check("ls_toggle_failure_no_markup_no_silent", failure,
+          f"captured={captured!r}")
+
+
+def probe_ls_deploy_on_off_cron(tmp: Path):
+    """deploy.sh: ON ставит единую последовательную cron-строку в живой
+    crontab и делает начальный сбор; OFF снимает и ранее установленную
+    вручную строку, сохраняя чужую; сбой записи crontab — fail closed."""
+    kind = subprocess.run(
+        ["bash", "-c",
+         'if command -v wslpath >/dev/null 2>&1; then echo wsl; '
+         'elif command -v cygpath >/dev/null 2>&1; then echo msys; '
+         "else uname -s; fi"],
+        capture_output=True, text=True, timeout=30).stdout.strip()
+    if os.name == "nt" and kind != "Linux":
+        # Спавн по имени `bash` на Windows может дать WSL/MSYS: другой mount
+        # namespace и СВОЙ системный crontab — shim мог бы не перехватить
+        # `crontab`, и проба задела бы реальные объекты. Гейт пробы — CI
+        # (ubuntu); локально честно скипаем с причиной.
+        for probe_id in ("ls_deploy_on_installs_owned_cron",
+                         "ls_deploy_off_removes_legacy_cron",
+                         "ls_deploy_off_crontab_fail_closed"):
+            check(probe_id, True, f"skipped: spawnable bash is {kind!r} (CI gates this)")
+        return
+    home = tmp / "ls-deploy-home"
+    shims = tmp / "ls-shims"
+    shims.mkdir(parents=True, exist_ok=True)
+    crontab_fixture = tmp / "ls-crontab.txt"
+    py3_log = tmp / "ls-py3.log"
+    write(shims / "crontab",
+          "#!/bin/sh\n"
+          'case "$1" in\n'
+          '  -l) cat "$CRONTAB_FIXTURE" 2>/dev/null;;\n'
+          '  -)  cat > "$CRONTAB_FIXTURE";;\n'
+          "  *) exit 1;;\n"
+          "esac\n")
+    write(shims / "python3",
+          "#!/bin/sh\n"
+          'echo "$@" >> "$PY3_LOG"\n'
+          "exit 0\n")
+    shims_fail = tmp / "ls-shims-fail"
+    shims_fail.mkdir(parents=True, exist_ok=True)
+    write(shims_fail / "crontab",
+          "#!/bin/sh\n"
+          'case "$1" in\n'
+          '  -l) cat "$CRONTAB_FIXTURE" 2>/dev/null;;\n'
+          "  *) exit 1;;\n"
+          "esac\n")
+    legacy_cron = ("*/5 * * * * python3 /home/legacy/.hermes/scripts/"
+                   "service-status-snapshot.py --quiet "
+                   ">> /home/legacy/.hermes/logs/service-status.log 2>&1")
+    unrelated = "0 9 * * * /usr/bin/unrelated-operator-job --flag"
+    base_modules = ("MODULE_CORE=OFF\nMODULE_INTEGRATIONS=OFF\nMODULE_TG_BOT=OFF\n"
+                    "MODULE_ANALYZER=OFF\nMODULE_HEARTBEAT=OFF\n"
+                    "MODULE_GH_HEARTBEAT=OFF\nMODULE_DISCORD_BOT=OFF\n")
+
+    def deploy(flag: str, shim_dir: Path) -> subprocess.CompletedProcess:
+        config = write(tmp / f"ls-config-{flag}.env",
+                       base_modules + f'MODULE_LOCAL_SERVICES="{flag}"\n')
+        # bash (Git Bash на Windows) не понимает backslash-пути в argv —
+        # передаём POSIX-стиль; MSYS сам конвертирует PATH.
+        env = _probe_subprocess_env(home, {
+            "HOME": home.as_posix(),
+            "PATH": f"{shim_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            "CRONTAB_FIXTURE": crontab_fixture.as_posix(),
+            "PY3_LOG": py3_log.as_posix(),
+            "CRON_FILE": (tmp / f"ls-cron-{flag}.txt").as_posix(),
+            "CRON_PROFILE": "full",
+        })
+        return subprocess.run(
+            ["bash", (REPO / "deploy.sh").as_posix(), config.as_posix()],
+            cwd=REPO.as_posix(), env=env, capture_output=True, text=True,
+            timeout=120)
+
+    crontab_fixture.write_text(legacy_cron + "\n" + unrelated + "\n",
+                               encoding="utf-8")
+    py3_log.write_text("", encoding="utf-8")
+    on = deploy("ON", shims)
+    on_tab = crontab_fixture.read_text(encoding="utf-8")
+    cron_file = tmp / "ls-cron-ON.txt"
+    cron_text = cron_file.read_text(encoding="utf-8") if cron_file.exists() else ""
+    check("ls_deploy_on_installs_owned_cron",
+          on.returncode == 0
+          and on_tab.count("service-status-snapshot.py") == 1
+          and on_tab.count("local_services_check.py") == 1
+          and "source" in on_tab and ".env" in on_tab
+          and unrelated in on_tab
+          and "local_services_check.py" in cron_text
+          and "service-status-snapshot.py" in py3_log.read_text(encoding="utf-8"),
+          f"rc={on.returncode} tab={on_tab!r} "
+          f"out={on.stdout[-400:]!r} err={on.stderr[-300:]!r}")
+
+    crontab_fixture.write_text(legacy_cron + "\n" + unrelated + "\n",
+                               encoding="utf-8")
+    off = deploy("OFF", shims)
+    off_tab = crontab_fixture.read_text(encoding="utf-8")
+    check("ls_deploy_off_removes_legacy_cron",
+          off.returncode == 0
+          and "service-status-snapshot.py" not in off_tab
+          and "local_services_check.py" not in off_tab
+          and unrelated in off_tab,
+          f"rc={off.returncode} tab={off_tab!r} err={off.stderr[-300:]!r}")
+
+    crontab_fixture.write_text(legacy_cron + "\n" + unrelated + "\n",
+                               encoding="utf-8")
+    failed = deploy("OFF", shims_fail)
+    fail_tab = crontab_fixture.read_text(encoding="utf-8")
+    check("ls_deploy_off_crontab_fail_closed",
+          failed.returncode != 0 and legacy_cron in fail_tab and unrelated in fail_tab,
+          f"rc={failed.returncode} tab={fail_tab!r}")
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="argus-probes-"))
     hc = load_module("health-check-v2")
@@ -3761,6 +4475,20 @@ def main() -> int:
     probe_report_v2_envelope(hc, tmp)
     probe_engine_two_runs_independent(hc, tmp)
     probe_ux0_bot_interaction(mon, wh)
+    # Локальные сервисы (MODULE_LOCAL_SERVICES): consumer, гистерезис, UI, cron
+    lsc = load_module("local_services_check")
+    probe_ls_module_flag_default_off(lsc)
+    probe_ls_manifest_validation(lsc, tmp)
+    probe_ls_snapshot_validation(lsc, tmp)
+    probe_ls_verdicts(lsc)
+    probe_ls_hysteresis_two_distinct(lsc, tmp)
+    probe_ls_blind_diagnostics(lsc, tmp)
+    probe_ls_silence_mutes_but_preserves(lsc, tmp)
+    probe_ls_alert_gate_fail_closed(lsc)
+    probe_ls_ui_states(wh, lsc, tmp)
+    probe_ls_keyboard_module_dependent(mon, wh)
+    probe_ls_toggle_keyboard_refresh(wh, tmp)
+    probe_ls_deploy_on_off_cron(tmp)
     probe_wrapper_v1_report_accepted(tmp)
     probe_wrapper_v2_failed_increments(tmp)
     probe_wrapper_v2_unknown_preserves(tmp)
