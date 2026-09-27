@@ -43,6 +43,7 @@ MODULE_ANALYZER="${MODULE_ANALYZER:-OFF}"
 MODULE_HEARTBEAT="${MODULE_HEARTBEAT:-OFF}"
 MODULE_GH_HEARTBEAT="${MODULE_GH_HEARTBEAT:-OFF}"
 MODULE_DISCORD_BOT="${MODULE_DISCORD_BOT:-OFF}"
+MODULE_LOCAL_SERVICES="${MODULE_LOCAL_SERVICES:-OFF}"
 
 module_enabled() { [ "${!1}" = "ON" ]; }
 
@@ -110,6 +111,9 @@ deploy_template() {
 CORE_HOME_SCRIPTS=(hermes-watchdog.sh auto-remediate.sh check-updates.sh \
                    network-guard.sh collect-metrics.sh send-monitoring-report.sh)
 CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.sh ssl-expiry-check.sh)
+
+# LOCAL_SERVICES: opt-in collector; UI/alerts arrive in a separate implementation PR.
+LOCAL_SERVICES_HERMES_SCRIPTS=(service-status-snapshot.py)
 CORE_SYSTEMD=(hermes-dashboard.service hermes-dashboard.service.d/memory-limits.conf \
               hermes-gateway.service hermes-gateway.service.d/memory-limits.conf)
 
@@ -190,6 +194,12 @@ if module_enabled MODULE_INTEGRATIONS; then
     if [ -f "$REPO_DIR/registry.yaml" ]; then
         deploy_template "$REPO_DIR/registry.yaml" "$HERMES_DIR/state/registry.yaml" "registry.yaml"
     fi
+fi
+
+if module_enabled MODULE_LOCAL_SERVICES; then
+    echo ""
+    echo "📁 [LOCAL_SERVICES] локальный снимок топологии..."
+    deploy_scripts "$HERMES_DIR/scripts" "${LOCAL_SERVICES_HERMES_SCRIPTS[@]}"
 fi
 
 if module_enabled MODULE_TG_BOT; then
@@ -329,6 +339,10 @@ CRON_TMP=$(mktemp)
         echo "0 3 * * 1 $HOME_DIR/scripts/check-updates.sh"
         echo "30 * * * * $HERMES_DIR/scripts/watchdog-health.sh >> $HERMES_DIR/logs/watchdog-health-cron.log 2>&1"
         echo "0 6 * * * $HERMES_DIR/scripts/ssl-expiry-check.sh >> $HERMES_DIR/logs/ssl-expiry-cron.log 2>&1"
+    fi
+    if module_enabled MODULE_LOCAL_SERVICES; then
+        # Снимок — состояние, а не поток событий. Нет флага — нет фонового сбора.
+        echo "*/5 * * * * python3 $HERMES_DIR/scripts/service-status-snapshot.py --quiet >> $HERMES_DIR/logs/service-status.log 2>&1"
     fi
     if module_enabled MODULE_INTEGRATIONS; then
         echo "*/10 * * * * $HOME_DIR/scripts/integration-discover-wrapper.sh >> $HERMES_DIR/logs/integration-discover-cron.log 2>&1"
