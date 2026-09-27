@@ -1848,7 +1848,8 @@ def probe_telegram_static_audit_no_argv_leak(tmp: Path):
     sys.argv), and the heartbeat workflow must keep the -K - delivery."""
     import re
     offenders = []
-    in_process_py = {"webhook.py", "monitoring-bot-poller.py", "register-commands.sh"}
+    in_process_py = {"webhook.py", "monitoring-bot-poller.py",
+                     "register-commands.sh", "local_services_check.py"}
     scan = sorted((REPO / "scripts").glob("*.sh"))
     scan += sorted((REPO / "scripts").glob("*.py"))
     scan += [p for p in sorted((REPO / "modules").rglob("*"))
@@ -4362,11 +4363,11 @@ def probe_ls_deploy_on_off_cron(tmp: Path):
           '  -l) cat "$CRONTAB_FIXTURE" 2>/dev/null;;\n'
           '  -)  cat > "$CRONTAB_FIXTURE";;\n'
           "  *) exit 1;;\n"
-          "esac\n")
+          "esac\n").chmod(0o755)
     write(shims / "python3",
           "#!/bin/sh\n"
           'echo "$@" >> "$PY3_LOG"\n'
-          "exit 0\n")
+          "exit 0\n").chmod(0o755)
     shims_fail = tmp / "ls-shims-fail"
     shims_fail.mkdir(parents=True, exist_ok=True)
     write(shims_fail / "crontab",
@@ -4374,7 +4375,7 @@ def probe_ls_deploy_on_off_cron(tmp: Path):
           'case "$1" in\n'
           '  -l) cat "$CRONTAB_FIXTURE" 2>/dev/null;;\n'
           "  *) exit 1;;\n"
-          "esac\n")
+          "esac\n").chmod(0o755)
     legacy_cron = ("*/5 * * * * python3 /home/legacy/.hermes/scripts/"
                    "service-status-snapshot.py --quiet "
                    ">> /home/legacy/.hermes/logs/service-status.log 2>&1")
