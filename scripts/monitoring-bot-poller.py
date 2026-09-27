@@ -131,11 +131,30 @@ SECRET_ALLOWLIST = (
 PENDING_SECRET = {}
 
 
+def reply_labels() -> dict:
+    """Базовые метки + метка local-services тогда и только тогда, когда модуль
+    эффективно включён (свежее чтение config.env: тоггл через deploy не
+    перезапускает poller)."""
+    labels = dict(REPLY_LABELS)
+    if webhook.local_services_enabled():
+        items = list(labels.items())
+        index = next((i for i, (_, cmd) in enumerate(items) if cmd == "/menu"),
+                     len(items))
+        items.insert(index, (webhook.LOCAL_SERVICES_LABEL, "/services"))
+        labels = dict(items)
+    return labels
+
+
 def reply_keyboard() -> dict:
-    keys = list(REPLY_LABELS.keys())
+    keys = list(reply_labels().keys())
     rows = [keys[i:i + 2] for i in range(0, len(keys), 2)]
     return {"keyboard": [[{"text": t} for t in row] for row in rows],
             "resize_keyboard": True}
+
+
+# После успешного применения тоггла worker деплоя пошлёт новое сообщение
+# с этим markup — иначе старая клавиатура в чате не обновится.
+webhook.KEYBOARD_REFRESH = reply_keyboard
 
 
 def _secret_worker(key: str, value: str) -> None:
@@ -212,6 +231,15 @@ def route_command(text: str) -> None:
         send_message("👁 Argus — панель стража. Действия:", reply_markup=webhook.menu_keyboard())
     elif text.startswith("/start"):
         send_message(webhook.handle_start(), reply_markup=reply_keyboard())
+    elif text.startswith("/services"):
+        # Зависшая кнопка/команда при выключенном модуле — явный отказ плюс
+        # свежая клавиатура без кнопки; статус хоста не раскрываем.
+        if not webhook.local_services_enabled():
+            send_message("🖥 Локальные сервисы: модуль выключен "
+                         "(MODULE_LOCAL_SERVICES=OFF).",
+                         reply_markup=reply_keyboard())
+        else:
+            send_message(webhook.handle_local_services())
     elif text.startswith("/setsecret"):
         parts = text.split(maxsplit=1)
         key = parts[1].strip().upper() if len(parts) > 1 else ""
@@ -226,7 +254,7 @@ def route_command(text: str) -> None:
                          + chr(10) + "⚠️ Оно останется в истории чата. /cancel — отмена.")
     elif text.startswith("/help"):
         send_message("👁 Argus — команды:\n"
-                     "/health /integrations /integrations_all /watchdog /uptime\n"
+                     "/health /integrations /integrations_all /services /watchdog /uptime\n"
                      "/deepcheck /settings /setsecret /logs [N] /network /silence [N]\n"
                      "/restart_gw /restart_dash /restart_all /reboot /menu")
     else:
@@ -272,7 +300,7 @@ def _handle_update(update: dict) -> None:
                              args=(key, text), daemon=True).start()
         return
 
-    text = REPLY_LABELS.get(text.strip(), text)
+    text = reply_labels().get(text.strip(), text)
     if not text.startswith("/"):
         send_message("👁 Argus на посту. Смотрю в оба.",
                      reply_markup=reply_keyboard())
