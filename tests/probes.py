@@ -3977,6 +3977,14 @@ def probe_ls_hysteresis_two_distinct(lsc, tmp: Path):
     snap_ok = _ls_snapshot(_LS_NOW - 60, [
         _ls_row("2ch-monitor.service", "active"),
         _ls_row("nail-bot.service", "active")])
+    # ВАЛИДНЫЙ свежий снимок, в котором строки цели НЕТ: evaluate_target даёт
+    # ("unknown", "unit missing from snapshot") — это НЕ blind-ветка (снимок
+    # валиден), а обычный цикл process() со своим verdict. Именно эту ветку
+    # контракт §3/§4 запрещает сбрасывать: alerted обязан уцелеть, иначе
+    # «восстановление» приходит вслепую, а настоящий healthy уже не отправит
+    # сообщение. Мутация-тест (unknown сбрасывает alerted) обязана падать здесь.
+    snap_target_gone = _ls_snapshot(_LS_NOW - 120, [
+        _ls_row("2ch-monitor.service", "active")])
     with override_attr(lsc, "STATE_PATH", state_file), \
             override_attr(lsc, "SILENCE_PATH", tmp / "ls-hyst-no-silence.txt"):
         lsc.process(manifest, snap_fail_a, "", _LS_NOW, send=send)
@@ -3986,6 +3994,10 @@ def probe_ls_hysteresis_two_distinct(lsc, tmp: Path):
         after_alert = len(sends)
         lsc.process(manifest, snap_fail_b, "", _LS_NOW, send=send)
         after_repeat = len(sends)
+        # цель пропала из валидного снимка → unknown, alerted обязан сохраниться
+        lsc.process(manifest, snap_target_gone, "", _LS_NOW, send=send)
+        after_target_gone = len(sends)
+        state_target_gone = json.loads(state_file.read_text(encoding="utf-8"))
         lsc.process(manifest, None, "snapshot missing", _LS_NOW, send=send)
         after_unknown = len(sends)
         state_unknown = json.loads(state_file.read_text(encoding="utf-8"))
@@ -3999,6 +4011,13 @@ def probe_ls_hysteresis_two_distinct(lsc, tmp: Path):
     check("ls_hysteresis_two_distinct",
           after_same == 0 and after_alert == 1 and after_repeat == 1
           and after_unknown == 1
+          # цель пропала из валидного снимка: ни сообщения, ни потери alerted
+          and after_target_gone == 1
+          and state_target_gone["targets"]["nail-bot"]["alerted"] is True
+          # failed_ids не тронуты тем же набором, что и до проп��ска цели:
+          # это 2 последних generated_at, а не пустой список и не новый элемент
+          and len(state_target_gone["targets"]["nail-bot"]["failed_ids"]) == 2
+          and state_target_gone["targets"]["nail-bot"]["failed_ids"] == state_unknown["targets"]["nail-bot"]["failed_ids"]
           and "❌" in sends[0] and "Nail bot" in sends[0]
           and after_recovery == 2 and "✅" in sends[1]
           and after_recovery_repeat == 2
@@ -4006,7 +4025,8 @@ def probe_ls_hysteresis_two_distinct(lsc, tmp: Path):
           and state_final["targets"]["nail-bot"]["alerted"] is False
           and state_final["targets"]["nail-bot"]["failed_ids"] == []
           and not leaked,
-          f"sends={sends!r} unknown_state={state_unknown['targets']['nail-bot']!r}")
+          f"sends={sends!r} unknown_state={state_unknown['targets']['nail-bot']!r} "
+          f"target_gone_state={state_target_gone['targets']['nail-bot']!r}")
 
 
 def probe_ls_blind_diagnostics(lsc, tmp: Path):
