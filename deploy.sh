@@ -151,7 +151,12 @@ HEARTBEAT_HOME_SCRIPTS=(heartbeat.sh)
 # именам наших двух скриптов: посторонние строки и комментарии не трогаются.
 # Сбой записи crontab — fail closed: deploy прерывается, ложного «OFF готов»
 # не бывает. Другие модули остаются proposal-only (RR1 — отдельная задача).
-LOCAL_SERVICES_CRON_LINE="*/5 * * * * python3 $HERMES_DIR/scripts/service-status-snapshot.py --quiet >> $HERMES_DIR/logs/service-status.log 2>&1; set -a; source $HERMES_DIR/.env; set +a; python3 $HERMES_DIR/scripts/local_services_check.py >> $HERMES_DIR/logs/local-services.log 2>&1"
+# ВАЖНО: cron выполняет команду через /bin/sh (dash), где `source` НЕ существует —
+# `.env` молча не грузился, WATCHDOG_ALLOWED_USER_ID оставался пуст, и алерты
+# физически не могли уйти (модуль корректно рапортовал «fail closed»).
+# Поэтому: явный интерпретатор bash + экспорт флага модуля, который читает
+# консьюмер. Проверено вживую: с `source` в cron — доставка 0, с `/bin/bash -c` — ок.
+LOCAL_SERVICES_CRON_LINE="*/5 * * * * python3 $HERMES_DIR/scripts/service-status-snapshot.py --quiet >> $HERMES_DIR/logs/service-status.log 2>&1; /bin/bash -c 'set -a; source $HERMES_DIR/.env; set +a; export MODULE_LOCAL_SERVICES=\${MODULE_LOCAL_SERVICES:-ON}; python3 $HERMES_DIR/scripts/local_services_check.py' >> $HERMES_DIR/logs/local-services.log 2>&1"
 
 reconcile_local_services_cron() {
     local want="$1"
