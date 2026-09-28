@@ -1296,7 +1296,24 @@ def probe_deploy_cron_profile(tmp: Path):
                    "MODULE_GH_HEARTBEAT=OFF\n"
                    "MODULE_DISCORD_BOT=OFF\n")
     cron = tmp / "minimal-cron.txt"
-    env = dict(os.environ, HOME=str(home), CRON_PROFILE="minimal", CRON_FILE=str(cron))
+    # ВАЖНО: deploy.sh в модульном режиме правит ЖИВОЙ crontab
+    # (reconcile_local_services_cron). Этот вызов идёт с настоящим PATH и без
+    # crontab-шима, поэтому проба реально сносила боевую строку
+    # local-services на dev/CI-хосте, где модуль уже задеплоен. Шим обязателен.
+    shim_dir = tmp / "minimal-shims"
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    crontab_fixture = tmp / "minimal-crontab.txt"
+    crontab_fixture.write_text("", encoding="utf-8")
+    write(shim_dir / "crontab",
+          "#!/bin/sh\n"
+          'case "$1" in\n'
+          '  -l) cat "$CRONTAB_FIXTURE" 2>/dev/null;;\n'
+          "  -)  cat > \"$CRONTAB_FIXTURE\";;\n"
+          "  *) exit 1;;\n"
+          "esac\n").chmod(0o755)
+    env = dict(os.environ, HOME=str(home), CRON_PROFILE="minimal", CRON_FILE=str(cron),
+               CRONTAB_FIXTURE=str(crontab_fixture),
+               PATH=f"{shim_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     result = subprocess.run(["bash", str(REPO / "deploy.sh"), str(config)],
                             cwd=REPO, env=env, capture_output=True, text=True, timeout=60)
     cron_text = cron.read_text(encoding="utf-8") if cron.exists() else ""
@@ -1353,10 +1370,21 @@ def probe_deploy_secret_not_in_argv(tmp: Path):
     _write_argv_shim(shim, "sed",
                      f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
                      f'exec "{Path(real_sed).as_posix()}" "$@"\n')
+    # crontab-шим обязателен: deploy.sh правит живой crontab, и без него проба
+    # сносила бы боевую строку local-services на хосте, где модуль задеплоен.
+    _write_argv_shim(shim, "crontab",
+                     'case "$1" in\n'
+                     '  -l) cat "$CRONTAB_FIXTURE" 2>/dev/null;;\n'
+                     '  -)  cat > "$CRONTAB_FIXTURE";;\n'
+                     '  *) exit 1;;\n'
+                     'esac\n')
+    crontab_fixture = tmp / "deploy-secret-crontab.txt"
+    crontab_fixture.write_text("", encoding="utf-8")
     env = _path_shim_env(home, {
         "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
         "TMPDIR": str(tmpd), "TMP": str(tmpd), "TEMP": str(tmpd),
         "CRON_PROFILE": "minimal", "CRON_FILE": str(cron),
+        "CRONTAB_FIXTURE": str(crontab_fixture),
     })
     result = subprocess.run(["bash", str(REPO / "deploy.sh"), str(config)],
                             cwd=REPO, env=env, capture_output=True, text=True, timeout=120)
@@ -1410,9 +1438,20 @@ def probe_deploy_gh_heartbeat_secret_not_in_argv(tmp: Path):
     _write_argv_shim(shim, "git",
                      f'printf \'%s\\n\' "$*" >> "{git_argv.as_posix()}"\n'
                      'case "$1" in diff) exit 1;; *) exit 0;; esac\n')
+    # crontab-шим обязателен: deploy.sh правит живой crontab, и без него проба
+    # сносила бы боевую строку local-services на хосте, где модуль задеплоен.
+    _write_argv_shim(shim, "crontab",
+                     'case "$1" in\n'
+                     '  -l) cat "$CRONTAB_FIXTURE" 2>/dev/null;;\n'
+                     '  -)  cat > "$CRONTAB_FIXTURE";;\n'
+                     '  *) exit 1;;\n'
+                     'esac\n')
+    crontab_fixture = tmp / "gh-heartbeat-crontab.txt"
+    crontab_fixture.write_text("", encoding="utf-8")
     env = _path_shim_env(home, {
         "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
         "CRON_PROFILE": "minimal", "CRON_FILE": str(tmp / "gh-cron.txt"),
+        "CRONTAB_FIXTURE": str(crontab_fixture),
     })
     # input в binary-режиме: text=True на Windows переводит "\n" в "\r\n",
     # и read в deploy.sh получает "y\r" — ответ не матчится.
@@ -1462,6 +1501,14 @@ def probe_deploy_gh_secret_failure_gates_deploy(tmp: Path):
                    "WATCHDOG_CHAT_ID=ARGUS_CANARY_GH_CHAT_R1A\n")
     shim = tmp / "shim-ghfail"
     shim.mkdir()
+    # crontab-шим обязателен: deploy.sh правит живой crontab, и без шима проба
+    # сносила бы боевую строку local-services на хосте, где модуль задеплоен.
+    _write_argv_shim(shim, "crontab",
+                     'case "$1" in\n'
+                     '  -l) cat "$CRONTAB_FIXTURE" 2>/dev/null;;\n'
+                     '  -)  cat > "$CRONTAB_FIXTURE";;\n'
+                     '  *) exit 1;;\n'
+                     'esac\n')
     gh_argv = tmp / "ghfail-argv.log"
     _write_argv_shim(shim, "gh",
                      f'printf \'%s\\n\' "$*" >> "{gh_argv.as_posix()}"\n'
@@ -1975,6 +2022,10 @@ def _probe_subprocess_env(home: Path, extra: dict | None = None) -> dict:
            if k in _WRAPPER_ENV_ALLOWLIST}
     env["HOME"] = str(home)
     env["XDG_RUNTIME_DIR"] = str(home)
+    # deploy.sh в модульном режиме правит ЖИВОЙ crontab. Проба не должна
+    # наследовать боевой MODULE_LOCAL_SERVICES=ON: иначе deploy-пробы (у которых
+    # шим есть только для gh/git/sed) сносят реальную строку local-services.
+    env.pop("MODULE_LOCAL_SERVICES", None)
     # Pin child stdout to UTF-8: on Windows the locale codec (cp1251) cannot
     # encode the alert emoji and the alerting python would die mid-print.
     env["PYTHONIOENCODING"] = "utf-8"
