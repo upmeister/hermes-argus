@@ -3565,8 +3565,16 @@ def probe_ux0_bot_interaction(mon, wh: object):
     """UX0 native keyboard, de-duplicated menu, alert keyboard, and poll auth.
 
     Клавиатура стала module-dependent (local-services); UX0-инвариант проверяем
-    при выключенном модуле, независимо от config.env на хосте."""
-    with override_attr(wh, "local_services_enabled", lambda: False):
+    при выключенном модуле, независимо от config.env на хосте.
+
+    Патчить нужно ИМЕННО mon.webhook: poller держит собственную ссылку на
+    загруженный модуль webhook, и это НЕ тот объект, который load_module()
+    вернул пробе. Прежний override_attr(wh, ...) выглядел работающим, но
+    изолировал фиктивно: реальный mon.webhook продолжал читать config.env
+    хоста, и проба падала (9 кнопок вместо 8) на любой машине, где
+    MODULE_LOCAL_SERVICES=ON, а на CI проходила только потому, что там флаг OFF.
+    """
+    with override_attr(mon.webhook, "local_services_enabled", lambda: False):
         keyboard = mon.reply_keyboard()
     buttons = [button["text"] for row in keyboard["keyboard"] for button in row]
     settings_index = buttons.index("⚙️ Настройки")
