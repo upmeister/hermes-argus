@@ -83,7 +83,7 @@ new snapshot schema.
 discovered as disabled. It must return a non-failing verdict that does not
 count as `failed` and does not count as `healthy`.
 
-Use the existing ADR 0001 vocabulary. Preferred mapping:
+Use the existing ADR 0001 vocabulary. Mapping:
 
 ```text
 status/verdict = skipped
@@ -94,21 +94,40 @@ detail         = human-readable, e.g. "mcp: disabled by config"
 Rationale: `skipped` already means "policy/config did not check", never resets
 a failure counter, and is never rendered green. `unknown` is wrong here — a
 disabled server is a known, deliberate state, not an unreadable result. Do not
-add a new verdict value.
+add a new verdict value: the distinct `⏸` presentation in §3.3 is a **rendering**
+concern, not a new verdict.
 
-### 3.3 Render it honestly
+The reason_code must be specific enough that the renderer can single out
+disabled servers and give them the `⏸` treatment rather than counting them in
+the generic policy-skip bucket. Preserve the existing `unclassified_failure`
+default for legacy-projection results (ADR 0001) — this adds one classified
+code, it does not change the fallback.
 
-`scripts/webhook.py` `/integrations` rendering:
+### 3.3 Render it as a deliberate `⏸` state
 
-- a disabled MCP server must not appear in the `❌` failure list;
-- it should be visible as a deliberate skip, not hidden. If grouping is
-  unchanged, the existing `skipped` bucket plus a per-item detail is
-  sufficient; a dedicated "⏸ disabled" line per server is acceptable only if
-  it stays within the owner surface below.
+`scripts/webhook.py` `/integrations` rendering: a disabled MCP server is shown
+on its own informational line with the `⏸` marker, in the style of the existing
+OAuth-evidence line (`_oauth_evidence_line`) — a first-class, human-legible
+"deliberately off" row, not a generic policy-skip counter and not a `❌`.
+
+Required:
+
+- a disabled MCP server never appears in the `❌` failure list;
+- it appears as `⏸ <label> — отключён` (or equivalent wording), one line per
+  disabled server, so the operator sees *which* servers are off;
+- it is excluded from the generic "пропущены политикой" counter, exactly as
+  OAuth evidence already is — otherwise the disabled server would be hidden
+  behind a number;
+- it never renders the report green (ADR 0001 skipped-only rule continues to
+  hold: a report whose only non-ok rows are disabled servers is not "всё в
+  порядке").
+
+This follows the established `⏸` precedent in this module (the OAuth-evidence
+line and the legacy-skip form `⏸ <label> — пропущено`), so the disabled state
+reads the same way across the UI.
 
 Do not change the meaning of any other skipped reason (`oauth` evidence,
-policy skips). The ADR 0001 "skipped-only report is never rendered green" rule
-stays intact.
+policy skips).
 
 ## 4. Boundaries
 
@@ -172,12 +191,17 @@ At minimum:
    - for a disabled server, no subprocess/`hermes mcp test` runs (assert via
      the probe harness, not by timing).
 
-7. **render**
-   - a mixed report (one enabled-ok, one enabled-failed, one disabled) shows
-     the disabled server as a skip, keeps the failure, and does not render the
-     report green.
+7. **render — `⏸` line**
+   - a mixed report (one enabled-ok, one enabled-failed, one disabled) shows:
+     the failure as `❌`, the disabled server as its own `⏸ <label> — отключён`
+     line, and does not render the report green.
 
-8. **unrelated discovery control**
+8. **render — counter exclusion**
+   - the disabled server is **not** folded into the generic "пропущены
+     политикой" counter (mirrors the existing OAuth-evidence exclusion), so the
+     operator sees which server is off, not just that something was skipped.
+
+9. **unrelated discovery control**
    - provider/OAuth/plugin/fallback discovery is byte-identical to baseline
      for a fixture with no disabled MCP servers.
 
@@ -223,8 +247,9 @@ Stop and report the concrete blocker if the patch begins to require:
 
 ## 10. Role-based delivery
 
-Reviewer: **to be named by the maintainer** (the Pytna default is not
-currently in effect).
+Focused reviewer: **the architect agent** (`upmeister`'s Claude session — the
+Bybaz role), per maintainer selection. The Pytna default remains suspended; this
+contract names its reviewer explicitly.
 
 ### Builder
 
@@ -237,7 +262,7 @@ Perform one implementation pass and return a receipt with:
 ## enabled rule reproduced (and its falsy set)
 ## disabled-server verdict + reason_code
 ## probe non-execution proof
-## render behavior (disabled / failed / ok mix)
+## render behavior (⏸ disabled / ❌ failed / ok mix, counter exclusion)
 ## default-on regression
 ## unrelated-discovery control
 ## Tests / red capability / CI
@@ -254,10 +279,13 @@ Prioritize:
 1. `enabled` default-on diverges from Hermes (skips a server Hermes would run);
 2. disabled server still reported as failed or still probed;
 3. disabled server reported as healthy/green;
-4. a new verdict/schema value slipped in;
-5. skipped reasons other than MCP changed;
-6. tool-level filtering folded in (scope creep);
-7. Hermes imports or RR0/exit-code work mixed into the patch.
+4. a new verdict/schema value slipped in (the `⏸` line is a rendering change,
+   the verdict must stay `skipped`);
+5. the disabled server leaked into the generic policy-skip counter, hiding
+   which server is off;
+6. skipped reasons other than MCP changed;
+7. tool-level filtering folded in (scope creep);
+8. Hermes imports or RR0/exit-code work mixed into the patch.
 
 Return: `PASS-TO-MAINTAINER | REMEDIATE | BLOCKED-FOR-MAINTAINER`.
 
