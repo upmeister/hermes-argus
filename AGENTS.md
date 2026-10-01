@@ -69,6 +69,11 @@ the exact candidate head, scope, acceptance criteria, constraints, and focused
 review questions. Check Peetna health first; start the review only after the
 handoff is ready, then read the completed result before deciding on remediation.
 
+Reviewer assignment is per-contract and may be changed by the maintainer at any
+time. The Pytna default is **not** currently in effect (maintainer is trialing a
+new review pipeline); until further notice every contract names its reviewer
+explicitly, and a contract that names none has no assigned reviewer.
+
 A task assignment that links a documentation PR as its active contract counts
 as acceptance and authorizes merging that contract PR before implementation.
 Base implementation work on the resulting `main`. An implementation task
@@ -137,6 +142,19 @@ evidence that the design is wrong and STOP for maintainer review.
   hand-edit generated entries.
 - Runtime copies must be compared with repository templates after deploy.
 
+Repository layout of authority:
+
+- The GitHub repository is the **source of truth**.
+- A local Git checkout is a **working copy**; treat a stale local `main` as a
+  hazard and reconcile against `origin/main` before basing work on it.
+- The **production deployment** lives on the maintainer's VPS (`peetna-aws`).
+  Local agents may reach it over SSH; Linux deploys and runtime tests are
+  technically possible from a local agent, but the safer and preferred path is
+  to route production deploys through the agent resident on that server (Pytna,
+  via the Peetna MCP).
+- Deploy, merge and production actions still require explicit, separate
+  maintainer authorization regardless of which agent performs them.
+
 ## Invariants
 
 - Secrets stay in protected runtime environment/secret files. Never commit,
@@ -197,8 +215,8 @@ Public release path:
 ```text
 R1c DONE
  -> R2a/R2a.1 DONE
- -> R2c.1 NOW
- -> RR0 legacy/personal-dependency reduction
+ -> R2c.1 DONE / PR #49
+ -> RR0 legacy/personal-dependency reduction   <-- CURRENT GATE
  -> RR1 installer/dependency/managed-cron hardening
  -> RR2 runtime i18n (en + ru)
  -> RR3 release acceptance
@@ -222,12 +240,16 @@ release-readiness task, not permission to duplicate documentation.
   `projects/hermes-argus/plans/2026-09-20-public-release-roadmap.md`.
 
 
-## Current upstream authority — 2026-09-24
+## Current upstream authority — 2026-10-01
 
 ```text
-Hermes stable = v2026.9.21 / v0.21.4
-stable tag commit = d337b736aa1e8ebecfab043842d13e4a2d2f48a3
-warning-source main = 35b14ad5e24137b836d5c47c21a50c6ea7aeb785
+Hermes stable = v2026.9.24 / v0.21.5
+stable tag commit = f97608f178d1ffeca59860195ab7da295f7c8e5f
+previous warning-source main = 35b14ad5e24137b836d5c47c21a50c6ea7aeb785
 ```
 
 Stable authority wins. Upstream `main` is a warning/research source only.
+
+Upstream watches: `docs/research/2026-10-01-hermes-upstream-watch.md` (current).
+Argus' dependency-on-Hermes list: `docs/research/hermes-argus-seams.md` — an
+upstream watch re-verifies that list rather than reading the whole changelog.
