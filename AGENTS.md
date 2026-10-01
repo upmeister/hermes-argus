@@ -155,6 +155,24 @@ Repository layout of authority:
 - Deploy, merge and production actions still require explicit, separate
   maintainer authorization regardless of which agent performs them.
 
+### Keep the docs truthful after every change
+
+Any change that alters state — a merged PR, a new release gate, an upstream
+authority bump, a changed contract status — must update the documents that
+describe that state **in the same change**, not in a follow-up:
+
+- `docs/handoffs/README.md` — current/selected contract and completion status;
+- `docs/ROADMAP.md` — release path and upstream authority;
+- `AGENTS.md` — release direction and the upstream authority block;
+- `CHANGELOG.md` — user-facing change;
+- the Obsidian project card (vault) when the change moves project state.
+
+Status surfaces must never lag merged reality: a merged contract is not "NOW",
+and a gate that has moved is not the current gate. A change that ships without
+its doc update forces the next agent — or the maintainer returning after a pause
+— to re-derive the wrong state. This is exactly how R2c.1 looked unfinished for
+a week after PR #49 had already merged.
+
 ## Invariants
 
 - Secrets stay in protected runtime environment/secret files. Never commit,
