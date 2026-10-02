@@ -29,14 +29,14 @@ CHAT_ID = os.environ.get("WATCHDOG_CHAT_ID", "@WATCHDOG_CHAT_ID@")
 # ответ уходил бы в CHAT_ID (твой), а триггеры (restart_gw, restart_dash) выполнялись.
 ALLOWED_USER_ID = os.environ.get("WATCHDOG_ALLOWED_USER_ID", "").strip()
 
-# Всегда через telegram-smart-proxy (8444) — он сам решает каскад direct→vless→tor.
-# НЕ использовать get_proxy()/прямой путь: при mode=direct прямой api.telegram.org
-# мёртв во время РКН-волн, а прокси перечитывается только при старте процесса.
-# (Инцидент 2026-08-08: poller молчал с 29.07 из-за одноразовой инициализации.)
-# C6: сети с блокировкой TG требуют локального прокси на 8444 (реверс-туннель
-# или смарт-прокси); TELEGRAM_PROXY из .env позволяет переопределить
-os.environ.setdefault("HTTPS_PROXY",
-                      os.environ.get("TELEGRAM_PROXY", "http://127.0.0.1:8444"))
+# RR0c: прокси — только явная конфигурация. TELEGRAM_PROXY задан → HTTPS_PROXY
+# (не перекрывая уже выставленный оператором systemd-override); не задан →
+# прямой доступ, никакого персонального дефолта. Повторное чтение при старте
+# процесса осознанное (инцидент 2026-08-08: poller молчал с 29.07 из-за
+# одноразовой инициализации — см. provenance).
+_tg_proxy = os.environ.get("TELEGRAM_PROXY", "").strip()
+if _tg_proxy:
+    os.environ.setdefault("HTTPS_PROXY", _tg_proxy)
 os.environ.pop("https_proxy", None)
 
 # Обработчики кнопок/команд — единый источник истины (webhook.py).

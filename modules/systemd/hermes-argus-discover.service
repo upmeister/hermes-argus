@@ -1,5 +1,5 @@
 [Unit]
-Description=Hermes VPS Kit: integration discovery (diff config/env snapshot)
+Description=Hermes Argus: integration discovery (diff config/env snapshot)
 
 [Service]
 Type=oneshot

@@ -104,14 +104,11 @@ def send_alert(text, env, silent=False):
     chat = env.get("WATCHDOG_CHAT_ID")
     if not token or not chat:
         return
-    proxy_args = []
-    try:
-        import socket
-        s = socket.create_connection(("127.0.0.1", 8444), timeout=1)
-        s.close()
-        proxy_args = ["--proxy", "http://127.0.0.1:8444"]
-    except OSError:
-        pass
+    # RR0c: единая конвенция транспорта — TELEGRAM_PROXY задан явно →
+    # используется как есть; не задан → прямой доступ (никаких персональных
+    # дефолтов и socket-зондов зашитого адреса).
+    proxy = (env.get("TELEGRAM_PROXY") or "").strip().strip("\"'")
+    proxy_args = ["--proxy", proxy] if proxy else []
     import subprocess
     notify = "true" if silent else "false"
     # Токен не в argv: URL уходит в curl через -K - (config на stdin)

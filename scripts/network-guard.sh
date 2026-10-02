@@ -38,7 +38,7 @@ send_alert() {
     [ -z "${WATCHDOG_BOT_TOKEN:-}" ] && { log "ALERT (no token): $msg"; return; }
     # Через telegram-smart-proxy: прямой api.telegram.org мёртв при РКН-волнах,
     # а HTTPS_PROXY из .env (8445) умеет только opencode.ai
-    local proxy="${TELEGRAM_PROXY:-http://127.0.0.1:8444}"
+    local proxy="${TELEGRAM_PROXY:-}"
     local escaped=$(python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" <<< "$msg")
     # Токен не в argv: URL уходит в curl через -K - (config на stdin)
     local resp=$(printf 'url = %s\n' "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" | \

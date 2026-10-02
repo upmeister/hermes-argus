@@ -2138,13 +2138,22 @@ def probe_telegram_py_form_send_canary(ft, tmp: Path):
     try:
         ft.send_alert("probe text",
                       {"WATCHDOG_BOT_TOKEN": R1B_TOKEN, "WATCHDOG_CHAT_ID": R1B_CHAT})
+        argv_plain = list(captured.get("argv", []))
+        input_plain = captured.get("input") or ""
+        captured.clear()
+        # RR0c B1: явный TELEGRAM_PROXY передаётся curl'у как есть; неявного
+        # дефолта больше не существует (без переменной — прямой доступ).
+        ft.send_alert("probe text",
+                      {"WATCHDOG_BOT_TOKEN": R1B_TOKEN, "WATCHDOG_CHAT_ID": R1B_CHAT,
+                       "TELEGRAM_PROXY": "http://10.9.8.7:9999"})
+        argv_proxy = " ".join(captured.get("argv", []))
     finally:
         if saved is None:
             sys.modules.pop("subprocess", None)
         else:
             sys.modules["subprocess"] = saved
-    argv = " ".join(captured.get("argv", []))
-    stdin_data = captured.get("input") or ""
+    argv = " ".join(argv_plain)
+    stdin_data = input_plain
     check("telegram_py_form_send_canary",
           R1B_TOKEN not in argv
           and f"url = https://api.telegram.org/bot{R1B_TOKEN}/sendMessage" in stdin_data
@@ -2153,6 +2162,10 @@ def probe_telegram_py_form_send_canary(ft, tmp: Path):
           and "-K" in argv and "-" in argv.split(),
           f"argv_leak={R1B_TOKEN in argv} "
           f"form_wiring={'chat_id=' in argv and '--data-urlencode' in argv}")
+    check("telegram_py_form_send_explicit_proxy",
+          "--proxy" in argv_proxy and "http://10.9.8.7:9999" in argv_proxy
+          and "127.0.0.1:8444" not in argv_proxy,
+          f"proxy_wired={'--proxy http://10.9.8.7:9999' in argv_proxy}")
 
 
 def probe_telegram_static_audit_no_argv_leak(tmp: Path):
@@ -2368,6 +2381,132 @@ def _r1c_save_outcome(tmp: Path, tag: str, result) -> None:
     """Сохранить stdout/stderr пробы как артефакты для boundary-скана (§7.6)."""
     write(tmp / f"{tag}-out.txt", result.stdout)
     write(tmp / f"{tag}-err.txt", result.stderr)
+
+
+def probe_rr0c_public_defaults_no_personal_assumptions():
+    """RR0c: публичная установка не содержит персональных дефолтов.
+
+    B1: ни один runtime-путь не падает в персональный smart-proxy — дефолт
+    127.0.0.1:8444 убран из bash и python, ключ объявлен в config-шаблоне,
+    описание в registry не обещает дефолт. B2: GITHUB_REPO без персонального
+    дефолта. B3: канонические имена юнитов в манифесте и шаблонах,
+    legacy-шаблоны сняты с активной поверхности."""
+    problems = []
+    for path in sorted((REPO / "scripts").glob("*.sh")):
+        if "${TELEGRAM_PROXY:-http" in path.read_text(encoding="utf-8"):
+            problems.append(f"scripts/{path.name}: implicit proxy fallback")
+    for path in sorted((REPO / "scripts").glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if '"TELEGRAM_PROXY", "http://127.0.0.1:8444"' in text:
+            problems.append(f"scripts/{path.name}: implicit proxy default")
+    deploy_text = (REPO / "deploy.sh").read_text(encoding="utf-8")
+    if "upmeister/hermes-infra" in deploy_text:
+        problems.append("deploy.sh: personal GITHUB_REPO default")
+    if 'GITHUB_REPO="${GITHUB_REPO:-}"' not in deploy_text:
+        problems.append("deploy.sh: GITHUB_REPO default not explicit-empty")
+    if "hermes-argus-config.path" not in deploy_text:
+        problems.append("deploy.sh: canonical path unit missing from manifest")
+    template = (REPO / "config" / "config.env.template").read_text(encoding="utf-8")
+    for needle in ("TELEGRAM_PROXY=", "GITHUB_REPO="):
+        if needle not in template:
+            problems.append(f"config.env.template: explicit {needle} missing")
+    for path, name in ((REPO / "scripts" / "gen-registry.py", "gen-registry.py"),
+                       (REPO / "registry.yaml", "registry.yaml")):
+        if "по умолчанию 127.0.0.1:8444" in path.read_text(encoding="utf-8"):
+            problems.append(f"{name}: proxy default in description")
+    if not (REPO / "modules" / "systemd" / "hermes-argus-config.path").exists():
+        problems.append("canonical path unit template missing")
+    if (REPO / "modules" / "systemd" / "hermes-vps-kit-config.path").exists():
+        problems.append("legacy path unit template still on install surface")
+    check("rr0c_public_defaults_no_personal_assumptions", not problems,
+          f"problems={problems}")
+
+
+def probe_rr0c_proxy_check_explicit(hc):
+    """RR0c B1: v2 tcp-проверка и getme-транспорт следуют явному
+    TELEGRAM_PROXY. Не задан → unconfigured/direct; задан → используется;
+    мусор → fail с диагнозом, а не персональный дефолт. Всё offline."""
+    ok_url = (hc.proxy_url({}) == ""
+              and hc.proxy_url({"TELEGRAM_PROXY": "http://10.1.2.3:9999 # inline"})
+              == "http://10.1.2.3:9999")
+    ok_parse = (hc.parse_host_port("") is None
+                and hc.parse_host_port("socks5://1.2.3.4:1080") == ("1.2.3.4", 1080))
+    v_unconf = hc.run_check({"id": "x", "primitive": "tcp", "host": "", "port": 0,
+                             "proxy_malformed": False}, "", {})
+    v_mal = hc.run_check({"id": "x", "primitive": "tcp", "host": "", "port": 0,
+                          "proxy_malformed": True}, "", {})
+    v_cfg = hc.run_check({"id": "x", "primitive": "tcp", "host": "127.0.0.1",
+                          "port": 1}, "", {})
+    ok = (ok_url and ok_parse
+          and v_unconf[0] == "unconfigured"
+          and v_mal[0] == "fail" and "unparseable" in v_mal[1]
+          and v_cfg[0] == "fail")
+    check("rr0c_proxy_check_explicit", ok,
+          f"url={ok_url} parse={ok_parse} unconf={v_unconf[0]} mal={v_mal[0]} cfg={v_cfg[0]}")
+
+
+def probe_rr0c_deploy_unit_handoff_detection(tmp: Path):
+    """RR0c B3: deploy ставит канонические hermes-argus-* юниты; при живом
+    legacy hermes-vps-kit-config.path файл legacy остаётся нетронутым и
+    печатается ручной хэндофф — второй активный producer не появляется молча."""
+    config = write(tmp / "rr0c-unit-config.env",
+                   "MODULE_CORE=OFF\n"
+                   "MODULE_INTEGRATIONS=ON\n"
+                   "MODULE_TG_BOT=OFF\n"
+                   "MODULE_ANALYZER=OFF\n"
+                   "MODULE_HEARTBEAT=OFF\n"
+                   "MODULE_GH_HEARTBEAT=OFF\n"
+                   "MODULE_DISCORD_BOT=OFF\n"
+                   "MODULE_LOCAL_SERVICES=OFF\n")
+    shim = tmp / "rr0c-unit-shim"
+    shim.mkdir()
+    # crontab-шим обязателен: deploy reconcile трогает crontab и на OFF-модуле.
+    _write_argv_shim(shim, "crontab",
+                     'case "$1" in\n'
+                     '  -l) printf "" 2>/dev/null;;\n'
+                     '  -)  cat > /dev/null;;\n'
+                     '  *) exit 1;;\n'
+                     'esac\n')
+
+    def _run_deploy(home: Path, cron_file: Path):
+        env = _path_shim_env(home, {
+            "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+            "CRON_FILE": str(cron_file),
+        })
+        return subprocess.run(["bash", str(REPO / "deploy.sh"), str(config)],
+                              cwd=REPO, env=env, capture_output=True, text=True,
+                              timeout=120)
+
+    # Case A — чистая установка: канонические юниты ставятся, legacy нет.
+    home_a = tmp / "rr0c-unit-home-fresh"
+    cron_a = tmp / "rr0c-unit-cron-a.txt"
+    res_a = _run_deploy(home_a, cron_a)
+    units_a = home_a / ".config" / "systemd" / "user"
+    fresh_ok = (res_a.returncode == 0
+                and (units_a / "hermes-argus-config.path").exists()
+                and (units_a / "hermes-argus-discover.service").exists()
+                and not (units_a / "hermes-vps-kit-config.path").exists()
+                and "hermes-vps-kit-config.path" not in res_a.stdout)
+    # Case B — legacy-юнит жив: файл не тронут, канонические ставятся рядом,
+    # печатается ручной хэндофф.
+    home_b = tmp / "rr0c-unit-home-legacy"
+    cron_b = tmp / "rr0c-unit-cron-b.txt"
+    legacy_unit = home_b / ".config" / "systemd" / "user" / "hermes-vps-kit-config.path"
+    legacy_unit.parent.mkdir(parents=True, exist_ok=True)
+    legacy_unit.write_text("# legacy live unit (operator-owned)\n", encoding="utf-8")
+    res_b = _run_deploy(home_b, cron_b)
+    handoff_ok = (res_b.returncode == 0
+                  and (home_b / ".config" / "systemd" / "user" /
+                       "hermes-argus-config.path").exists()
+                  and legacy_unit.read_text(encoding="utf-8")
+                  == "# legacy live unit (operator-owned)\n"
+                  and "hermes-vps-kit-config.path" in res_b.stdout
+                  and "systemctl --user disable --now hermes-vps-kit-config.path"
+                  in res_b.stdout)
+    check("rr0c_deploy_unit_handoff_detection",
+          fresh_ok and handoff_ok,
+          f"fresh={fresh_ok} handoff={handoff_ok} rcA={res_a.returncode} "
+          f"rcB={res_b.returncode}")
 
 
 def probe_rr0b_removed_surfaces_stay_removed():
@@ -5143,6 +5282,10 @@ def main() -> int:
     probe_mcpoff_unrelated_discovery_unchanged(tmp)
     # RR0b: снятые поверхности не возвращаются (статическая проверка)
     probe_rr0b_removed_surfaces_stay_removed()
+    # RR0c: публичные дефолты — proxy/github/units (статика + поведение)
+    probe_rr0c_public_defaults_no_personal_assumptions()
+    probe_rr0c_proxy_check_explicit(hc)
+    probe_rr0c_deploy_unit_handoff_detection(tmp)
     # R1c: Authorization headers out of child argv (shell + ai-deep-check)
     probe_r1c_shell_full_auth_not_in_argv(tmp)
     probe_r1c_quick_github_header_not_in_argv(tmp)

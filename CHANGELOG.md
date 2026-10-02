@@ -36,6 +36,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owned state, and existing GitHub-heartbeat installations retain bounded
   legacy-directory compatibility.
 
+### Changed
+
+- Public installs no longer inherit maintainer-specific defaults (RR0c).
+  The Telegram egress proxy is explicit: with `TELEGRAM_PROXY` unset every
+  component connects directly instead of silently targeting a hardcoded local
+  smart proxy, and the v2 health check reports the proxy setting as
+  `unconfigured` (direct access) instead of probing a personal address —
+  a malformed explicit value fails loudly. The GitHub heartbeat repository
+  has no default: without an explicit `GITHUB_REPO` the backend stays
+  disabled. Discovery units for new installs use the canonical Argus-owned
+  names (`hermes-argus-config.path`, `hermes-argus-discover.service`); a live
+  legacy `hermes-vps-kit-*` watcher is never touched or auto-migrated — the
+  deploy prints an operator-controlled handoff and the installer guarantees a
+  single active producer. Existing maintainer production keeps its behavior
+  by setting `TELEGRAM_PROXY`/`GITHUB_REPO` explicitly once (see
+  `docs/DEPLOY_CHECKLIST.md`).
+
 ### Removed
 
 - Dead and duplicate runtime surfaces (RR0b), each backed by a caller/deploy

@@ -90,7 +90,7 @@ KIT_ENTRIES = [
     {"key": "WEBHOOK_SECRET_TOKEN", "group": "watchdog", "check": "env", "required": False,
      "description": "Secret token for the monitoring bot webhook (review 06.09)"},
     {"key": "TELEGRAM_PROXY", "group": "proxy", "check": "tcp", "required": False,
-     "description": "Smart-proxy для Telegram (по умолчанию 127.0.0.1:8444)"},
+     "description": "Smart-proxy для Telegram (не задан — прямой доступ)"},
     {"key": "CRONPING_TOKEN", "group": "infra", "check": "env", "required": False,
      "description": "Ping-токен Cronping heartbeat (cronping.com)"},
     {"key": "DMS_SNITCH", "group": "infra", "check": "env", "required": False,

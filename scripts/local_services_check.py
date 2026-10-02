@@ -278,10 +278,10 @@ def telegram_credentials() -> tuple[str, str, str]:
 
 
 def _telegram_http(token: str, payload: dict) -> dict:
-    """Тот же транспорт, что у poller'а: smart-proxy по умолчанию (прямой
-    api.telegram.org мёртв во время блокировок), таймаут 30с. Токен живёт
+    """Тот же транспорт, что у poller'а: прокси — только явный TELEGRAM_PROXY
+    (RR0c: не задан → прямой доступ), таймаут 30с. Токен живёт
     только в URL процесса, не в argv."""
-    proxy = os.environ.get("TELEGRAM_PROXY", "http://127.0.0.1:8444").strip()
+    proxy = os.environ.get("TELEGRAM_PROXY", "").strip()
     if proxy:
         os.environ["HTTPS_PROXY"] = proxy
         os.environ.pop("https_proxy", None)

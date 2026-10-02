@@ -88,7 +88,7 @@ send_tg() {
     if $TG_ENABLED; then
         # Через telegram-smart-proxy: прямой api.telegram.org мёртв при РКН-волнах,
         # а HTTPS_PROXY из .env (8445) умеет только opencode.ai
-        local proxy="${TELEGRAM_PROXY:-http://127.0.0.1:8444}"
+        local proxy="${TELEGRAM_PROXY:-}"
         local escaped
         escaped=$(echo "$msg" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "\"$msg\"")
         

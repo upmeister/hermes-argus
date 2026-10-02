@@ -124,7 +124,7 @@ check_socks() {   # name port url expected
 # ── QUICK ЧЕКИ (4 быстрых; формат вывода = legacy check-integrations.sh, парсит watchdog) ──
 run_quick() {
     local PROBLEMS=()
-    TG_PROXY="${TELEGRAM_PROXY:-http://127.0.0.1:8444}"
+    TG_PROXY="${TELEGRAM_PROXY:-}"
 
     # Внешний статус-хинт (quick): печатает строку, а не в FAILURES
     status_hint() {

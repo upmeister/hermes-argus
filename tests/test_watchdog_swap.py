@@ -406,6 +406,36 @@ class WatchdogSwapTests(unittest.TestCase):
         self.assertTrue((legacy / "heartbeat.txt").exists())
         self.assertFalse((self.hermes / "gh-heartbeat").exists())
 
+    def test_heartbeat_github_backend_disabled_without_explicit_repo(self) -> None:
+        """RR0c B2: GITHUB_REPO — явная настройка оператора; без неё
+        GitHub-бекенд остаётся выключенным, даже если каталог репо существует
+        и токен задан. Никаких git-вызовов и персонального дефолта."""
+        (self.hermes / "gh-heartbeat").mkdir()
+        script = self.root / "heartbeat.sh"
+        rendered = HEARTBEAT.read_text(encoding="utf-8").replace(
+            "@HERMES_DIR@", str(self.hermes)
+        )
+        script.write_text(rendered, encoding="utf-8")
+        script.chmod(0o755)
+        env = os.environ.copy()
+        env.update(
+            HOME=str(self.home),
+            PATH=f"{self.bin}:{env['PATH']}",
+            GH_TOKEN="DUMMY_GH_TOKEN",
+            GIT_CALL_LOG=str(self.git_call_log),
+        )
+        env.pop("GITHUB_REPO", None)
+        for name in ("CRONPING_TOKEN", "DMS_SNITCH"):
+            env.pop(name, None)
+
+        result = subprocess.run(
+            ["bash", str(script)], env=env, capture_output=True, text=True, timeout=20
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.git_call_log.exists())
+        self.assertTrue((self.hermes / "gh-heartbeat").exists())
+
     def test_heartbeat_writer_does_not_create_legacy_directory(self) -> None:
         result = self._run_heartbeat()
 

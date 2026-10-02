@@ -56,10 +56,16 @@ TOOLS_RE = re.compile(r"✓ Tools discovered: (\d+)")
 
 
 def proxy_url(env: dict) -> str:
-    """Telegram egress proxy from .env; tolerate inline comments/quotes."""
+    """Telegram egress proxy from .env; tolerate inline comments/quotes.
+
+    RR0c: unset TELEGRAM_PROXY = explicit direct access (no personal proxy
+    fallback); a configured but malformed value is passed to curl as-is so the
+    operator sees the failure instead of a silent personal default."""
     raw = (env.get("TELEGRAM_PROXY") or "").strip().strip('"\'')
+    if not raw:
+        return ""
     m = re.search(r"https?://\S+", raw)
-    return m.group(0).rstrip('"\'') if m else "http://127.0.0.1:8444"
+    return m.group(0).rstrip('"\'') if m else raw
 
 
 def check_tg_getme(token: str, proxy: str) -> tuple[bool, str]:
@@ -385,13 +391,16 @@ def check_mcp(hermes_bin: str, name: str) -> tuple[bool, str]:
         return False, "mcp: timeout 90s"
 
 
-def parse_host_port(value: str, default: str = "127.0.0.1:8444") -> tuple[str, int]:
-    """Extract host:port; tolerate scheme, quotes and inline .env comments."""
+def parse_host_port(value: str) -> tuple[str, int] | None:
+    """Extract host:port; tolerate scheme, quotes and inline .env comments.
+
+    RR0c: no personal fallback — an unparseable value returns None and the
+    check fails loudly instead of silently probing a hardcoded address."""
     raw = (value or "").strip().strip('"\'')
     m = re.search(r"([A-Za-z0-9._-]+):(\d{1,5})", raw)
     if m:
         return m.group(1), int(m.group(2))
-    return "127.0.0.1", 8444
+    return None
 
 
 # ADR 0001: canonical v2 verdicts and the conservative legacy projection.
@@ -444,10 +453,15 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
                            "key_env": key, "label": label,
                            "required": kit.get("required", False)})
         elif prim == "tcp":
-            host, port = parse_host_port(env.get("TELEGRAM_PROXY", ""),
-                                         "127.0.0.1:8444")
+            # RR0c: TELEGRAM_PROXY unset — явный прямой доступ, tcp-проверка
+            # рапортует unconfigured вместо зонда персонального дефолта.
+            raw = (env.get("TELEGRAM_PROXY") or "").strip().strip('"\'')
+            parsed = parse_host_port(raw) if raw else None
             checks.append({"id": cid, "entity": "kit", "primitive": "tcp",
-                           "host": host, "port": port, "label": label,
+                           "host": parsed[0] if parsed else "",
+                           "port": parsed[1] if parsed else 0,
+                           "label": label,
+                           "proxy_malformed": bool(raw) and parsed is None,
                            "required": kit.get("required", False)})
 
     # 2. live entities from the discover snapshot
@@ -612,6 +626,10 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
         ok, detail = check_tg_getme(token, proxy_url(env))
         return ("ok" if ok else "fail"), detail
     if prim == "tcp":
+        if not c.get("host"):
+            if c.get("proxy_malformed"):
+                return "fail", "TELEGRAM_PROXY set but host:port unparseable"
+            return "unconfigured", "TELEGRAM_PROXY not configured (direct access)"
         ok, detail = check_tcp(c["host"], c["port"])
         return ("ok" if ok else "fail"), detail
     if prim == "http":

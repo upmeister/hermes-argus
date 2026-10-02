@@ -20,7 +20,7 @@ python3 - <<'PYEOF'
 import json, os, sys, urllib.request
 
 token = os.environ["WATCHDOG_BOT_TOKEN"]
-proxy = os.environ.get("TELEGRAM_PROXY") or "http://127.0.0.1:8444"
+proxy = os.environ.get("TELEGRAM_PROXY", "").strip()
 commands = [
     {"command": "health", "description": "Статус сервисов и системы"},
     {"command": "watchdog", "description": "Статус стража Argus"},
@@ -44,7 +44,7 @@ req = urllib.request.Request(
     f"https://api.telegram.org/bot{token}/setMyCommands", data=data,
     headers={"Content-Type": "application/json"})
 opener = urllib.request.build_opener(
-    urllib.request.ProxyHandler({"https": proxy, "http": proxy}))
+    urllib.request.ProxyHandler({"https": proxy, "http": proxy} if proxy else {}))
 try:
     with opener.open(req, timeout=20) as r:
         resp = json.load(r)

@@ -29,7 +29,7 @@ WATCHDOG_CHAT_ID="${WATCHDOG_CHAT_ID:-}"
 WATCHDOG_BOT_TOKEN="${WATCHDOG_BOT_TOKEN:-}"
 BREAKER_MAX="${BREAKER_MAX:-3}"
 DMS_SNITCH="${DMS_SNITCH:-change_me}"
-GITHUB_REPO="${GITHUB_REPO:-upmeister/hermes-infra}"
+GITHUB_REPO="${GITHUB_REPO:-}"
 
 # ── Модули: deploy ставит только включённое ────────────────────────────────
 # Всё, что требует внешних сервисов, — OFF по умолчанию (см. config.env.template).
@@ -119,7 +119,12 @@ CORE_SYSTEMD=(hermes-dashboard.service hermes-dashboard.service.d/memory-limits.
 INTEGRATIONS_HOME_SCRIPTS=(integration-discover.py integration-discover-wrapper.sh fallback-tracker-v2.py \
                            health-check-v2.py health-check-v2-wrapper.sh)
 INTEGRATIONS_HERMES_SCRIPTS=(health-check-integrations.sh)
-INTEGRATIONS_SYSTEMD=(hermes-vps-kit-config.path hermes-vps-kit-discover.service)
+# RR0c (B3): канонические имена юнитов нового образца — Argus-owned. Легаси
+# hermes-vps-kit-* на живой машине не трогаются и не мигрируют автоматически:
+# deploy ставит канонические файлы рядом и печатает оператору хэндофф-команды
+# (одна активная пара producer'ов в каждый момент времени; в окно миграции
+# discovery продолжает работать через legacy-юнит и cron-страховку).
+INTEGRATIONS_SYSTEMD=(hermes-argus-config.path hermes-argus-discover.service)
 
 # TG_BOT: интерактивный мониторинг-бот (control plane) — OFF по умолчанию
 # webhook.py разворачивается в ОБЕ копии: poller импортирует её из своего каталога
@@ -237,6 +242,14 @@ if module_enabled MODULE_INTEGRATIONS; then
     deploy_scripts "$HOME_DIR/scripts" "${INTEGRATIONS_HOME_SCRIPTS[@]}"
     deploy_scripts "$HERMES_DIR/scripts" "${INTEGRATIONS_HERMES_SCRIPTS[@]}"
     deploy_systemd "${INTEGRATIONS_SYSTEMD[@]}"
+    # RR0c (B3): детекция legacy-вотчера — канонические юниты ставятся файлами,
+    # но активным остаётся legacy; переключает ТОЛЬКО оператор (ниже команды).
+    if [ -f "$HOME_DIR/.config/systemd/user/hermes-vps-kit-config.path" ]; then
+        echo "   ⚠️  Обнаружен legacy-вотчер hermes-vps-kit-config.path (активный producer не меняю)."
+        echo "      Ручной хэндофф на канонические имена (в удобное окно):"
+        echo "        systemctl --user disable --now hermes-vps-kit-config.path"
+        echo "        systemctl --user enable --now hermes-argus-config.path"
+    fi
     if [ -f "$REPO_DIR/registry.yaml" ]; then
         deploy_template "$REPO_DIR/registry.yaml" "$HERMES_DIR/state/registry.yaml" "registry.yaml"
     fi
@@ -435,6 +448,6 @@ echo "      grep -rn '@[A-Z_]*@' $HOME_DIR/scripts/ $HERMES_DIR/scripts/ 2>/dev/
 echo "   2. Если включены TG-алерты/бот — проверь токены в config.env"
 echo "   3. Перезагрузи systemd: systemctl --user daemon-reload"
 if module_enabled MODULE_INTEGRATIONS; then
-echo "   4. Включи вотчер конфига: systemctl --user enable --now hermes-vps-kit-config.path"
+echo "   4. Включи вотчер конфига: systemctl --user enable --now hermes-argus-config.path (если не активен legacy hermes-vps-kit-* — см. шаг [INTEGRATIONS])"
 fi
 echo "   5. Тестовый прогон: $HOME_DIR/scripts/hermes-watchdog.sh"

@@ -19,6 +19,32 @@ maintainer.
    an existing legacy resource, or a required migration step. Do not infer
    production state from a clean local checkout.
 
+## RR0c operator migration steps (before the first RR0c deploy)
+
+These steps keep the existing maintainer production behavior unchanged when
+the public defaults flip. Run them once on the production host, before
+deploying the RR0c baseline:
+
+1. **Telegram egress proxy (B1).** RR0c removes the implicit
+   `http://127.0.0.1:8444` fallback: unset `TELEGRAM_PROXY` now means direct
+   access. If the host relies on the local smart proxy, add
+   `TELEGRAM_PROXY=http://127.0.0.1:8444` to `~/.hermes/.env` and read it back
+   (for example via the bot `/settings` view: the value must be shown as set).
+   Rollback: unset the variable — all components return to direct access.
+2. **GitHub heartbeat repository (B2).** RR0c removes the personal
+   `GITHUB_REPO` default: with the variable unset the GitHub heartbeat backend
+   stays disabled. If the heartbeat repo is in use, keep/verify
+   `GITHUB_REPO=<owner/repo>` in `~/.hermes/.env`. Rollback: unset the
+   variable — the backend disables itself.
+3. **Discovery unit names (B3).** RR0c installs canonical
+   `hermes-argus-config.path`/`hermes-argus-discover.service` files but does
+   not touch the active legacy `hermes-vps-kit-*` units. The handoff is
+   operator-controlled at any convenient moment:
+   `systemctl --user disable --now hermes-vps-kit-config.path` then
+   `systemctl --user enable --now hermes-argus-config.path`. Rollback: the
+   reverse swap. Until the handoff, discovery continues through the legacy
+   unit and the cron fallback.
+
 ## Deploy
 
 1. Use the resident production agent on `peetna-aws` when available.

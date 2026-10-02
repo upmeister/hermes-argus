@@ -89,3 +89,36 @@ acceptance criteria here.
 - **Trigger:** maintainer production verification, or the RR0c/RR1 window.
 - **Scope guard:** until verified, the full mode stays exactly as shipped;
   do not shrink or redirect it silently.
+
+### DEBT-005 — legacy personal-path read fallbacks cleanup after RR0c handoff
+
+- **Status:** intentional bounded compatibility, deferred cleanup
+- **Source:** RR0c B3/B4 evidence gathering (PR #65 review window)
+- **Evidence:** the runtime still reads the maintainer's historical paths as
+  bounded compatibility fallbacks, each only when the path exists:
+  `~/hermes-vps-kit/config.env` as the second candidate in `webhook.py`
+  (module-flag/settings heuristics) and `local_services_check.py`
+  `config_env_paths()`, and the `~/.hermes/hermes-infra` heartbeat-directory
+  fallback in `heartbeat.sh`, `watchdog-health.sh`, `webhook.py` (RR0a
+  compat). On a public install none of these paths exist, so the fallbacks
+  are inert.
+- **Required follow-up:** after the maintainer confirms the RR0c unit/config
+  handoff is complete on production, drop the legacy candidates in a single
+  maintenance pass.
+- **Trigger:** maintainer confirmation that the production handoff finished.
+- **Scope guard:** do not remove the fallbacks while the legacy production
+  layout may still be live.
+
+### DEBT-006 — historical bot handle in module docstrings
+
+- **Status:** cosmetic polish, out of RR0c scope by contract
+- **Source:** RR0c B4 search
+- **Evidence:** `webhook.py` and `monitoring-bot-poller.py` module docstrings
+  name the maintainer's historical monitoring bot handle. The handle is
+  provenance only: bot identity at runtime comes from `WATCHDOG_BOT_TOKEN`,
+  and no message/command surface prints it.
+- **Required follow-up:** replace with a generic product description in a
+  docs-level pass if the maintainer wants the handle out of the public
+  source.
+- **Trigger:** any RR1/RR2 docs or i18n pass touching those modules.
+- **Scope guard:** comment-only; no behavior change.
