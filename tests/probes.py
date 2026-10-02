@@ -2088,6 +2088,37 @@ def probe_telegram_getme_module_canary(hc, tmp: Path):
           f"ok={ok} detail={detail!r} argv_leak={R1B_TOKEN in argv}")
 
 
+def probe_healthcheck_check_url_canary(tmp: Path):
+    """R1b shape D shell variant: verbatim check_url() from
+    health-check-integrations.sh (getMe caller) — canary off argv, URL on
+    stdin, proxy arg preserved, expected-code match still drives the verdict."""
+    src = (REPO / "scripts" / "health-check-integrations.sh").read_text(encoding="utf-8")
+    fn = _extract_bash_fn(src, "check_url")
+    shim = tmp / "shim-checkurl"
+    shim.mkdir()
+    argv_log, stdin_log = _install_curl_shim(shim, tmp, "checkurl", stdout="200")
+    harness = tmp / "checkurl-fn.sh"
+    write(harness,
+          "RETRIES=1\nTIMEOUT=5\nRETRY_DELAY=1\nFAILURES=''\n"
+          f"{fn}\n"
+          f"check_url 'probe' 'https://api.telegram.org/bot{R1B_TOKEN}/getMe' "
+          "'200' '' 'http://127.0.0.1:8444'\n")
+    env = _path_shim_env(tmp / "checkurl-home", {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", "")})
+    (tmp / "checkurl-home").mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(["bash", str(harness)], cwd=REPO, env=env,
+                            input=b"", capture_output=True, timeout=60)
+    argv = _read_or(argv_log)
+    stdin_data = _read_or(stdin_log)
+    check("healthcheck_check_url_canary",
+          result.returncode == 0
+          and R1B_TOKEN not in argv
+          and f"url = https://api.telegram.org/bot{R1B_TOKEN}/getMe" in stdin_data
+          and "--proxy" in argv and "-K" in argv,
+          f"rc={result.returncode} argv_leak={R1B_TOKEN in argv} "
+          f"proxy={'--proxy' in argv}")
+
+
 def probe_telegram_py_form_send_canary(ft, tmp: Path):
     """R1b shape E (python-subprocess form sendMessage), fallback-tracker
     send_alert: subprocess is faked via sys.modules (the module imports it
@@ -2344,11 +2375,12 @@ def probe_rr0b_removed_surfaces_stay_removed():
     живых потребителей.
 
     C2: send-monitoring-report.sh удалён и не числится в манифесте deploy.sh;
-    C3: scripts/legacy/ не существует; C1: health-check-integrations.sh сведён
-    к quick-канону (нет run_full/full-only хелперов/personal-эндпоинтов,
-    quick-маркеры на месте); C4: HERMES_BOT_TOKEN/HERMES_BOT_UID/DMS_API_KEY
-    сняты из deploy.sh и config.env.template без остаточных ссылок, а
-    WEBHOOK_SECRET_TOKEN/DMS_SNITCH удержаны вместе с потребителями."""
+    C3: scripts/legacy/ не существует; C4: HERMES_BOT_TOKEN/HERMES_BOT_UID/
+    DMS_API_KEY сняты из deploy.sh и config.env.template без остаточных ссылок,
+    а WEBHOOK_SECRET_TOKEN/DMS_SNITCH удержаны вместе с потребителями.
+    (C1 — full-режим health-check-integrations.sh — удержан на месте по правилу
+    контракта «uncertainty is not a deletion signal»; его владелец записан в
+    docs/BACKLOG.md, DEBT-004.)"""
     problems = []
     if (REPO / "scripts" / "send-monitoring-report.sh").exists():
         problems.append("scripts/send-monitoring-report.sh вернулся")
@@ -2362,16 +2394,6 @@ def probe_rr0b_removed_surfaces_stay_removed():
     template_text = (REPO / "config" / "config.env.template").read_text(encoding="utf-8")
     if "DMS_API_KEY" in template_text:
         problems.append("config.env.template: DMS_API_KEY")
-    hc_src = (REPO / "scripts" / "health-check-integrations.sh").read_text(encoding="utf-8")
-    for needle in ("run_full", "check_url", "check_alive", "check_socks",
-                   "status_hint_daily", "agentrouter-proxy", "opencode-smart-proxy",
-                   "integration-health-check @"):
-        if needle in hc_src:
-            problems.append(f"health-check-integrations.sh: {needle}")
-    for needle in ("run_quick", "=== INTEGRATION HEALTH PROBLEMS ===",
-                   "=== Все интеграции OK ===", "printf 'url = "):
-        if needle not in hc_src:
-            problems.append(f"health-check-integrations.sh пропал маркер: {needle}")
     registry_text = (REPO / "registry.yaml").read_text(encoding="utf-8")
     if "HERMES_BOT_TOKEN" in registry_text or "DMS_API_KEY" in registry_text:
         problems.append("registry.yaml: снятая настройка")
@@ -2385,6 +2407,47 @@ def probe_rr0b_removed_surfaces_stay_removed():
     if "DMS_SNITCH" not in hb_text:
         problems.append("heartbeat.sh: потерян потребитель DMS_SNITCH")
     check("rr0b_removed_surfaces_stay_removed", not problems, f"problems={problems}")
+
+
+def probe_r1c_shell_full_auth_not_in_argv(tmp: Path):
+    """R1c §7.1/§7.3: full-режим — 5 authenticated check_url доставляют
+    Authorization через stdin-канал (не argv); token-bearing Telegram URL
+    остаётся в stdin (R1b не регрессировал); --proxy сохранён; unauthenticated
+    вызовы работают (shim 200 → нет строки сбоя SearXNG)."""
+    home = tmp / "r1c-full-home"
+    shim = tmp / "r1c-shim-full"
+    shim.mkdir()
+    argv_log, stdin_log = _r1c_shell_curl_shim(shim, tmp, "r1c-full")
+    write(home / ".hermes" / ".env",
+          f"OPENCODE_GO_API_KEY={R1C_TOKEN}\n"
+          f"FIRECRAWL_API_KEY={R1C_TOKEN}\n"
+          f"GITHUB_TOKEN={R1C_TOKEN}\n"
+          f"GH_TOKEN={R1C_TOKEN}\n"
+          f"GROQ_API_KEY={R1C_TOKEN}\n"
+          f"OPENROUTER_API_KEY={R1C_TOKEN}\n"
+          f"CLINE_API_KEY={R1C_TOKEN}\n"
+          f"AGENTROUTER_API_KEY={R1C_TOKEN}\n"
+          f"TELEGRAM_BOT_TOKEN={R1C_TG}\n"
+          f"WATCHDOG_BOT_TOKEN={R1C_TG}\n")
+    env = _probe_subprocess_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+    })
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts" / "health-check-integrations.sh")],
+        cwd=REPO, env=env, input="", capture_output=True, text=True, timeout=180)
+    _r1c_save_outcome(tmp, "r1c-full", result)
+    argv_text = _read_or(argv_log)
+    stdin_text = _read_or(stdin_log)
+    auth_headers = stdin_text.count(f'header = "Authorization: Bearer {R1C_TOKEN}"')
+    tg_stdin = f"url = https://api.telegram.org/bot{R1C_TG}/getMe" in stdin_text
+    no_secret_argv = R1C_TOKEN not in argv_text and R1C_TG not in argv_text
+    proxy_kept = "--proxy" in argv_text
+    unauth_ok = "SearXNG: HTTP" not in result.stdout
+    ok = (no_secret_argv and auth_headers >= 5 and tg_stdin and proxy_kept
+          and unauth_ok and result.returncode == 0)
+    check("r1c_shell_full_auth_not_in_argv", ok,
+          f"rc={result.returncode} auth_headers={auth_headers} tg_stdin={tg_stdin} "
+          f"secret_in_argv={not no_secret_argv} proxy={proxy_kept} unauth_ok={unauth_ok}")
 
 
 def probe_r1c_quick_github_header_not_in_argv(tmp: Path):
@@ -2616,9 +2679,7 @@ def probe_r1c_artifact_boundary(tmp: Path):
     (*-stdin.log — канал, по которому секрет уходит в curl) и отсутствует во
     всех остальных r1c-артефактах (stdout/stderr-снимки, argv-логи). Печать
     canary в check()-detail не допускается инвариантом проекта; suite-stdout
-    чистота обеспечивается булевыми detail-строками и внешним аудитом ревью.
-    RR0b: full-канал снят вместе с full-режимом health-check-integrations.sh —
-    каналов доставки с canary осталось два (quick shell + deep-check)."""
+    чистота обеспечивается булевыми detail-строками и внешним аудитом ревью."""
     canaries = (R1C_TOKEN, R1C_TG, R1C_GH)
     leaked = []
     delivery = 0
@@ -2631,7 +2692,7 @@ def probe_r1c_artifact_boundary(tmp: Path):
             delivery += int(has)
         elif has:
             leaked.append(p.name)
-    ok = not leaked and delivery >= 2
+    ok = not leaked and delivery >= 3
     check("r1c_artifact_boundary", ok,
           f"leaked={leaked} delivery_channels_with_canary={delivery}")
 
@@ -5083,8 +5144,7 @@ def main() -> int:
     # RR0b: снятые поверхности не возвращаются (статическая проверка)
     probe_rr0b_removed_surfaces_stay_removed()
     # R1c: Authorization headers out of child argv (shell + ai-deep-check)
-    # (R1c full-режим health-check-integrations.sh снят в RR0b — его проба
-    # удалена вместе с поверхностью; quick-канон покрывают пробы ниже.)
+    probe_r1c_shell_full_auth_not_in_argv(tmp)
     probe_r1c_quick_github_header_not_in_argv(tmp)
     probe_r1c_curl_config_header_seam(tmp)
     probe_r1c_deep_check_get_not_in_argv(tmp)
@@ -5127,6 +5187,7 @@ def main() -> int:
     probe_telegram_form_send_argv_canary(tmp)
     probe_telegram_json_pin_resp_canary(tmp)
     probe_telegram_getme_module_canary(hc, tmp)
+    probe_healthcheck_check_url_canary(tmp)
     probe_telegram_py_form_send_canary(ft, tmp)
     probe_telegram_static_audit_no_argv_leak(tmp)
     probe_register_commands_env_token_canary(tmp)

@@ -68,3 +68,24 @@ acceptance criteria here.
   pass; no behavior change expected.
 - **Trigger:** whenever those files are next touched for a functional change.
 - **Scope guard:** comment-only; do not use it to reopen RR0b deletions.
+
+### DEBT-004 — health-check-integrations full mode: uncertain owner retained
+
+- **Status:** retained in place (contract rule: uncertainty is not a deletion
+  signal); removal deferred
+- **Source:** RR0b C1 owner-matrix; review #1 on PR #63 (REMEDIATE)
+- **Evidence:** the full mode has no in-repository caller (no cron line, no
+  systemd unit, no manifest entry invokes it; the deployed integrations
+  schedule owns the structured full check via `health-check-v2-wrapper.sh`),
+  but the script header documents a historical operator entry point —
+  "Hermes cron daily no_agent" (2026-08-20) — on the maintainer's personal
+  host, which cannot be verified or disproved from the repository.
+- **Required follow-up:** maintainer verifies the live crontab on the
+  production host. If no bare invocation of
+  `~/.hermes/scripts/health-check-integrations.sh` exists, remove the full
+  mode (plus its full-only helpers) in a dedicated pass and drop this entry;
+  if it exists, either point that cron at `--quick` or at the v2 wrapper and
+  then remove the surface.
+- **Trigger:** maintainer production verification, or the RR0c/RR1 window.
+- **Scope guard:** until verified, the full mode stays exactly as shipped;
+  do not shrink or redirect it silently.
