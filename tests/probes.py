@@ -2014,7 +2014,8 @@ def probe_telegram_json_send_argv_canary(tmp: Path):
 def probe_telegram_form_send_argv_canary(tmp: Path):
     """R1b shape B (form-encoded sendMessage, recovery branch), real script
     gateway-liveness.sh: canary off curl argv, URL on stdin, form payload and
-    silent flag preserved. pgrep shim keeps the process-alive precondition."""
+    silent flag preserved. Canonical-matcher shim keeps the process-alive
+    precondition."""
     home = tmp / "tg-form-home"
     hermes = home / ".hermes"
     write(hermes / ".env",
@@ -2029,7 +2030,15 @@ def probe_telegram_form_send_argv_canary(tmp: Path):
     shim = tmp / "shim-tgform"
     shim.mkdir()
     argv_log, stdin_log = _install_curl_shim(shim, tmp, "form")
-    _write_argv_shim(shim, "pgrep", "exit 0\n")
+    # 2026-10-02: процесс- precondition держит канонический матчер
+    # (hermes-gateway-pids.py), а не pgrep по argv — прежний шим делал вид,
+    # что gateway жив, но вызывающий код больше pgrep не зовёт. Ставим живой
+    # helper в $HOME/scripts (ровно туда, куда смотрит скрипт). Стаб ОБЯЗАН быть
+    # Python-сценарием: вызов идёт как `python3 <helper>`, и shell-стаб дал бы
+    # SyntaxError → rc=1 → скрипт решил бы «процесс мёртв» и молчал бы.
+    stub = home / "scripts" / "hermes-gateway-pids.py"
+    write(stub, "print(4242)\n")
+    stub.chmod(0o755)
     env = _path_shim_env(home, {
         "PATH": str(shim) + os.pathsep + os.environ.get("PATH", "")})
     result = subprocess.run(
@@ -3903,6 +3912,103 @@ def probe_rr0a_webhook_heartbeat_paths(wh, tmp: Path):
           f"legacy={next((l for l in legacy_status.splitlines() if 'Heartbeat (' in l), '')!r}")
 
 
+# ── gateway liveness: canonical matcher, never an argv substring ─────────────
+
+# Апстрим запрещает определять личность процесса по подстроке argv
+# ("Never infer process identity from argv substrings", hermes_cli/AGENTS.md).
+# Апдейт 2026-09-30 сменил запуск gateway на runpy, и pgrep-подстрока
+# "hermes_cli.main gateway run" перестала совпадать: 33 ложных «процесс НЕ
+# НАЙДЕН» в watchdog и — хуже — тихий exit 0 в gateway-liveness.sh, то есть
+# страховщик вообще не проверял живость. Проба закрывает оба класса отката:
+# возврат argv-матчера и потерю ветки rc=2 («матчер недоступен» ≠ «мёртв»).
+
+_ARGV_SUBSTRING_MATCHERS = ("hermes_cli.main gateway run",
+                            "hermes_cli.main", "gateway run")
+
+
+def _gateway_caller_text(name: str) -> str:
+    return (REPO / "scripts" / name).read_text(encoding="utf-8")
+
+
+def probe_gwmatcher_no_argv_substring(tmp: Path):
+    """No caller may identify the gateway by an argv substring again."""
+    offenders: list[str] = []
+    for name in ("hermes-watchdog.sh", "gateway-liveness.sh"):
+        text = _gateway_caller_text(name)
+        # Только исполняемые pgrep-вызовы: комментарий, объясняющий запрет,
+        # легален (и обязателен), а вот живой pgrep по argv — нет.
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "pgrep" not in stripped:
+                continue
+            if any(sub in stripped for sub in _ARGV_SUBSTRING_MATCHERS):
+                offenders.append(f"{name}: {stripped[:70]}")
+    check("gwmatcher_no_argv_substring", not offenders,
+          f"offenders={offenders}")
+
+
+def probe_gwmatcher_helper_present(tmp: Path):
+    """The canonical matcher exists, is in the deploy manifest, and has no
+    unresolved markers — иначе deploy установит вызывающие скрипты без него."""
+    helper = REPO / "scripts" / "hermes-gateway-pids.py"
+    deploy = (REPO / "deploy.sh").read_text(encoding="utf-8")
+    check("gwmatcher_helper_present", helper.is_file(), f"helper={helper.is_file()}")
+    check("gwmatcher_helper_in_manifest",
+          "hermes-gateway-pids.py" in deploy,
+          "helper listed in deploy.sh manifest")
+    if helper.is_file():
+        text = helper.read_text(encoding="utf-8")
+        check("gwmatcher_helper_no_markers", "@" not in text.replace("@staticmethod", ""),
+              "helper carries no template markers")
+        rc = subprocess.run([sys.executable, str(helper), "--count"],
+                            capture_output=True, timeout=60)
+        # 2 = matcher unavailable (нет Hermes install) — честный отказ, не падение;
+        # 0/1 = окружение ответило. Требование: НЕ traceback.
+        check("gwmatcher_helper_executable",
+              rc.returncode in (0, 1, 2) and b"Traceback" not in rc.stderr,
+              f"rc={rc.returncode}")
+
+
+def probe_gwmatcher_rc2_not_death(tmp: Path):
+    """rc=2 («матчер недоступен») не должен трактоваться как «процесс мёртв».
+
+    Гоняем НАСТОЯЩИЙ шелл-блок gateway-liveness.sh с подсунутым helper,
+    который всегда возвращает 2, и требуем, чтобы скрипт НЕ ушёл в рестарт
+    и записал в лог честный ПРОПУСК вместо алерта о смерти процесса."""
+    home = tmp / "gwmatcher-home"
+    bindir = home / "scripts"
+    bindir.mkdir(parents=True, exist_ok=True)
+    # Стаб вызывается как `python3 <helper>`, поэтому обязан быть Python-сценарием:
+    # shell-стаб вернул бы SyntaxError → rc=1 («мёртв»), а нам нужен именно rc=2.
+    stub = bindir / "hermes-gateway-pids.py"
+    write(stub, "import sys\nsys.exit(2)\n")
+    log = home / "logs" / "liveness.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    # Только блок принятия решения, изолированный от systemd/curl: покрываем
+    # ровно то место, где rc=2 обязан стать «не проверил», а не «умер».
+    src = _gateway_caller_text("gateway-liveness.sh")
+    anchor = 'if GATEWAY_PIDS=$(python3 "$HOME/scripts/hermes-gateway-pids.py"'
+    assert anchor in src, "gateway-liveness.sh no longer calls the canonical matcher"
+    start = src.index(anchor)
+    end = src.index("fi", src.index('if [ -z "$GATEWAY_PIDS" ]; then', start)) + 2
+    block = src[start:end]
+    harness = bindir / "harness.sh"
+    # Блок сам делает `exit 0`, поэтому запускаем его в ПОДПРОЦЕССЕ: иначе
+    # `exit` унёс бы весь harness и мы не увидели бы код возврата.
+    # HOME выставляем в окружении: скрипт сам адресует helper через $HOME.
+    write(harness, "set -u\nLOG=" + str(log) + "\n(\n" + block + "\n)\necho \"EXITED:$?\"\n")
+    env = _probe_subprocess_env(home)
+    rc = subprocess.run(["bash", str(harness)], capture_output=True, timeout=60,
+                        env=env)
+    out = rc.stdout.decode(errors="ignore")
+    log_text = log.read_text(encoding="utf-8") if log.exists() else ""
+    check("gwmatcher_rc2_not_death",
+          "EXITED:0" in out and "НЕ НАЙДЕН" not in out and "ПРОПУСК" in log_text,
+          f"stdout={out.strip()[:120]!r} log={log_text.strip()[:120]!r} stderr={rc.stderr.decode(errors='ignore').strip()[:160]!r}")
+
+
 # ── runner ──────────────────────────────────────────────────────────────────
 
 
@@ -5076,6 +5182,10 @@ def main() -> int:
     probe_telegram_py_form_send_canary(ft, tmp)
     probe_telegram_static_audit_no_argv_leak(tmp)
     probe_register_commands_env_token_canary(tmp)
+
+    probe_gwmatcher_no_argv_substring(tmp)
+    probe_gwmatcher_helper_present(tmp)
+    probe_gwmatcher_rc2_not_death(tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

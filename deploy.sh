@@ -108,8 +108,12 @@ deploy_template() {
 #    инфраструктура, wildcard-раскладка по каталогу запрещена) ──────────────
 
 # CORE: локальный мониторинг и самозащита (внешнее — только TG-алерты)
-CORE_HOME_SCRIPTS=(hermes-watchdog.sh auto-remediate.sh check-updates.sh \
-                   network-guard.sh collect-metrics.sh send-monitoring-report.sh)
+# hermes-gateway-pids.py — канонический матчер живости gateway, зовётся
+# hermes-watchdog.sh и gateway-liveness.sh; без него оба считают gateway
+# мёртвым (или, наоборот, молча пропускают проверку). Идёт в $HOME_DIR/scripts.
+CORE_HOME_SCRIPTS=(hermes-watchdog.sh hermes-gateway-pids.py auto-remediate.sh \
+                   check-updates.sh network-guard.sh collect-metrics.sh \
+                   send-monitoring-report.sh)
 CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.sh ssl-expiry-check.sh)
 
 # LOCAL_SERVICES: opt-in сборщик снимка + консьюмер (манифест, гистерезис,

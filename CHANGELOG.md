@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Gateway liveness detection no longer infers process identity from an `argv`
+  substring. `hermes-watchdog.sh` and `gateway-liveness.sh` looked the gateway
+  up with `pgrep -f "hermes_cli.main gateway run"`; upstream forbids that
+  heuristic, and once a Hermes update switched startup to `runpy` the pattern
+  stopped matching. Symptoms differed by caller: the watchdog logged repeated
+  false "Gateway процесс НЕ НАЙДЕН", while `gateway-liveness.sh` was worse —
+  its guard was shaped `if ! pgrep …; then exit 0`, so a non-match made the
+  script exit successfully **without ever checking liveness**, silently
+  disabling the safety net. Both callers now use a new helper,
+  `hermes-gateway-pids.py`, which delegates to the upstream matcher
+  `gateway.status.looks_like_gateway_command_line` (`pgrep` is kept only to
+  narrow candidates cheaply) and filters by the current `HERMES_HOME` install.
+  The helper distinguishes three outcomes — found, not found, and matcher
+  unavailable (exit code 2) — and callers treat an unavailable matcher as "not
+  verified", never as "dead", so a broken environment can no longer quietly
+  switch the guard off. It re-execs under the Hermes venv because the cron
+  `python3` cannot import `gateway`, which would otherwise make the helper
+  unavailable exactly where the check is required. Regression probes cover the
+  argv-substring ban, manifest presence, and the `rc=2` path.
+
 ### Added
 
 - Opt-in `MODULE_LOCAL_SERVICES` monitoring (OFF by default): deploy now ships a

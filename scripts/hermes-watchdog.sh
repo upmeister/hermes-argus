@@ -216,15 +216,32 @@ fi
 
 # ── 2. Проверка процесса gateway ─────────────────────────────────────────
 log "🔍 Проверка процесса gateway..."
-GATEWAY_PIDS=$(pgrep -f "hermes_cli.main gateway run" 2>/dev/null || true)
-
-if [ -z "$GATEWAY_PIDS" ]; then
-    track_problem "gateway_proc" "Gateway" "❌ <b>Gateway процесс НЕ НАЙДЕН!</b> Hermes gateway не запущен" 1
-    log "❌ Gateway процесс не найден"
-else
-    PID_COUNT=$(echo "$GATEWAY_PIDS" | wc -l)
+# 2026-09-30: было pgrep -f "hermes_cli.main gateway run" — argv-подстрока,
+# которую апстрим прямо запрещает. Апдейт Hermes сменил форму запуска на
+# runpy, паттерн перестал совпадать → 33 ложных «процесс НЕ НАЙДЕН» за 3 часа
+# (и ложные «найден» от самосовпадения pgrep). Теперь канонический матчер
+# gateway.status.looks_like_gateway_command_line. Код 2 = матчер недоступен:
+# тогда процесс НЕ считаем мёртвым (иначе тихо выключим страховщик).
+GW_HELPER="$HOME_DIR/scripts/hermes-gateway-pids.py"
+# if/else, а не `&& GW_STATE=alive || GW_STATE=$?`: в цепочке &&/|| $?
+# относится к выражению целиком, и "alive" не совпало бы с 0.
+if [ -f "$GW_HELPER" ] && GATEWAY_PIDS=$(python3 "$GW_HELPER" 2>/dev/null); then
+    PID_COUNT=$(echo "$GATEWAY_PIDS" | grep -c . )
     OKS+=("✅ Gateway: ${PID_COUNT} процесс(ов)")
     log "✅ Gateway процесс(ов): ${PID_COUNT}"
+else
+    GW_RC=$?
+    if [ "$GW_RC" -eq 2 ]; then
+        log "⚠️ Проверка gateway невозможна (матчер недоступен) — НЕ считаю процесс мёртвым"
+        OKS+=("⚠️ Gateway: проверка невозможна (матчер недоступен)")
+    elif [ "$GW_RC" -eq 1 ]; then
+        track_problem "gateway_proc" "Gateway" "❌ <b>Gateway процесс НЕ НАЙДЕН!</b> Hermes gateway не запущен" 1
+        log "❌ Gateway процесс не найден"
+    else
+        # helper отсутствует (rc 127) или не исполняем — это НЕ «мёртв»
+        log "⚠️ Матчер gateway недоступен ($GW_HELPER) — НЕ считаю процесс мёртвым"
+        OKS+=("⚠️ Gateway: матчер недоступен ($GW_HELPER)")
+    fi
 fi
 
 # ── 3. Проверка диска ────────────────────────────────────────────────────

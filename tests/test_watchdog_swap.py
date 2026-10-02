@@ -70,9 +70,21 @@ class WatchdogSwapTests(unittest.TestCase):
         (self.bin / "curl").write_text(
             "#!/bin/bash\nprintf '200'\n", encoding="utf-8"
         )
+        # 2026-10-02: watchdog определяет живость gateway каноническим матчером
+        # $HOME_DIR/scripts/hermes-gateway-pids.py, а не pgrep по argv. Прежний
+        # шим pgrep стал мёртвым кодом, и без живого helper блок уходил в ветку
+        # «матчер недоступен» — цикл не засчитывался как плохой, и тест гистерезиса
+        # вёл себя иначе, чем на боевом скрипте. Ставим helper в scripts/ рядом
+        # с отрендеренным шаблоном: тот же путь, что и в проде.
         (self.bin / "pgrep").write_text(
             "#!/bin/bash\nprintf '1234\\n'\n", encoding="utf-8"
         )
+        helper = self.home / "scripts" / "hermes-gateway-pids.py"
+        helper.parent.mkdir(parents=True, exist_ok=True)
+        # Вызов идёт как `python3 <helper>`: стаб обязан быть Python-сценарием,
+        # иначе SyntaxError → rc=1 → «процесс мёртв».
+        helper.write_text("print(1234)\n", encoding="utf-8")
+        helper.chmod(0o755)
         (self.bin / "df").write_text(
             "#!/bin/bash\n"
             "printf 'Filesystem 1K-blocks Used Available Use%% Mounted on\\n'\n"
