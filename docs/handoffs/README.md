@@ -19,8 +19,9 @@ current selected-task pointer.
 
 Current selected task:
 
-- **RR1a** — managed cron ownership. RR0a/b/c are merged; maintainer reports
-  deployment. Read the production dependency audit before the selected contract.
+- **RR1a** — managed cron ownership — IMPLEMENTED / PR #68, awaiting
+  maintainer merge; reviewer: **Codex** (verdict after one remediation pass).
+  Production rollout stays separately authorized via DEPLOY_CHECKLIST.
 
 Completed:
 
@@ -73,7 +74,7 @@ R1c DONE
  -> RR0a DONE / PR #51
  -> RR0b DONE / PR #63
  -> RR0c DONE / PR #65
- -> RR1a managed cron ownership                 <-- CURRENT CONTRACT
+ -> RR1a managed cron ownership                 PR #68 (awaiting merge)
  -> RR1b dependency/preflight/config and module payloads
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration

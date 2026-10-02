@@ -263,7 +263,7 @@ R1c DONE
  -> RR0a DONE / PR #51
  -> RR0b DONE / PR #63
  -> RR0c DONE / PR #65
- -> RR1a managed cron ownership                 <-- CURRENT CONTRACT
+ -> RR1a managed cron ownership                 PR #68 (awaiting merge)
  -> RR1b dependency/preflight/config and reproducible module payloads
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration

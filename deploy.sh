@@ -188,15 +188,22 @@ is_known_generated_form() {
         # (молча не работал под /bin/sh); заменяется формой с /bin/bash -c.
         "*/5 * * * * set -a; source $HERMES_DIR/.env; set +a; $HOME_DIR/scripts/heartbeat.sh >> $HERMES_DIR/logs/heartbeat.log 2>&1") return 0 ;;
         "*/5 * * * * /bin/bash -c 'set -a; source $HERMES_DIR/.env; set +a; exec $HOME_DIR/scripts/heartbeat.sh' >> $HERMES_DIR/logs/heartbeat.log 2>&1") return 0 ;;
-        # LOCAL_SERVICES: producer-only легаси-форма (миграционные пробы PR #55)
+        # LOCAL_SERVICES: producer-only форма (миграционные пробы PR #55) и
+        # комбинированные формы, которые ставил baseline-deploy: bare-source
+        # (до f99eee3) и bash-форма (после). Без них ON дал бы два job'а, а
+        # OFF оставил бы старый работать вне блока.
         "*/5 * * * * python3 $HERMES_DIR/scripts/service-status-snapshot.py --quiet >> $HERMES_DIR/logs/service-status.log 2>&1") return 0 ;;
+        "$LOCAL_SERVICES_CRON_LINE") return 0 ;;
+        "*/5 * * * * python3 $HERMES_DIR/scripts/service-status-snapshot.py --quiet >> $HERMES_DIR/logs/service-status.log 2>&1; set -a; source $HERMES_DIR/.env; set +a; python3 $HERMES_DIR/scripts/local_services_check.py >> $HERMES_DIR/logs/local-services.log 2>&1") return 0 ;;
         *) return 1 ;;
     esac
 }
 
 reconcile_argus_cron() {
-    local current outside="" line in_block=0 saw_block=0
+    local crontab_tmp desired_tmp read_err line
+    local in_block=0 saw_block=0 phase="before"
     local begin_count end_count adopted=0 ambiguous=0
+    local before="" after="" kept="" norm_line
     if ! command -v crontab >/dev/null 2>&1; then
         echo "   🚨 crontab недоступен — reconciliation managed-блока невозможен, fail closed" >&2
         return 1
@@ -206,34 +213,37 @@ reconcile_argus_cron() {
         echo "   🚨 crontab: параллельный deploy уже выполняет reconciliation (lock: $CRON_LOCK_FILE) — repeat later" >&2
         return 1
     fi
-    # Чтение: «нет crontab» — валидный пустой стейт; прочий сбой — fail closed.
-    local read_err
-    read_err=$(mktemp)
-    if current=$(crontab -l 2>"$read_err"); then
-        :
-    elif grep -q "no crontab for" "$read_err"; then
-        current=""
-    else
-        echo "   🚨 crontab -l завершился с неопознанной ошибкой — не трактую как пустой crontab, fail closed" >&2
-        rm -f "$read_err"
-        return 1
+    crontab_tmp=$(mktemp); desired_tmp=$(mktemp); read_err=$(mktemp)
+    # Чтение в файл (не в переменную): переводы строк сохраняются байт-в-байт.
+    # «нет crontab» — валидный пустой стейт; прочий сбой — fail closed.
+    if ! crontab -l >"$crontab_tmp" 2>"$read_err"; then
+        if grep -q "no crontab for" "$read_err"; then
+            : > "$crontab_tmp"
+        else
+            echo "   🚨 crontab -l завершился с неопознанной ошибкой — не трактую как пустой crontab, fail closed" >&2
+            rm -f "$crontab_tmp" "$desired_tmp" "$read_err"
+            return 1
+        fi
     fi
     rm -f "$read_err"
 
-    begin_count=$(grep -Fxc "$CRON_BLOCK_BEGIN" <<< "$current" || true)
-    end_count=$(grep -Fxc "$CRON_BLOCK_END" <<< "$current" || true)
+    begin_count=$(grep -Fxc "$CRON_BLOCK_BEGIN" "$crontab_tmp" || true)
+    end_count=$(grep -Fxc "$CRON_BLOCK_END" "$crontab_tmp" || true)
     if [ "$begin_count" -gt 1 ] || [ "$end_count" -gt 1 ]; then
         echo "   🚨 crontab: несколько маркеров managed-блока (BEGIN=$begin_count END=$end_count) — исправь разметку вручную, deploy прерван" >&2
+        rm -f "$crontab_tmp" "$desired_tmp"
         return 1
     fi
     if [ "$begin_count" -ne "$end_count" ]; then
         echo "   🚨 crontab: незакрытый managed-блок (BEGIN=$begin_count END=$end_count) — исправь разметку вручную, deploy прерван" >&2
+        rm -f "$crontab_tmp" "$desired_tmp"
         return 1
     fi
 
-    # Разбор: строки вне блока сохраняются дословно (включая комментарии,
-    # пустые строки, env-объявления); содержимое блока заменяется целиком.
-    while IFS= read -r line; do
+    # Разбор: строки вне блока сохраняются дословно (комментарии, пустые строки,
+    # env-объявления) СОХРАНЯЯ ПОЗИЦИЮ относительно блока — cron-переменные
+    # действуют на последующие задания, перенос блока в конец недопустим.
+    while IFS= read -r line || [ -n "$line" ]; do
         if [ "$line" = "$CRON_BLOCK_BEGIN" ]; then
             in_block=1
             saw_block=1
@@ -241,14 +251,22 @@ reconcile_argus_cron() {
         fi
         if [ "$line" = "$CRON_BLOCK_END" ]; then
             in_block=0
+            phase="after"
             continue
         fi
         if [ "$in_block" -eq 0 ]; then
-            outside+="$line"$'\n'
+            if [ "$phase" = "before" ]; then
+                before+="$line"$'
+'
+            else
+                after+="$line"$'
+'
+            fi
         fi
-    done <<< "$current"
+    done < "$crontab_tmp"
     if [ "$in_block" -ne 0 ]; then
         echo "   🚨 crontab: BEGIN без END (перевёрнутая/незакрытая разметка) — исправь вручную, deploy прерван" >&2
+        rm -f "$crontab_tmp" "$desired_tmp"
         return 1
     fi
 
@@ -256,9 +274,8 @@ reconcile_argus_cron() {
     # сгенерированные формы уходят в управляемый блок; чужие/кастомные строки
     # сохраняются. Имена наших скриптов в сохранённых строках — счётчиком,
     # без печати сырого текста команд.
-    if [ "$saw_block" -eq 0 ] && [ -n "$current" ]; then
-        local kept="" norm_line
-        while IFS= read -r line; do
+    if [ "$saw_block" -eq 0 ] && [ -s "$crontab_tmp" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
             if [ -n "$line" ]; then
                 norm_line=${line//'~/'/"$HOME_DIR/"}
                 if is_known_generated_form "$norm_line"; then
@@ -270,25 +287,41 @@ reconcile_argus_cron() {
                         ambiguous=$((ambiguous + 1)) ;;
                 esac
             fi
-            kept+="$line"$'\n'
-        done <<< "$current"
-        outside="$kept"
+            kept+="$line"$'
+'
+        done < "$crontab_tmp"
+        before="$kept"
+        after=""
     fi
 
-    # Композиция: снаружи + (блок при непустом расписании).
-    local desired="$outside"
-    if [ -n "$SCHEDULE" ]; then
-        desired+="$CRON_BLOCK_BEGIN"$'\n'"$SCHEDULE${CRON_BLOCK_END}"$'\n'
+    # Композиция: при существующем блоке — замена НА ПРЕЖНЕМ МЕСТЕ (cron-env
+    # до блока продолжают действовать на него); при первом создании блок
+    # добавляется в конец, порядок сохранённых строк не меняется.
+    : > "$desired_tmp"
+    printf '%s' "$before" >> "$desired_tmp"
+    if [ "$saw_block" -eq 1 ] && [ -n "$SCHEDULE" ]; then
+        printf '%s\n' "$CRON_BLOCK_BEGIN" >> "$desired_tmp"
+        printf '%s' "$SCHEDULE" >> "$desired_tmp"
+        printf '%s\n' "$CRON_BLOCK_END" >> "$desired_tmp"
+    fi
+    printf '%s' "$after" >> "$desired_tmp"
+    if [ "$saw_block" -eq 0 ] && [ -n "$SCHEDULE" ]; then
+        printf '%s\n' "$CRON_BLOCK_BEGIN" >> "$desired_tmp"
+        printf '%s' "$SCHEDULE" >> "$desired_tmp"
+        printf '%s\n' "$CRON_BLOCK_END" >> "$desired_tmp"
     fi
 
-    if [ "${desired%$'\n'}" = "$current" ] || [ "$desired" = "$current" ]; then
+    if cmp -s "$crontab_tmp" "$desired_tmp"; then
         echo "   🕒 crontab: managed-блок актуален, изменений нет"
+        rm -f "$crontab_tmp" "$desired_tmp"
         return 0
     fi
-    if ! printf '%s' "$desired" | crontab - 2>/dev/null; then
+    if ! crontab - <"$desired_tmp" 2>/dev/null; then
         echo "   🚨 не удалось записать crontab — fail closed, deploy прерван" >&2
+        rm -f "$crontab_tmp" "$desired_tmp"
         return 1
     fi
+    rm -f "$crontab_tmp" "$desired_tmp"
     local block_jobs=0
     if [ -n "$SCHEDULE" ]; then
         block_jobs=$(printf '%s' "$SCHEDULE" | grep -c . || true)

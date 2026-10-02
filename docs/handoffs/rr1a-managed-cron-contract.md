@@ -1,6 +1,7 @@
 # RR1a contract — managed Argus cron ownership
 
-Status: **SELECTED / READY FOR BUILDER**
+Status: **IMPLEMENTED / PR #68 — awaiting maintainer merge and separate
+production authorization**
 
 ## Authority and delivery
 
