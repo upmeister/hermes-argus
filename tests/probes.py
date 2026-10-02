@@ -1684,15 +1684,19 @@ def probe_deploy_secret_not_in_argv(tmp: Path):
     result = subprocess.run(["bash", str(REPO / "deploy.sh"), str(config)],
                             cwd=REPO, env=env, capture_output=True, text=True, timeout=120)
     argv_text = argv_log.read_text(encoding="utf-8") if argv_log.exists() else ""
-    rendered = home / "scripts" / "send-monitoring-report.sh"
+    # RR0b: auto-remediate.sh — CORE-сентинел рендера @WATCHDOG_CHAT_ID@; снятый
+    # send-monitoring-report.sh не должен появиться даже как пустой артефакт.
+    rendered = home / "scripts" / "auto-remediate.sh"
     rendered_ok = rendered.exists() and chat in rendered.read_text(encoding="utf-8")
+    removed_rendered = (home / "scripts" / "send-monitoring-report.sh").exists()
     leftover_leak = any(token in p.read_text(encoding="utf-8", errors="ignore")
                         for p in tmpd.iterdir() if p.is_file())
     check("deploy_secret_not_in_argv",
           result.returncode == 0 and token not in argv_text and chat not in argv_text
-          and rendered_ok and not leftover_leak,
+          and rendered_ok and not removed_rendered and not leftover_leak,
           f"rc={result.returncode} sed_calls={len(argv_text.splitlines())} "
-          f"chat_rendered={rendered_ok} leftover_leak={leftover_leak}")
+          f"chat_rendered={rendered_ok} removed_rendered={removed_rendered} "
+          f"leftover_leak={leftover_leak}")
 
 
 def probe_deploy_gh_heartbeat_secret_not_in_argv(tmp: Path):
@@ -1977,40 +1981,6 @@ def probe_curl_config_stdin_seam(tmp: Path):
           f"bad_err={(r_bad.stderr or '').strip()[:60]!r}")
 
 
-def probe_telegram_json_send_argv_canary(tmp: Path):
-    """R1b shape A (JSON sendMessage, response discarded), deployed-equivalent
-    send-monitoring-report.sh: token canary stays off curl argv, URL arrives on
-    curl stdin, request wiring (proxy/timeout/headers/payload) unchanged."""
-    home = tmp / "tg-json-home"
-    write(home / ".hermes" / ".env",
-          f"WATCHDOG_BOT_TOKEN={R1B_TOKEN}\nWATCHDOG_CHAT_ID={R1B_CHAT}\n")
-    # Deployed equivalent: deploy substitutes @WATCHDOG_CHAT_ID@ (R1a probes
-    # prove render parity); the probe copy applies the same substitution.
-    src = (REPO / "scripts" / "send-monitoring-report.sh").read_text(encoding="utf-8")
-    deployed = tmp / "send-monitoring-report.deployed.sh"
-    write(deployed, src.replace("@WATCHDOG_CHAT_ID@", R1B_CHAT))
-    shim = tmp / "shim-tgjson"
-    shim.mkdir()
-    argv_log, stdin_log = _install_curl_shim(shim, tmp, "json", stdout="HTTP 000")
-    env = _path_shim_env(home, {
-        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", "")})
-    result = subprocess.run(
-        ["bash", str(deployed), "probe msg", "silent"],
-        cwd=REPO, env=env, input=b"", capture_output=True, timeout=60)
-    argv = _read_or(argv_log)
-    stdin_data = _read_or(stdin_log)
-    check("telegram_json_send_argv_canary",
-          result.returncode == 0
-          and R1B_TOKEN not in argv
-          and f"url = https://api.telegram.org/bot{R1B_TOKEN}/sendMessage" in stdin_data
-          and "-H" in argv and "Content-Type: application/json" in argv
-          and "--max-time" in argv and "--proxy" in argv
-          and R1B_CHAT in argv,
-          f"rc={result.returncode} argv_leak={R1B_TOKEN in argv} "
-          f"stdin_url={'url = https://api.telegram.org' in stdin_data} "
-          f"wiring={'-H' in argv and '--proxy' in argv and R1B_CHAT in argv}")
-
-
 def probe_telegram_form_send_argv_canary(tmp: Path):
     """R1b shape B (form-encoded sendMessage, recovery branch), real script
     gateway-liveness.sh: canary off curl argv, URL on stdin, form payload and
@@ -2253,7 +2223,6 @@ def probe_telegram_static_audit_no_argv_leak(tmp: Path):
         "scripts/check-updates.sh": "printf 'url = ",
         "scripts/watchdog-health.sh": "printf 'url = ",
         "scripts/ssl-expiry-check.sh": "printf 'url = ",
-        "scripts/send-monitoring-report.sh": "printf 'url = ",
         "scripts/integration-discover-wrapper.sh": "printf 'url = ",
         "scripts/health-check-v2-wrapper.sh": "printf 'url = ",
         "scripts/dashboard-liveness.sh": "printf 'url = ",
@@ -2399,6 +2368,45 @@ def _r1c_save_outcome(tmp: Path, tag: str, result) -> None:
     """Сохранить stdout/stderr пробы как артефакты для boundary-скана (§7.6)."""
     write(tmp / f"{tag}-out.txt", result.stdout)
     write(tmp / f"{tag}-err.txt", result.stderr)
+
+
+def probe_rr0b_removed_surfaces_stay_removed():
+    """RR0b: снятые поверхности не возвращаются; удержанные настройки сохраняют
+    живых потребителей.
+
+    C2: send-monitoring-report.sh удалён и не числится в манифесте deploy.sh;
+    C3: scripts/legacy/ не существует; C4: HERMES_BOT_TOKEN/HERMES_BOT_UID/
+    DMS_API_KEY сняты из deploy.sh и config.env.template без остаточных ссылок,
+    а WEBHOOK_SECRET_TOKEN/DMS_SNITCH удержаны вместе с потребителями.
+    (C1 — full-режим health-check-integrations.sh — удержан на месте по правилу
+    контракта «uncertainty is not a deletion signal»; его владелец записан в
+    docs/BACKLOG.md, DEBT-004.)"""
+    problems = []
+    if (REPO / "scripts" / "send-monitoring-report.sh").exists():
+        problems.append("scripts/send-monitoring-report.sh вернулся")
+    if (REPO / "scripts" / "legacy").exists():
+        problems.append("scripts/legacy/ вернулся")
+    deploy_text = (REPO / "deploy.sh").read_text(encoding="utf-8")
+    for needle in ("send-monitoring-report", "HERMES_BOT_TOKEN",
+                   "HERMES_BOT_UID", "DMS_API_KEY"):
+        if needle in deploy_text:
+            problems.append(f"deploy.sh: {needle}")
+    template_text = (REPO / "config" / "config.env.template").read_text(encoding="utf-8")
+    if "DMS_API_KEY" in template_text:
+        problems.append("config.env.template: DMS_API_KEY")
+    registry_text = (REPO / "registry.yaml").read_text(encoding="utf-8")
+    if "HERMES_BOT_TOKEN" in registry_text or "DMS_API_KEY" in registry_text:
+        problems.append("registry.yaml: снятая настройка")
+    gen_text = (REPO / "scripts" / "gen-registry.py").read_text(encoding="utf-8")
+    if "WEBHOOK_SECRET_TOKEN" not in gen_text or "DMS_SNITCH" not in gen_text:
+        problems.append("gen-registry.py: потеряна удержанная настройка")
+    webhook_text = (REPO / "scripts" / "webhook.py").read_text(encoding="utf-8")
+    if "WEBHOOK_SECRET_TOKEN" not in webhook_text:
+        problems.append("webhook.py: потерян потребитель WEBHOOK_SECRET_TOKEN")
+    hb_text = (REPO / "scripts" / "heartbeat.sh").read_text(encoding="utf-8")
+    if "DMS_SNITCH" not in hb_text:
+        problems.append("heartbeat.sh: потерян потребитель DMS_SNITCH")
+    check("rr0b_removed_surfaces_stay_removed", not problems, f"problems={problems}")
 
 
 def probe_r1c_shell_full_auth_not_in_argv(tmp: Path):
@@ -5133,6 +5141,8 @@ def main() -> int:
     probe_mcpoff_render_counter_exclusion(wh)
     probe_mcpoff_other_skip_reasons_unchanged(hc, tmp)
     probe_mcpoff_unrelated_discovery_unchanged(tmp)
+    # RR0b: снятые поверхности не возвращаются (статическая проверка)
+    probe_rr0b_removed_surfaces_stay_removed()
     # R1c: Authorization headers out of child argv (shell + ai-deep-check)
     probe_r1c_shell_full_auth_not_in_argv(tmp)
     probe_r1c_quick_github_header_not_in_argv(tmp)
@@ -5174,7 +5184,6 @@ def main() -> int:
     probe_git_credential_helper_real(tmp)
 
     probe_curl_config_stdin_seam(tmp)
-    probe_telegram_json_send_argv_canary(tmp)
     probe_telegram_form_send_argv_canary(tmp)
     probe_telegram_json_pin_resp_canary(tmp)
     probe_telegram_getme_module_canary(hc, tmp)

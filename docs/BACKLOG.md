@@ -36,3 +36,56 @@ acceptance criteria here.
   `check_mcp`, or when Hermes changes the command contract again.
 - **Scope guard:** do not fold this into MCP disabled-server handling or an
   unrelated health-check change.
+
+### DEBT-002 — dead deploy substitutions outside the RR0b candidate set
+
+- **Status:** deferred maintenance
+- **Source:** RR0b C4 owner-matrix search (marker → template-consumer mapping)
+- **Evidence:** the deploy sed script still substitutes `@BREAKER_MAX@`,
+  `@DMS_SNITCH@` and `@WATCHDOG_BOT_TOKEN@`, but no template in `scripts/`,
+  `modules/` or `config/` contains those markers. The settings themselves are
+  alive through runtime `.env` readers (`webhook.py` for `BREAKER_MAX`,
+  `heartbeat.sh` and the registry kit for `DMS_SNITCH`, watchdog/alert
+  scripts for `WATCHDOG_BOT_TOKEN`) — only the substitution lines are dead.
+- **Required follow-up:** drop the three `printf 's/@…@/…/g'` lines from
+  `deploy.sh` in a dedicated maintenance pass.
+- **Trigger:** next deploy.sh maintenance task; not RR0c/RR1 by default.
+- **Scope guard:** RR0b was scoped to `HERMES_BOT_TOKEN`, `HERMES_BOT_UID`,
+  `DMS_API_KEY` and the webhook/Netdata remnants; these three substitutions
+  were deliberately left in place.
+
+### DEBT-003 — stale provenance comments on secret-delivery history
+
+- **Status:** deferred maintenance (cosmetic)
+- **Source:** RR0b C4 owner-matrix search
+- **Evidence:** `scripts/gen-registry.py` header still says "DMS_* live as
+  deploy-time substitutions inside heartbeat.sh", while `heartbeat.sh` reads
+  `DMS_SNITCH` from the runtime environment and no template carries a `@DMS_…@`
+  marker. The `scripts/webhook.py` top-of-file comment still names
+  `NETDATA_WEBHOOK_SECRET`, which has no deploy, generator or runtime surface
+  anywhere in the repository.
+- **Required follow-up:** correct both comments in a docs-level maintenance
+  pass; no behavior change expected.
+- **Trigger:** whenever those files are next touched for a functional change.
+- **Scope guard:** comment-only; do not use it to reopen RR0b deletions.
+
+### DEBT-004 — health-check-integrations full mode: uncertain owner retained
+
+- **Status:** retained in place (contract rule: uncertainty is not a deletion
+  signal); removal deferred
+- **Source:** RR0b C1 owner-matrix; review #1 on PR #63 (REMEDIATE)
+- **Evidence:** the full mode has no in-repository caller (no cron line, no
+  systemd unit, no manifest entry invokes it; the deployed integrations
+  schedule owns the structured full check via `health-check-v2-wrapper.sh`),
+  but the script header documents a historical operator entry point —
+  "Hermes cron daily no_agent" (2026-08-20) — on the maintainer's personal
+  host, which cannot be verified or disproved from the repository.
+- **Required follow-up:** maintainer verifies the live crontab on the
+  production host. If no bare invocation of
+  `~/.hermes/scripts/health-check-integrations.sh` exists, remove the full
+  mode (plus its full-only helpers) in a dedicated pass and drop this entry;
+  if it exists, either point that cron at `--quick` or at the v2 wrapper and
+  then remove the surface.
+- **Trigger:** maintainer production verification, or the RR0c/RR1 window.
+- **Scope guard:** until verified, the full mode stays exactly as shipped;
+  do not shrink or redirect it silently.
