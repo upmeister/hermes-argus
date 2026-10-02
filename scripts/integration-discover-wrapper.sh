@@ -67,7 +67,7 @@ fi
 MSG="🔌 <b>Интеграции: изменения конфига</b>
 $SUMMARY"
 MSG_ESC=$(python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" <<< "$MSG")
-proxy="${TELEGRAM_PROXY:-http://127.0.0.1:8444}"
+proxy="${TELEGRAM_PROXY:-}"
 # Токен не в argv: URL уходит в curl через -K - (config на stdin)
 printf 'url = %s\n' "https://api.telegram.org/bot${WATCHDOG_BOT_TOKEN}/sendMessage" | \
     curl -s -m 20 -x "$proxy" -K - -X POST \

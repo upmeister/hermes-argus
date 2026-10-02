@@ -44,7 +44,7 @@ kit_entries:
     group: "proxy"
     check: "tcp"
     required: false
-    description: "Smart-proxy для Telegram (по умолчанию 127.0.0.1:8444)"
+    description: "Smart-proxy для Telegram (не задан — прямой доступ)"
   - key: "CRONPING_TOKEN"
     group: "infra"
     check: "env"

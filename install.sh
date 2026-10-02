@@ -84,8 +84,15 @@ bash deploy.sh config.env
 
 # ── 5. Watcher ──────────────────────────────────────────────────────────────
 systemctl --user daemon-reload
-if systemctl --user list-unit-files | grep -q hermes-vps-kit-config.path; then
-    systemctl --user enable --now hermes-vps-kit-config.path
+# RR0c (B3): ровно один активный producer. Legacy-юнит, который включён ИЛИ
+# фактически активен (active-but-not-enabled: ручной старт, транзиентный
+# запуск), не переключается автоматически — оператор делает хэндофф вручную.
+if systemctl --user is-enabled hermes-vps-kit-config.path >/dev/null 2>&1 \
+   || systemctl --user is-active hermes-vps-kit-config.path >/dev/null 2>&1; then
+    echo "📡 Discover-вотчер: живой legacy hermes-vps-kit-config.path — оставляю его;"
+    echo "   хэндофф на hermes-argus-config.path — вручную (см. вывод deploy.sh)."
+elif systemctl --user list-unit-files | grep -q hermes-argus-config.path; then
+    systemctl --user enable --now hermes-argus-config.path
     echo "📡 Discover-вотчер config.yaml включён (path unit + cron-страховка)."
 fi
 

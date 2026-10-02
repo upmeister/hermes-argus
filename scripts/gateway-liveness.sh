@@ -62,7 +62,7 @@ send_recovery() {
   btok=$(grep -E '^WATCHDOG_BOT_TOKEN=' "$H/.env" | cut -d= -f2-)
   chtok=$(grep -E '^WATCHDOG_CHAT_ID=' "$H/.env" | cut -d= -f2-)
   [ -z "$chtok" ] && chtok=@WATCHDOG_CHAT_ID@
-  prx="${TELEGRAM_PROXY:-http://127.0.0.1:8444}"
+  prx="${TELEGRAM_PROXY:-}"
   # Токен не в argv: URL уходит в curl через -K - (config на stdin)
   printf 'url = %s\n' "https://api.telegram.org/bot${btok}/sendMessage" | \
     curl -s -m 20 -x "$prx" -K - -X POST \
@@ -128,7 +128,7 @@ if [ -f "$STATE_FILE" ]; then
 fi
 date -Is > "$STATE_FILE"
 # Прямой api.telegram.org мёртв при РКН-волнах — только через telegram-smart-proxy
-proxy="${TELEGRAM_PROXY:-http://127.0.0.1:8444}"
+proxy="${TELEGRAM_PROXY:-}"
 # Токен не в argv: URL уходит в curl через -K - (config на stdin)
 printf 'url = %s\n' "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" | \
   curl -s -m 20 -x "$proxy" -K - -X POST \

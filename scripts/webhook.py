@@ -980,7 +980,7 @@ def handle_settings() -> str:
 
     lines.append("🌐 Сеть:")
     lines.append(f"• HERMES_HOST: {val('HERMES_HOST') or '127.0.0.1'} · NETDATA_PORT: {val('NETDATA_PORT') or '19999'}")
-    lines.append(f"• TELEGRAM_PROXY: {val('TELEGRAM_PROXY') or 'дефолт 127.0.0.1:8444'}")
+    lines.append(f"• TELEGRAM_PROXY: {val('TELEGRAM_PROXY') or '— не задан (прямой доступ)'}")
     lines.append("")
 
     lines.append(f"🎚 Поведение: BREAKER_MAX = {val('BREAKER_MAX') or '3'} · "
