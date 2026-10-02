@@ -240,7 +240,7 @@ drift.
 
 Current supported research baseline:
 
-- Hermes Agent v0.21.4 / `v2026.9.21`;
+- Hermes Agent v0.21.5 / `v2026.9.24`;
 - Linux/systemd-oriented personal-server deployment;
 - Ubuntu 24.04 is the current installer test target.
 
@@ -260,8 +260,10 @@ The current path to the first public release is intentionally bounded:
 ```text
 R1c  Authorization headers out of child argv — DONE
  -> R2a/R2a.1  fail-safe discovery hardening — DONE
- -> R2c.1  canonical fallback_providers inventory — NOW
- -> RR0  legacy/personal-dependency reduction
+ -> R2c.1  canonical fallback_providers inventory — DONE / PR #49
+ -> RR0a  default-module/runtime truth — DONE / PR #51
+ -> RR0b  dead/duplicate runtime removal — NOW
+ -> RR0c  public defaults/naming migration
  -> RR1  installer/dependency/managed-cron hardening
  -> RR2  runtime i18n: English + Russian
  -> RR3  clean install / upgrade / uninstall acceptance
@@ -273,6 +275,9 @@ R1c  Authorization headers out of child argv — DONE
 Broader auxiliary fallback-role discovery (R2c.2) and multi-profile monitoring
 remain separate post-RC/deferred tracks. Release-affecting legacy/personal
 cleanup is now an explicit pre-RC gate (RR0).
+
+The canonical gateway matcher fix is merged as PR #60; the broader R2b
+gateway-liveness redesign remains deferred.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the detailed public plan.
 
@@ -307,6 +312,8 @@ contract under [docs/handoffs/](docs/handoffs/).
 - [Integration evidence policy](docs/adr/0001-integration-evidence-policy.md)
 - [Hermes discovery boundary ADR](docs/adr/0002-hermes-discovery-sync-boundary.md)
 - [Implementation handoffs](docs/handoffs/README.md)
+- [Project backlog](docs/BACKLOG.md)
+- [Production deployment checklist](docs/DEPLOY_CHECKLIST.md)
 - [Changelog](CHANGELOG.md)
 
 Historical handoffs remain useful research records, but their presence does not
