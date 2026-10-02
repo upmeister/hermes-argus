@@ -19,7 +19,23 @@ case "$STALE_AFTER" in ''|*[!0-9]*) STALE_AFTER=180;; esac
 CHECK_INTERVAL=20 # пауза между двумя проверками (анти-ложные срабатывания)
 
 # Процесс мёртв → systemd Restart=always сам разберётся (крэш, а не зависание)
-if ! pgrep -f "hermes_cli.main gateway run" >/dev/null 2>&1; then
+# 2026-09-30: был pgrep -f "hermes_cli.main gateway run" — argv-подстрока.
+# После апдейта Hermes (форма запуска → runpy) паттерн перестал совпадать, и
+# этот блок 3 часа подряд выходил с кодом 0, НЕ ПРОВЕРИВ живость вообще.
+# Теперь канонический матчер. Код 2 = матчер недоступен → НЕ считаем мёртвым
+# (молчаливый пропуск страховщика хуже шумного отказа).
+if GATEWAY_PIDS=$(python3 "$HOME/scripts/hermes-gateway-pids.py" 2>/dev/null); then
+  :  # матчер ответил: пусто = процесс действительно мёртв
+else
+  rc=$?
+  if [ "$rc" -eq 2 ]; then
+    echo "$(date -Is) ПРОПУСК: матчер gateway недоступен (rc=2) — живость не проверена" >> "$LOG"
+    exit 0
+  fi
+  exit 0
+fi
+
+if [ -z "$GATEWAY_PIDS" ]; then
   exit 0
 fi
 
@@ -90,7 +106,8 @@ systemctl --user restart hermes-gateway
 ALIVE=0
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
   sleep 5
-  if pgrep -f "hermes_cli.main gateway run" >/dev/null 2>&1; then
+  # Тот же канонический матчер: старый pgrep здесь давал ложное «рестарт НЕ помог».
+  if python3 "$HOME/scripts/hermes-gateway-pids.py" --quiet 2>/dev/null; then
     ALIVE=1
     break
   fi
