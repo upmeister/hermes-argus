@@ -262,8 +262,11 @@ R1c DONE
  -> R2c.1 DONE / PR #49
  -> RR0a DONE / PR #51
  -> RR0b DONE / PR #63
- -> RR0c public defaults/naming migration        <-- CURRENT GATE
- -> RR1 installer/dependency/managed-cron hardening
+ -> RR0c DONE / PR #65
+ -> RR1a managed cron ownership                 <-- CURRENT CONTRACT
+ -> RR1b dependency/preflight/config and reproducible module payloads
+ -> RR1c versioned installation/update
+ -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (en + ru)
  -> RR3 release acceptance
  -> v0.1.0-rc.1
@@ -271,6 +274,12 @@ R1c DONE
 
 Public docs remain English-only. Runtime English/Russian localization is a
 release-readiness task, not permission to duplicate documentation.
+
+RR1 planning must read
+`docs/research/2026-10-03-production-deployment-dependencies.md`. Production
+contains external Netdata, egress, log rotation and Hermes L3 setup that Argus
+does not currently provision. Only RR1a is admitted for implementation; later
+slices need bounded contracts after the recorded dependency decisions.
 
 ## References
 

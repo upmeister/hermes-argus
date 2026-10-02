@@ -5,17 +5,22 @@ handoffs. **Old handoff presence is not implementation authority.**
 
 Repository `AGENTS.md` scope-control rules apply to every document here.
 
-## Active baseline — updated 2026-10-02
+## Active baseline — updated 2026-10-03
 
 Read in this order:
 
-1. `2026-09-17-next-steps-execution-baseline.md`
-2. exactly one maintainer-selected task contract.
+1. current `docs/ROADMAP.md`;
+2. [production dependency audit](../research/2026-10-03-production-deployment-dependencies.md)
+   for RR1 work;
+3. exactly one maintainer-selected task contract.
+
+The dated 2026-09-17 execution baseline remains historical research, not the
+current selected-task pointer.
 
 Current selected task:
 
-- **RR0c** — public defaults and naming migration. The implementation
-  contract is ready; RR0a and RR0b are complete.
+- **RR1a** — managed cron ownership. RR0a/b/c are merged; maintainer reports
+  deployment. Read the production dependency audit before the selected contract.
 
 Completed:
 
@@ -31,6 +36,7 @@ Completed:
 - R2c.1 canonical fallback_providers inventory — **DONE / PR #49**
 - RR0a default-module/runtime truth — **DONE / PR #51**
 - RR0b dead/duplicate runtime removal — **DONE / PR #63**
+- RR0c public defaults/naming migration — **DONE / PR #65**
 - MCP disabled-server reporting — **DONE / PR #59**
 - canonical gateway matcher maintenance fix — **DONE / PR #60**
 
@@ -38,17 +44,21 @@ Closed/upstream-gated:
 
 - `oa2-hermes-status-shadow-reopen-gate.md`
 
-## Exact current baseline
+## Implementation baseline recorded 2026-10-03
 
 ```text
-Argus main = 72a801f (merge of PR #63, 2026-10-02)
+Argus implementation baseline = 2588581a27234b6e0be2b38b29e39f29476d328e (PR #65)
 R2c.1 merged = 7d6fcf8940c26625103c78004fe69ba65fab4ccb (PR #49, 2026-09-24)
 local-services merged = 21cd7edb5bd503e3d5ce01d872b13e73f4720c2d (PR #56, 2026-09-27)
 RR0a merged = f1f9a77659b349a10983fb330badef9ef52b5996 (PR #51, 2026-09-24)
 MCP disabled-server merged = 3551b08 (PR #59, 2026-10-02)
 gateway matcher merged = b39b256 (PR #60, 2026-10-02)
 RR0b merged = 72a801f (PR #63, 2026-10-02; implementation 4fa5473, remediation 78fea55)
+RR0c merged = 2588581 (PR #65; implementation e271317, remediation 0823885)
 ```
+
+This records the latest implementation at the audit, not a promise that GitHub
+HEAD will remain unchanged. Resolve current `origin/main` before starting code.
 
 R2c.1 is confirmed against Hermes stable v0.21.5 — see the 2026-10-01 upstream
 watch. `get_fallback_chain()` is unchanged; the static inventory requires no
@@ -62,8 +72,11 @@ R1c DONE
  -> R2c.1 DONE
  -> RR0a DONE / PR #51
  -> RR0b DONE / PR #63
- -> RR0c public defaults/naming migration        <-- CURRENT CONTRACT
- -> RR1 installer/dependency/managed-cron
+ -> RR0c DONE / PR #65
+ -> RR1a managed cron ownership                 <-- CURRENT CONTRACT
+ -> RR1b dependency/preflight/config and module payloads
+ -> RR1c versioned installation/update
+ -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n: en + ru
  -> RR3 release acceptance
  -> v0.1.0-rc.1
@@ -97,8 +110,11 @@ dependency-on-Hermes list is `docs/research/hermes-argus-seams.md`.
 
 Current:
 
-- `rr0c-public-defaults-naming-migration-contract.md` — selected;
+- `rr1a-managed-cron-contract.md` — selected;
   reviewer: **Codex**.
+
+RR1b/c/d require later focused contracts. Planning input:
+[production deployment dependencies](../research/2026-10-03-production-deployment-dependencies.md).
 
 Completed:
 
@@ -106,6 +122,7 @@ Completed:
 - `rr0a-default-module-runtime-truth-contract.md` — RR0a (PR #51)
 - `rr0b-dead-runtime-removal-contract.md` — RR0b (PR #63; reviewer Codex,
   verdict PASS-TO-MAINTAINER after one remediation pass)
+- `rr0c-public-defaults-naming-migration-contract.md` — RR0c (PR #65)
 - `mcp-disabled-server-compat-contract.md` — MCP disabled-server handling
   (PR #59)
 - `r2a-baseline-degradation-followup-contract.md`

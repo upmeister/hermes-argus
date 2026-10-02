@@ -1,6 +1,10 @@
 # RR0c contract — public defaults and naming migration
 
-Status: **QUEUED AFTER RR0b / IMPLEMENTATION-READY**
+Status: **DONE / IMPLEMENTED IN PR #65**
+
+Implementation and one remediation merged into `main` on 2026-10-03 (local
+date), merge `2588581`. Maintainer reports deployment. Historical contract;
+current RR1 authority is in [the handoff index](README.md).
 
 RR0c removes maintainer-specific assumptions from a public installation while
 keeping the existing maintainer deployment migratable and explicit. It is the
