@@ -19,6 +19,19 @@ maintainer.
    an existing legacy resource, or a required migration step. Do not infer
    production state from a clean local checkout.
 
+For a new machine or a changed module set, read the
+[dependency audit](research/2026-10-03-production-deployment-dependencies.md).
+Verify the actual interpreter's packages, expected dashboard/Netdata services,
+configured delivery route, optional external heartbeat and user-manager
+persistence. Netdata API success is not notification delivery evidence, and
+Analyzer state freshness is not proof that a Hermes L3 analysis job is installed.
+Record log rotation and network-guard privileges/applicability separately.
+These prerequisites are not automatic installer behavior yet.
+
+After RR1a is implemented, read back its managed block and preserved operator
+cron. Until then, most generated entries still require manual installation;
+the contract itself is not a deployed scheduler change.
+
 ## RR0c operator migration steps (before the first RR0c deploy)
 
 These steps keep the existing maintainer production behavior unchanged when

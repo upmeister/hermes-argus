@@ -53,8 +53,11 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> R2c.1 canonical fallback_providers inventory    DONE / PR #49
  -> RR0a default-module/runtime truth               DONE / PR #51
  -> RR0b dead/duplicate runtime removal             DONE / PR #63
- -> RR0c public defaults/naming migration           NOW
- -> RR1 installer/dependency/managed-cron hardening
+ -> RR0c public defaults/naming migration            DONE / PR #65
+ -> RR1a managed cron ownership                     NOW
+ -> RR1b dependency/preflight/config and module payloads
+ -> RR1c versioned installation/update
+ -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (English + Russian)
  -> RR3 clean-install/upgrade/uninstall acceptance
  -> v0.1.0-rc.1
@@ -121,7 +124,7 @@ unchanged, so the shipped inventory needs no rework.
 The pre-release audit found release-affecting historical coupling that should be
 removed before installer hardening.
 
-High-value findings include:
+Historical audit findings included:
 
 - watchdog calls a non-existent historical `~/scripts/check-integrations.sh`;
 - default CORE self-health depends on default-OFF ANALYZER state;
@@ -145,9 +148,16 @@ omnibus refactor:
    settings have proven live consumers. C1 (full integration-check mode) is
    retained by the contract's uncertainty rule and recorded as backlog
    DEBT-004 pending maintainer verification of the live crontab.
-3. **RR0c — public defaults and naming migration — NOW.** Remove
-   maintainer-specific proxy, GitHub, identity, and resource-name assumptions
-   while preserving an explicit migration path for existing production.
+3. **RR0c — public defaults and naming migration — DONE / PR #65.** Proxy
+   choice and GitHub ownership are explicit; canonical resource names preserve
+   a bounded operator-controlled legacy handoff. Maintainer reports deployment;
+   the current checkout and installed wiring were inspected on 2026-10-03.
+
+RR0 completion does not prove that the full production monitoring environment
+is reproducible from a clean install. The remaining external dependencies and
+masked module-wiring gaps are recorded by the
+[production dependency audit](research/2026-10-03-production-deployment-dependencies.md)
+and admitted through RR1, not an unbounded reopening of RR0.
 
 Research:
 [pre-release legacy audit](research/2026-09-21-pre-release-legacy-audit.md).
@@ -156,7 +166,7 @@ Contracts:
 
 - [RR0a default-module/runtime truth](handoffs/rr0a-default-module-runtime-truth-contract.md) — complete;
 - [RR0b dead/duplicate runtime removal](handoffs/rr0b-dead-runtime-removal-contract.md) — complete (PR #63);
-- [RR0c public defaults/naming migration](handoffs/rr0c-public-defaults-naming-migration-contract.md) — current.
+- [RR0c public defaults/naming migration](handoffs/rr0c-public-defaults-naming-migration-contract.md) — complete (PR #65).
 
 The canonical gateway matcher fix in **PR #60** is merged maintenance that
 keeps watchdog and gateway liveness aligned with the current Hermes startup
@@ -174,6 +184,26 @@ After RR0 defines the truthful live module surface:
 - version-pinned stable install with explicit edge channel;
 - safe update/uninstall;
 - migration of any renamed Argus-owned resources.
+
+The maintainer-selected sequence is:
+
+1. **RR1a — managed cron ownership — selected.** One owned block, preservation
+   of operator cron and retirement of the whole-user count/backup restore.
+   [Builder contract](handoffs/rr1a-managed-cron-contract.md).
+2. **RR1b — dependencies/preflight/config — planned.** Module/interpreter
+   dependencies, Analyzer collector and shared bot payloads, optional Netdata
+   and GitHub reporting, safe private config, user-manager/privilege/network
+   applicability, log rotation and truthful L3 setup instructions.
+3. **RR1c — versioned installation/update — planned.** Explicit stable/edge
+   selection and a bounded update path.
+4. **RR1d — uninstall/resource migration — planned.** Remove only Argus-owned
+   resources, preserve external services and finish any supported naming handoff.
+
+Netdata, operator proxy infrastructure, Telegram/Discord accounts, external
+heartbeat policy and the Hermes L3 job have independent setup owners. The
+current public baseline must not silently require the maintainer's complete
+host stack. These later choices need focused contracts; RR1a installs none of
+that infrastructure.
 
 ## RR2 — runtime localization
 
@@ -247,9 +277,10 @@ R1c: closed
 R2a/R2a.1: closed and deployed
 R2c.1: closed (PR #49) and confirmed against stable v0.21.5
 RR0a/RR0b: closed (PR #51 / PR #63)
-RR0c: current release gate; required before installer hardening
+RR0c: closed (PR #65); maintainer reports deployment
+RR1: current distribution gate; RR1a contract selected
 distribution contract: incomplete
-public RC: gated by RR0 + RR1/RR2/RR3
+public RC: gated by RR1/RR2/RR3
 ```
 
 Deferred findings are tracked in [BACKLOG.md](BACKLOG.md). Production changes

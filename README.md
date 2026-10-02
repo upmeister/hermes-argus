@@ -262,9 +262,11 @@ R1c  Authorization headers out of child argv — DONE
  -> R2a/R2a.1  fail-safe discovery hardening — DONE
  -> R2c.1  canonical fallback_providers inventory — DONE / PR #49
  -> RR0a  default-module/runtime truth — DONE / PR #51
- -> RR0b  dead/duplicate runtime removal — NOW
- -> RR0c  public defaults/naming migration
- -> RR1  installer/dependency/managed-cron hardening
+ -> RR0b  dead/duplicate runtime removal — DONE / PR #63
+ -> RR0c  public defaults/naming migration — DONE / PR #65
+ -> RR1a  managed cron ownership — NOW
+ -> RR1b  dependency/preflight/config and module payloads
+ -> RR1c/RR1d  versioned lifecycle and bounded uninstall
  -> RR2  runtime i18n: English + Russian
  -> RR3  clean install / upgrade / uninstall acceptance
  -> v0.1.0-rc.1
@@ -314,6 +316,7 @@ contract under [docs/handoffs/](docs/handoffs/).
 - [Implementation handoffs](docs/handoffs/README.md)
 - [Project backlog](docs/BACKLOG.md)
 - [Production deployment checklist](docs/DEPLOY_CHECKLIST.md)
+- [Production dependency audit](docs/research/2026-10-03-production-deployment-dependencies.md)
 - [Changelog](CHANGELOG.md)
 
 Historical handoffs remain useful research records, but their presence does not
