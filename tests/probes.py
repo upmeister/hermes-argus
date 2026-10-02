@@ -1284,6 +1284,301 @@ def probe_oa1_helpers_are_pure():
     check("oa1_helpers_are_pure", not hits, f"hits={hits}")
 
 
+# ── Пробы S4: MCP disabled-by-config (contract mcp-disabled-server-compat) ──
+# Канарки вместо реального hermes-бина: на фиксе ни одна не вызывается
+# (ноль подпроцессов), на baseline канарка честно показывает, что выключенный
+# сервер проверялся бы (HTTP → false-fail, stdio → false-green).
+
+def probe_mcpoff_disabled_http_not_failed(tmp: Path):
+    """S4 contract probe 1: выключенный HTTP-сервер (enabled: false + dead URL)
+    — skipped/mcp_disabled_by_config, не failed; снапшот несёт флаг."""
+    home = _r2a_home(tmp, "mcpoff-http")
+    write(home / "config.yaml",
+          "mcp_servers:\n  off-http:\n    enabled: false\n"
+          "    url: https://dead.invalid/v1\n")
+    _r2a_run(home, args=["--baseline"])
+    ent = _r2a_snap(home)["entities"]["mcp:off-http"]
+    hc = load_module("health-check-v2")
+    registry = write(tmp / "mcpoff-reg1.yaml", "kit_entries: []\n")
+    out = tmp / "mcpoff-http-report.json"
+    calls = []
+
+    def _fail_canary(*a, **k):
+        calls.append(1)
+        return False, "mcp: connection failed (CANARY — disabled server probed)"
+
+    orig = hc.check_mcp
+    hc.check_mcp = _fail_canary
+    try:
+        rc = hc.run(["--registry", str(registry),
+                     "--snapshot", str(home / "state" / "integration-snapshot.json"),
+                     "--env", str(home / ".env"), "--out", str(out)])
+    finally:
+        hc.check_mcp = orig
+    row = (json.loads(out.read_text(encoding="utf-8"))["checks"][0]
+           if out.exists() else {})
+    ok = (rc == 0 and not calls
+          and ent.get("enabled") is False and ent.get("transport") == "http"
+          and row.get("status") == "skipped" and row.get("verdict") == "skipped"
+          and row.get("reason_code") == "mcp_disabled_by_config"
+          and row.get("detail") == "mcp: disabled by config")
+    check("mcpoff_disabled_http_not_failed", ok,
+          f"rc={rc} canary_calls={len(calls)} entity={ent} row={row}")
+
+
+def probe_mcpoff_disabled_stdio_not_green(disc, hc, tmp: Path):
+    """S4 contract probe 2: выключенный stdio-сервер (валидный command) — не
+    green и не failed: check_mcp не вызывается, даже когда вернул бы green."""
+    cfg = {"mcp_servers": {"off-stdio": {"enabled": False, "command": "/bin/true"}}}
+    entities = _r2c_entities(disc, tmp, "mcpoff-stdio", cfg)
+    ent = entities["mcp:off-stdio"]
+    calls = []
+
+    def _green_canary(*a, **k):
+        calls.append(1)
+        return True, "mcp: connected in 1ms (CANARY)"
+
+    orig = hc.check_mcp
+    hc.check_mcp = _green_canary
+    try:
+        checks = hc.build_checks({"kit_entries": []},
+                                 {"entities": entities, "env_keys": []}, {})
+        row = next(c for c in checks if c["id"] == "mcp:off-stdio")
+        status, detail = hc.run_check(row, "shimmed-hermes", {})
+    finally:
+        hc.check_mcp = orig
+    ok = (not calls and ent.get("enabled") is False
+          and ent.get("transport") == "stdio"
+          and row.get("primitive") == "mcp-disabled"
+          and status == "skipped" and detail == "mcp: disabled by config")
+    check("mcpoff_disabled_stdio_not_green", ok,
+          f"canary_calls={len(calls)} primitive={row.get('primitive')} "
+          f"status={status} detail={detail!r}")
+
+
+def _mcpoff_enabled_still_probed(disc, hc, tmp: Path, home_name: str,
+                                 extra: dict, pid: str):
+    cfg = {"mcp_servers": {"on-http": {"url": "https://live.invalid/v1", **extra}}}
+    entities = _r2c_entities(disc, tmp, home_name, cfg)
+    ent = entities["mcp:on-http"]
+    calls = []
+
+    def _ok_canary(*a, **k):
+        calls.append(1)
+        return True, "mcp: connected in 5ms"
+
+    orig = hc.check_mcp
+    hc.check_mcp = _ok_canary
+    try:
+        checks = hc.build_checks({"kit_entries": []},
+                                 {"entities": entities, "env_keys": []}, {})
+        row = next(c for c in checks if c["id"] == "mcp:on-http")
+        status, detail = hc.run_check(row, "shimmed-hermes", {})
+    finally:
+        hc.check_mcp = orig
+    ok = ("enabled" not in ent and len(calls) == 1
+          and row.get("primitive") == "mcp-test" and status == "ok")
+    check(pid, ok, f"entity={ent} canary_calls={len(calls)} status={status}")
+
+
+def probe_mcpoff_enabled_default_still_probed(disc, hc, tmp: Path):
+    """S4 contract probe 3: сервер без ключа enabled проверяется как прежде
+    (primitive mcp-test), снапшот не получает флаг."""
+    _mcpoff_enabled_still_probed(disc, hc, tmp, "mcpoff-default", {},
+                                 "mcpoff_enabled_default_still_probed")
+
+
+def probe_mcpoff_enabled_true_still_probed(disc, hc, tmp: Path):
+    """S4 contract probe 4: enabled: true — поведение в точности прежнее."""
+    _mcpoff_enabled_still_probed(disc, hc, tmp, "mcpoff-true", {"enabled": True},
+                                 "mcpoff_enabled_true_still_probed")
+
+
+def probe_mcpoff_falsy_matrix(disc):
+    """S4 contract probe 5: falsy-набор локального зеркала совпадает со
+    стабильным mcp_server_enabled() (Hermes v0.21.5, f97608f1) на тех же
+    входных: absent/null/unparseable = on; False/0/0.0 и строки
+    false/0/no/off (регистр/пробелы) = off."""
+    helper = getattr(disc, "_mcp_server_enabled", None)
+    if helper is None:
+        check("mcpoff_falsy_matrix", False, "_mcp_server_enabled mirror missing")
+        return
+    on = {"absent": helper({}), "none": helper({"enabled": None}),
+          "true": helper({"enabled": True}), "one": helper({"enabled": 1}),
+          "float": helper({"enabled": 2.5}),
+          "str_true": helper({"enabled": "TRUE"}),
+          "str_yes": helper({"enabled": " yes "}),
+          "str_on": helper({"enabled": "On"}),
+          "str_one": helper({"enabled": "1"}),
+          "unknown_str": helper({"enabled": "maybe"}),
+          "empty_str": helper({"enabled": ""}),
+          "list": helper({"enabled": []}), "dict": helper({"enabled": {}})}
+    off = {"false": helper({"enabled": False}), "zero": helper({"enabled": 0}),
+           "zero_float": helper({"enabled": 0.0}),
+           "str_false": helper({"enabled": "false"}),
+           "str_zero": helper({"enabled": " 0 "}),
+           "str_no": helper({"enabled": "No"}),
+           "str_off": helper({"enabled": "OFF"}),
+           "str_zero_word": helper({"enabled": "0"})}
+    ok = all(on.values()) and not any(off.values())
+    check("mcpoff_falsy_matrix", ok, f"on={on} off={off}")
+
+
+def probe_mcpoff_no_probe_side_effect(tmp: Path):
+    """S4 contract probe 6: для выключенного сервера ни check_mcp, ни
+    subprocess (hermes mcp test) не выполняются — assert через harness."""
+    home = _r2a_home(tmp, "mcpoff-side")
+    # Имя сервера не "off": PyYAML 1.1 парсит незакавыченный `off` как boolean.
+    write(home / "config.yaml",
+          "mcp_servers:\n  sleepy:\n    enabled: false\n    command: /bin/sleep\n")
+    _r2a_run(home, args=["--baseline"])
+    hc = load_module("health-check-v2")
+    registry = write(tmp / "mcpoff-reg6.yaml", "kit_entries: []\n")
+    out = tmp / "mcpoff-side-report.json"
+    mcp_calls, spawn_calls = [], []
+
+    def _no_mcp(*a, **k):
+        mcp_calls.append(1)
+        return True, "CANARY"
+
+    class _FakeCompleted:
+        stdout = ""
+        stderr = ""
+
+    def _no_spawn(*a, **k):
+        spawn_calls.append(1)
+        return _FakeCompleted()
+
+    orig_mcp = hc.check_mcp
+    real_run = subprocess.run
+    hc.check_mcp = _no_mcp
+    subprocess.run = _no_spawn
+    try:
+        rc = hc.run(["--registry", str(registry),
+                     "--snapshot", str(home / "state" / "integration-snapshot.json"),
+                     "--env", str(home / ".env"), "--out", str(out)])
+    finally:
+        hc.check_mcp = orig_mcp
+        subprocess.run = real_run
+    row = (json.loads(out.read_text(encoding="utf-8"))["checks"][0]
+           if out.exists() else {})
+    ok = (rc == 0 and not mcp_calls and not spawn_calls
+          and row.get("status") == "skipped")
+    check("mcpoff_no_probe_side_effect", ok,
+          f"rc={rc} mcp_calls={len(mcp_calls)} spawn_calls={len(spawn_calls)} "
+          f"row={row}")
+
+
+def probe_mcpoff_render_pause_line(wh):
+    """S4 contract probe 7: смешанный отчёт (ok + failed + disabled) — провал
+    ❌, выключенный сервер своей строкой «⏸ — отключён», отчёт не зелёный."""
+    rows = [
+        _oa1b_row("provider:ok", "provider ok", "ok", "env"),
+        _oa1b_row("provider:bad#http", "provider bad root", "fail", "http",
+                  "HTTP 503"),
+        _oa1b_row("mcp:off", "mcp off", "skipped", "mcp-disabled",
+                  "mcp: disabled by config"),
+    ]
+    report = _oa1b_report(rows)
+    quick = wh._render_integrations_quick(report)
+    full = wh._render_integrations_full(report, {})
+    f_lines = full.split("\n")
+    q_ok = ("❌" in quick and "provider bad root" in quick
+            and "⏸ mcp off — отключён" in quick
+            and "всё в порядке" not in quick
+            and "пропущены политикой" not in quick)
+    f_ok = ("❌ provider bad root — HTTP 503" in f_lines
+            and "⏸ mcp off — отключён" in f_lines
+            and not any(l.startswith("❌") and "mcp off" in l for l in f_lines))
+    check("mcpoff_render_pause_line", q_ok and f_ok,
+          f"quick={quick!r} full_has={('⏸ mcp off — отключён' in f_lines)}")
+
+
+def probe_mcpoff_render_counter_exclusion(wh):
+    """S4 contract probe 8: выключенный сервер не попадает в generic
+    «пропущены политикой» (зеркало OAuth-исключения) — имя видно строкой."""
+    rows = [
+        _oa1b_row("kit:tg-auth", "kit tg-auth", "skipped", "env"),
+        _oa1b_row("mcp:off", "mcp off", "skipped", "mcp-disabled",
+                  "mcp: disabled by config"),
+    ]
+    report = _oa1b_report(rows)
+    quick = wh._render_integrations_quick(report)
+    counts = wh._render_integrations_full(report, {}).split("\n")[1]
+    ok = ("⏸ 1 проверок пропущены политикой" in quick
+          and "⏸ mcp off — отключён" in quick
+          and "⏸ 2" not in quick
+          and "⏸ 2" not in counts and "⏸ 1" in counts)
+    check("mcpoff_render_counter_exclusion", ok,
+          f"quick={quick!r} counts={counts!r}")
+
+
+def probe_mcpoff_other_skip_reasons_unchanged(hc, tmp: Path):
+    """S4: классифицированный reason_code только у disabled-MCP; прочие
+    skipped-причины (oauth-свидетельство) продолжают получать policy_blocked."""
+    registry = write(tmp / "mcpoff-reg9.yaml", "kit_entries: []\n")
+    snapshot = write(tmp / "mcpoff-snap9.json", json.dumps({
+        "updated": "2026-09-19T00:00:00Z",
+        "entities": {
+            "mcp:off": {"type": "mcp", "name": "off", "transport": "stdio",
+                        "url": "/bin/true", "enabled": False},
+            "oauth:nous": {"type": "oauth", "name": "nous", "active": True}},
+        "env_keys": []}))
+    out = tmp / "mcpoff-report9.json"
+    rc, err = None, ""
+    try:
+        rc = hc.run(["--registry", str(registry), "--snapshot", str(snapshot),
+                     "--env", str(tmp / "mcpoff9.env"), "--out", str(out),
+                     "--hermes-bin", "/nonexistent/hermes-shim"])
+    except Exception as e:  # baseline: выключенный сервер реально проверялся бы
+        err = f"{type(e).__name__}: {e}"
+    rows = ({c["id"]: c for c in
+             json.loads(out.read_text(encoding="utf-8"))["checks"]}
+            if out.exists() else {})
+    ok = (rc == 0
+          and rows.get("mcp:off", {}).get("reason_code") == "mcp_disabled_by_config"
+          and rows.get("mcp:off", {}).get("verdict") == "skipped"
+          and rows.get("oauth:nous", {}).get("reason_code") == "policy_blocked"
+          and rows.get("oauth:nous", {}).get("verdict") == "skipped")
+    check("mcpoff_other_skip_reasons_unchanged", ok,
+          f"rc={rc} err={err[:120]} "
+          f"rows={ {k: (v.get('verdict'), v.get('reason_code')) for k, v in rows.items()} }")
+
+
+def probe_mcpoff_unrelated_discovery_unchanged(tmp: Path):
+    """S4 contract probe 9: для конфига без выключенных MCP-серверов дискавери
+    байт-в-байт прежний: формы сущностей не меняются, флага enabled нет."""
+    home = _r2a_home(tmp, "mcpoff-unrelated")
+    base = ("providers:\n  alpha:\n    key_env: ALPHA_KEY\n"
+            "    base_url: https://alpha.invalid/v1\n"
+            "mcp_servers:\n  bridge:\n    url: https://mcp.invalid/v1\n"
+            "  localtool:\n    command: /usr/bin/bridge\n")
+    write(home / "config.yaml", base)
+    write(home / "auth.json", '{"providers":{"nous":{"refresh_token":"dummy"}}}\n')
+    first = _r2a_run(home, args=["--baseline"])
+    snap = _r2a_snap(home)["entities"]
+    write(home / "config.yaml",
+          base + "fallback_model:\n  - provider: legacy\n    model: old\n")
+    report_path = tmp / "mcpoff-unrelated-report.json"
+    second = _r2a_run(home, {"DISCOVER_REPORT": str(report_path)})
+    after = _r2a_snap(home)["entities"]
+    report = _r2a_report(tmp, report_path.name)
+    stable = ("provider:alpha", "mcp:bridge", "mcp:localtool", "oauth:nous")
+    ok = (first.returncode == 0 and second.returncode == 2
+          and all(key in snap for key in stable)
+          and all(snap.get(key) == after.get(key) for key in stable)
+          and snap.get("mcp:bridge") == {"type": "mcp", "name": "bridge",
+                                         "transport": "http",
+                                         "url": "https://mcp.invalid/v1"}
+          and snap.get("mcp:localtool") == {"type": "mcp", "name": "localtool",
+                                            "transport": "stdio",
+                                            "url": "/usr/bin/bridge"}
+          and "model:fallback" in after
+          and all(e["key"] == "model:fallback" for e in report["events"]))
+    check("mcpoff_unrelated_discovery_unchanged", ok,
+          f"stable={[k for k in stable if snap.get(k) == after.get(k)]}")
+
+
 def probe_deploy_cron_profile(tmp: Path):
     """Minimal cron profile runs deploy and excludes noisy core jobs."""
     home = tmp / "deploy-home"
@@ -4720,6 +5015,18 @@ def main() -> int:
     probe_oa1b_quick_mixed_failure_and_oauth(wh)
     probe_oa1b_report_not_mutated(wh)
     probe_oa1b_helpers_are_pure()
+    # S4: MCP disabled-by-config — честное сообщение о намеренно выключенных
+    # серверах (contract docs/handoffs/mcp-disabled-server-compat-contract.md)
+    probe_mcpoff_disabled_http_not_failed(tmp)
+    probe_mcpoff_disabled_stdio_not_green(disc, hc, tmp)
+    probe_mcpoff_enabled_default_still_probed(disc, hc, tmp)
+    probe_mcpoff_enabled_true_still_probed(disc, hc, tmp)
+    probe_mcpoff_falsy_matrix(disc)
+    probe_mcpoff_no_probe_side_effect(tmp)
+    probe_mcpoff_render_pause_line(wh)
+    probe_mcpoff_render_counter_exclusion(wh)
+    probe_mcpoff_other_skip_reasons_unchanged(hc, tmp)
+    probe_mcpoff_unrelated_discovery_unchanged(tmp)
     # R1c: Authorization headers out of child argv (shell + ai-deep-check)
     probe_r1c_shell_full_auth_not_in_argv(tmp)
     probe_r1c_quick_github_header_not_in_argv(tmp)

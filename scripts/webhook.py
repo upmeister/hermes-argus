@@ -606,6 +606,16 @@ def _oauth_evidence_line(rows: list) -> str:
             "runtime-статус не проверяется")
 
 
+def _mcp_disabled_rows(checks: list, is_v2: bool, st_key: str) -> list:
+    """S4: намеренно выключенные MCP-серверы — канонический verdict=skipped И
+    структурное primitive=mcp-disabled. Только презентационная классификация:
+    семантика отчёта не меняется (ADR 0001), как и у OAuth-свидетельств."""
+    if not is_v2:
+        return []
+    return [c for c in checks
+            if c.get(st_key) == "skipped" and c.get("primitive") == "mcp-disabled"]
+
+
 def _cap_full_view(lines: list, protected: set, cap: int = 4000) -> str:
     """OA1b P2 (Pytna): слепой срез [:cap] резал строку OAuth-свидетельства
     посреди обязательного заявления «runtime-статус не проверяется» или
@@ -646,14 +656,16 @@ def _render_integrations_quick(report: dict) -> str:
     unknowns = [c for c in checks if c.get(st_key) == "unknown"] if is_v2 else []
     skipped_n = sum(1 for c in checks if c.get(st_key) == "skipped") if is_v2 else 0
     oauth_ev = _oauth_evidence_rows(checks, is_v2, st_key)
-    generic_skipped_n = skipped_n - len(oauth_ev)
+    mcp_off = _mcp_disabled_rows(checks, is_v2, st_key)
+    generic_skipped_n = skipped_n - len(oauth_ev) - len(mcp_off)
     summary = report.get("summary") or {}
     ok_count = summary.get("healthy", report.get("ok", 0)) if is_v2 \
         else report.get("ok", 0)
     age = datetime.fromisoformat(report["updated"]).astimezone().strftime("%H:%M")
     head = (f"🩺 Интеграции (отчёт {age}): "
             f"{ok_count}/{report.get('total', 0)} ok")
-    if not fails and not unknowns and not generic_skipped_n and not oauth_ev:
+    if not fails and not unknowns and not generic_skipped_n \
+            and not oauth_ev and not mcp_off:
         return f"✅ Argus: {head} — всё в порядке"
     probs = [f"❌ {c.get('label')}: {c.get('detail')}" for c in fails[:8]]
     room = 8 - len(probs)
@@ -668,6 +680,8 @@ def _render_integrations_quick(report: dict) -> str:
         probs.append(f"…и ещё {extra}")
     if oauth_ev:
         probs.append(_oauth_evidence_line(oauth_ev))
+    for c in mcp_off:
+        probs.append(f"⏸ {c.get('label', '?')} — отключён")
     return head + "\n" + "\n".join(probs)
 
 
@@ -741,7 +755,9 @@ def _render_integrations_full(report: dict, registry: dict) -> str:
     Чистый рендер без I/O (registry читает handle_integrations_all). OA1b:
     статические OAuth-свидетельства (skipped + primitive=oauth) рендерятся
     informational-строкой вместо generic «пропущено»; их счётчик не смешивается
-    с generic-skipped."""
+    с generic-skipped. S4: намеренно выключенные MCP-серверы (primitive=
+    mcp-disabled) получают свою строку «⏸ — отключён» и тоже исключены из
+    generic-счётчика."""
     kit_group = {k.get("key"): k.get("group", "watchdog")
                  for k in registry.get("kit_entries", []) if isinstance(k, dict)}
     inventory = report.get("inventory") or {}
@@ -779,6 +795,11 @@ def _render_integrations_full(report: dict, registry: dict) -> str:
             if c.get("primitive") == "oauth":
                 line = (f"🔐 {label} — учётные данные обнаружены · "
                         "runtime-статус не проверяется")
+                protected.add(line)
+            elif c.get("primitive") == "mcp-disabled":
+                # S4: намеренно выключенный сервер — своя первоклассная строка
+                # (как OAuth-свидетельство), а не generic «пропущено».
+                line = f"⏸ {label} — отключён"
                 protected.add(line)
             else:
                 line = f"⏸ {label} — пропущено"
@@ -827,7 +848,10 @@ def _render_integrations_full(report: dict, registry: dict) -> str:
         unknown_n = summary.get("unknown", 0)
         skipped_n = summary.get("skipped", 0)
         oauth_ev_n = len(_oauth_evidence_rows(checks, is_v2, st_key))
-        skipped_n = max(skipped_n - oauth_ev_n, 0)
+        mcp_off_n = len(_mcp_disabled_rows(checks, is_v2, st_key))
+        # S4: выключенные MCP-серверы и OAuth-свидетельства не попадают в
+        # generic «⏸ пропущены политикой» — каждый класс виден поимённо.
+        skipped_n = max(skipped_n - oauth_ev_n - mcp_off_n, 0)
     else:
         ok_n, fail_n, unconf_n = (report.get("ok", 0), report.get("fail", 0),
                                   report.get("unconfigured", 0))

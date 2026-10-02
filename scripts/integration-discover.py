@@ -219,6 +219,32 @@ def sanitize_url(url: str) -> str:
         return _sanitize_unparsed_url(value)
 
 
+# ── S4: намерение `enabled` у mcp_servers.<name> ─────────────────────────────
+# Точное локальное зеркало Hermes tools/mcp_tool_common.py:mcp_server_enabled()
+# (stable v0.21.5, единственный читатель ключа `enabled`): absent/null/
+# unparseable = ВКЛЮЧЁН. Статическое зеркало без импорта Hermes; falsy-набор
+# ниже сверен со стабильным тегом f97608f1 — сервер, который Hermes запустил
+# бы, Argus пропустить не имеет права.
+
+_MCP_TRUE_WORDS = frozenset({"true", "1", "yes", "on"})
+_MCP_FALSE_WORDS = frozenset({"false", "0", "no", "off"})
+
+
+def _mcp_server_enabled(server_cfg) -> bool:
+    value = server_cfg.get("enabled", True)
+    if value is None:
+        return True
+    if isinstance(value, (bool, int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _MCP_TRUE_WORDS:
+            return True
+        if lowered in _MCP_FALSE_WORDS:
+            return False
+    return True
+
+
 def extract_entities(cfg=None):
     # cfg=None: legacy in-process callers (probes) читают CONFIG сами;
     # main() всегда передаёт уже разобранный load_config() результат.
@@ -252,10 +278,16 @@ def extract_entities(cfg=None):
     for name, s in (cfg.get("mcp_servers") or {}).items():
         if isinstance(s, dict):
             url = s.get("url", "")
-            entities[f"mcp:{name}"] = {
+            entity = {
                 "type": "mcp", "name": name,
                 "transport": "http" if url else "stdio",
                 "url": sanitize_url(url if url else s.get("command", ""))}
+            # S4: намеренное выключение несём как несекретный флаг; отсутствие
+            # ключа остаётся «включён» (правило default-on Hermes), поэтому
+            # включённые серверы не создают discovery-шума при обновлении.
+            if not _mcp_server_enabled(s):
+                entity["enabled"] = False
+            entities[f"mcp:{name}"] = entity
 
     try:
         for m in re.finditer(r"\$\{([A-Z_0-9]+)\}", CONFIG.read_text()):

@@ -12,6 +12,8 @@ Primitives (mapped from snapshot entity types):
   tcp        — TCP connect to host:port (kit proxy entries)
   http       — GET url, 2xx/3xx expected (local self-hosted services)
   mcp-test   — `hermes mcp test <name>`, parse stdout (exit code is always 0)
+  mcp-disabled — mcp server with `enabled: false` in config: deliberate off,
+                 never probed, reported as skipped/mcp_disabled_by_config
 
 Output: JSON report to --out (machine-readable, consumed by
 health-check-v2-wrapper.sh and /integrations) + short human summary on stdout.
@@ -468,8 +470,15 @@ def build_checks(registry: dict, snapshot: dict, env: dict) -> list[dict]:
                                "key_env": key_env,
                                "label": f"provider {ent.get('name')} (catalog)"})
         elif etype == "mcp":
-            checks.append({"id": eid, "entity": eid, "primitive": "mcp-test",
-                           "mcp_name": ent.get("name", ""), "label": f"mcp {ent.get('name')}"})
+            if ent.get("enabled") is False:
+                # S4: сервер, намеренно выключенный `enabled: false`, не
+                # проверяется вовсе (`hermes mcp test` игнорирует этот ключ и
+                # дал бы ложный fail для HTTP или ложный green для stdio).
+                checks.append({"id": eid, "entity": eid, "primitive": "mcp-disabled",
+                               "mcp_name": ent.get("name", ""), "label": f"mcp {ent.get('name')}"})
+            else:
+                checks.append({"id": eid, "entity": eid, "primitive": "mcp-test",
+                               "mcp_name": ent.get("name", ""), "label": f"mcp {ent.get('name')}"})
         elif etype == "envref":
             key = ent.get("name", "")
             # registry enrichment: the referenced key may carry a real endpoint
@@ -611,6 +620,11 @@ def run_check(c: dict, hermes_bin: str, env: dict) -> tuple[str, str]:
     if prim == "mcp-test":
         ok, detail = check_mcp(hermes_bin, c["mcp_name"])
         return ("ok" if ok else "fail"), detail
+    if prim == "mcp-disabled":
+        # S4: намеренное выключение — известное конфигурационное состояние, а
+        # не результат проверки: skipped (не failed, не healthy), проверка не
+        # выполняется.
+        return "skipped", "mcp: disabled by config"
     return "fail", f"unknown primitive {prim}"
 
 
@@ -658,6 +672,12 @@ def run(argv: list[str] | None = None) -> int:
     results = []
     for c in checks:
         status, detail = run_check(c, args.hermes_bin, env)
+        # S4: классифицированный reason_code только для disabled-MCP; прочие
+        # skipped-причины продолжают получать generic policy_blocked (ADR 0001).
+        if c["primitive"] == "mcp-disabled":
+            reason_code = "mcp_disabled_by_config"
+        else:
+            reason_code = reason_code_for(status, bool(c.get("required", False)))
         results.append({
             "id": c["id"], "entity_id": c["id"],
             "label": c["label"], "primitive": c["primitive"],
@@ -670,7 +690,7 @@ def run(argv: list[str] | None = None) -> int:
             # stay empty here — D0b adapters populate them with real evidence,
             # none is invented for existing primitives.
             "verdict": canonical_verdict(status),
-            "reason_code": reason_code_for(status, bool(c.get("required", False))),
+            "reason_code": reason_code,
             "claims": {}, "effects": {}, "evidence": {},
         })
 
