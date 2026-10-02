@@ -35,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report a deliberately disabled MCP server honestly. A server configured with
+  `enabled: false` on `mcp_servers.<name>` is now tagged during discovery
+  (mirroring the Hermes default-on rule: absent/null/unparseable means on) and
+  is no longer probed via `hermes mcp test` — previously it surfaced as a
+  false `fail` (disabled HTTP server with a dead URL) or even a false green
+  (disabled stdio server with a valid command). The health report records it
+  as a classified `skipped` check (`mcp_disabled_by_config`), the Telegram
+  `/integrations` views render each disabled server as its own
+  `⏸ <name> — отключён` line instead of folding it into the generic
+  "пропущены политикой" counter, and a report whose only non-ok rows are
+  disabled servers is never rendered green.
+
 - Make the Telegram reply keyboard natively collapsible and swap the Settings
   and Maintenance positions. Remove duplicated status/monitoring buttons from
   the Maintenance action menu and stop attaching action keyboards to automatic
