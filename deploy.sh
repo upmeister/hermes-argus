@@ -146,49 +146,156 @@ HEARTBEAT_HOME_SCRIPTS=(heartbeat.sh)
 
 # ── Функции развёртки ──────────────────────────────────────────────────────
 
-# ── LOCAL_SERVICES: owned-cron reconciliation (узкая, контракт docs PR #55) ─
-# deploy.sh исторически только ПЕЧАТАЛ cron-строки; установленная вручную
-# строка продолжала работать и после ON→OFF. Это единственный модуль, чью
-# строку deploy.sh сам ставит/снимает в живом crontab. Совпадение СТРОГО по
-# именам наших двух скриптов: посторонние строки и комментарии не трогаются.
-# Сбой записи crontab — fail closed: deploy прерывается, ложного «OFF готов»
-# не бывает. Другие модули остаются proposal-only (RR1 — отдельная задача).
-# ВАЖНО: cron выполняет команду через /bin/sh (dash), где `source` НЕ существует —
-# `.env` молча не грузился, WATCHDOG_ALLOWED_USER_ID оставался пуст, и алерты
-# физически не могли уйти (модуль корректно рапортовал «fail closed»).
-# Поэтому: явный интерпретатор bash + экспорт флага модуля, который читает
-# консьюмер. Проверено вживую: с `source` в cron — доставка 0, с `/bin/bash -c` — ок.
 LOCAL_SERVICES_CRON_LINE="*/5 * * * * python3 $HERMES_DIR/scripts/service-status-snapshot.py --quiet >> $HERMES_DIR/logs/service-status.log 2>&1; /bin/bash -c 'set -a; source $HERMES_DIR/.env; set +a; export MODULE_LOCAL_SERVICES=\${MODULE_LOCAL_SERVICES:-ON}; python3 $HERMES_DIR/scripts/local_services_check.py' >> $HERMES_DIR/logs/local-services.log 2>&1"
 
-reconcile_local_services_cron() {
-    local want="$1"
-    local current kept line removed=0 added=0
+# ── RR1a: единый managed cron-блок (единственный writer расписания) ─────────
+# Исторически deploy.sh только ПЕЧАТАЛ cron-строки и просил оператора
+# устанавливать их вручную; единственным живым writer'ом был узкий
+# local-services reconciliation (контракт docs PR #55). RR1a вводит ОДИН
+# управляемый блок «# BEGIN/END HERMES-ARGUS» в crontab вызывающего юзера:
+# deploy читает crontab, заменяет только свой блок (плюс однократное adoption
+# известных ранее сгенерированных форм), посторонние строки/комментарии/env
+# не трогает. Сбой чтения/записи/разметки — fail closed: deploy прерывается,
+# установленное расписание не меняется. Cron выполняет команды через /bin/sh:
+# команды, требующие bash, явно зовут /bin/bash -c (значения .env не грузятся
+# «source'ом» голым sh). Значения креденшелов в cron-строках запрещены.
+# ВАЖНО (provenance инцидента local-services): cron-`source` под dash молча
+# не работает — с `source` в cron доставка 0, с `/bin/bash -c` — ок.
+CRON_BLOCK_BEGIN="# BEGIN HERMES-ARGUS"
+CRON_BLOCK_END="# END HERMES-ARGUS"
+CRON_LOCK_FILE="${CRON_LOCK_FILE:-/tmp/hermes-argus-cron.lock}"
+
+# Известные ранее сгенерированные формы (adoption). Совпадение — ТОЛЬКО полная
+# строка (расписание+путь+аргументы+редирект), подстрока по basename не есть
+# доказательство владения. Допускаются два установленных написания путей:
+# абсолютный $HOME_DIR и «~/» (нормализация до сравнения).
+is_known_generated_form() {
+    local l="$1"
+    case "$l" in
+        "*/5 * * * * $HOME_DIR/scripts/hermes-watchdog.sh >> $HERMES_DIR/logs/watchdog-cron.log 2>&1") return 0 ;;
+        "*/2 * * * * $HOME_DIR/scripts/network-guard.sh >> $HERMES_DIR/logs/network-guard-cron.log 2>&1") return 0 ;;
+        "*/2 * * * * $HERMES_DIR/scripts/gateway-liveness.sh >> $HERMES_DIR/logs/gateway-liveness.log 2>&1") return 0 ;;
+        "*/5 * * * * $HERMES_DIR/scripts/dashboard-liveness.sh >> $HERMES_DIR/logs/dashboard-liveness.log 2>&1") return 0 ;;
+        "*/10 * * * * $HOME_DIR/scripts/auto-remediate.sh >> $HERMES_DIR/logs/auto-remediate.log 2>&1") return 0 ;;
+        "0 3 * * 1 $HOME_DIR/scripts/check-updates.sh") return 0 ;;
+        "30 * * * * $HERMES_DIR/scripts/watchdog-health.sh >> $HERMES_DIR/logs/watchdog-health-cron.log 2>&1") return 0 ;;
+        "0 6 * * * $HERMES_DIR/scripts/ssl-expiry-check.sh >> $HERMES_DIR/logs/ssl-expiry-cron.log 2>&1") return 0 ;;
+        "*/10 * * * * $HOME_DIR/scripts/integration-discover-wrapper.sh >> $HERMES_DIR/logs/integration-discover-cron.log 2>&1") return 0 ;;
+        "*/5 * * * * python3 $HOME_DIR/scripts/fallback-tracker-v2.py >> $HERMES_DIR/logs/fallback-tracker-v2.log 2>&1") return 0 ;;
+        "20 * * * * $HOME_DIR/scripts/health-check-v2-wrapper.sh >> $HERMES_DIR/logs/health-check-v2.log 2>&1") return 0 ;;
+        "5 * * * * cd $HERMES_DIR/scripts && python3 health-analyzer.py --update >> $HERMES_DIR/logs/health-analyzer.log 2>&1") return 0 ;;
+        # Легаси-форма heartbeat: генерировалась до RR1a с голым `source`
+        # (молча не работал под /bin/sh); заменяется формой с /bin/bash -c.
+        "*/5 * * * * set -a; source $HERMES_DIR/.env; set +a; $HOME_DIR/scripts/heartbeat.sh >> $HERMES_DIR/logs/heartbeat.log 2>&1") return 0 ;;
+        "*/5 * * * * /bin/bash -c 'set -a; source $HERMES_DIR/.env; set +a; exec $HOME_DIR/scripts/heartbeat.sh' >> $HERMES_DIR/logs/heartbeat.log 2>&1") return 0 ;;
+        # LOCAL_SERVICES: producer-only легаси-форма (миграционные пробы PR #55)
+        "*/5 * * * * python3 $HERMES_DIR/scripts/service-status-snapshot.py --quiet >> $HERMES_DIR/logs/service-status.log 2>&1") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+reconcile_argus_cron() {
+    local current outside="" line in_block=0 saw_block=0
+    local begin_count end_count adopted=0 ambiguous=0
     if ! command -v crontab >/dev/null 2>&1; then
-        if [ "$want" = "ON" ]; then
-            echo "   ⚠️  crontab недоступен — расписание НЕ установлено; поставь строку из $CRON_FILE вручную"
-        fi
-        return 0
+        echo "   🚨 crontab недоступен — reconciliation managed-блока невозможен, fail closed" >&2
+        return 1
     fi
-    current="$(crontab -l 2>/dev/null || true)"
-    kept=""
+    exec 9>"$CRON_LOCK_FILE"
+    if ! flock -n 9; then
+        echo "   🚨 crontab: параллельный deploy уже выполняет reconciliation (lock: $CRON_LOCK_FILE) — repeat later" >&2
+        return 1
+    fi
+    # Чтение: «нет crontab» — валидный пустой стейт; прочий сбой — fail closed.
+    local read_err
+    read_err=$(mktemp)
+    if current=$(crontab -l 2>"$read_err"); then
+        :
+    elif grep -q "no crontab for" "$read_err"; then
+        current=""
+    else
+        echo "   🚨 crontab -l завершился с неопознанной ошибкой — не трактую как пустой crontab, fail closed" >&2
+        rm -f "$read_err"
+        return 1
+    fi
+    rm -f "$read_err"
+
+    begin_count=$(grep -Fxc "$CRON_BLOCK_BEGIN" <<< "$current" || true)
+    end_count=$(grep -Fxc "$CRON_BLOCK_END" <<< "$current" || true)
+    if [ "$begin_count" -gt 1 ] || [ "$end_count" -gt 1 ]; then
+        echo "   🚨 crontab: несколько маркеров managed-блока (BEGIN=$begin_count END=$end_count) — исправь разметку вручную, deploy прерван" >&2
+        return 1
+    fi
+    if [ "$begin_count" -ne "$end_count" ]; then
+        echo "   🚨 crontab: незакрытый managed-блок (BEGIN=$begin_count END=$end_count) — исправь разметку вручную, deploy прерван" >&2
+        return 1
+    fi
+
+    # Разбор: строки вне блока сохраняются дословно (включая комментарии,
+    # пустые строки, env-объявления); содержимое блока заменяется целиком.
     while IFS= read -r line; do
-        if [[ "$line" == *service-status-snapshot.py* || "$line" == *local_services_check.py* ]]; then
-            removed=$((removed + 1))
+        if [ "$line" = "$CRON_BLOCK_BEGIN" ]; then
+            in_block=1
+            saw_block=1
             continue
         fi
-        kept+="$line"$'\n'
-    done <<< "$current"
-    if [ "$want" = "ON" ]; then
-        kept+="$LOCAL_SERVICES_CRON_LINE"$'\n'
-        added=1
-    fi
-    if [ "$removed" -gt 0 ] || [ "$added" -gt 0 ]; then
-        if printf '%s' "$kept" | crontab - 2>/dev/null; then
-            echo "   🕒 crontab: local-services расписание ${want} (снято строк: $removed)"
-        else
-            echo "   🚨 не удалось обновить crontab — fail closed, deploy прерван" >&2
-            return 1
+        if [ "$line" = "$CRON_BLOCK_END" ]; then
+            in_block=0
+            continue
         fi
+        if [ "$in_block" -eq 0 ]; then
+            outside+="$line"$'\n'
+        fi
+    done <<< "$current"
+    if [ "$in_block" -ne 0 ]; then
+        echo "   🚨 crontab: BEGIN без END (перевёрнутая/незакрытая разметка) — исправь вручную, deploy прерван" >&2
+        return 1
+    fi
+
+    # Adoption (однократно, только при отсутствии блока): известные ранее
+    # сгенерированные формы уходят в управляемый блок; чужие/кастомные строки
+    # сохраняются. Имена наших скриптов в сохранённых строках — счётчиком,
+    # без печати сырого текста команд.
+    if [ "$saw_block" -eq 0 ] && [ -n "$current" ]; then
+        local kept="" norm_line
+        while IFS= read -r line; do
+            if [ -n "$line" ]; then
+                norm_line=${line//'~/'/"$HOME_DIR/"}
+                if is_known_generated_form "$norm_line"; then
+                    adopted=$((adopted + 1))
+                    continue
+                fi
+                case "$norm_line" in
+                    *hermes-watchdog.sh*|*network-guard.sh*|*gateway-liveness.sh*|*dashboard-liveness.sh*|*auto-remediate.sh*|*check-updates.sh*|*watchdog-health.sh*|*ssl-expiry-check.sh*|*integration-discover-wrapper.sh*|*fallback-tracker-v2.py*|*health-check-v2-wrapper.sh*|*health-analyzer.py*|*heartbeat.sh*|*service-status-snapshot.py*|*local_services_check.py*)
+                        ambiguous=$((ambiguous + 1)) ;;
+                esac
+            fi
+            kept+="$line"$'\n'
+        done <<< "$current"
+        outside="$kept"
+    fi
+
+    # Композиция: снаружи + (блок при непустом расписании).
+    local desired="$outside"
+    if [ -n "$SCHEDULE" ]; then
+        desired+="$CRON_BLOCK_BEGIN"$'\n'"$SCHEDULE${CRON_BLOCK_END}"$'\n'
+    fi
+
+    if [ "${desired%$'\n'}" = "$current" ] || [ "$desired" = "$current" ]; then
+        echo "   🕒 crontab: managed-блок актуален, изменений нет"
+        return 0
+    fi
+    if ! printf '%s' "$desired" | crontab - 2>/dev/null; then
+        echo "   🚨 не удалось записать crontab — fail closed, deploy прерван" >&2
+        return 1
+    fi
+    local block_jobs=0
+    if [ -n "$SCHEDULE" ]; then
+        block_jobs=$(printf '%s' "$SCHEDULE" | grep -c . || true)
+    fi
+    echo "   🕒 crontab: managed-блок $CRON_BLOCK_BEGIN / $CRON_BLOCK_END записан (job'ов: $block_jobs, принято легаси-строк: $adopted)"
+    if [ "$ambiguous" -gt 0 ]; then
+        echo "   ℹ️  crontab: сохранено $ambiguous строк(и) с именами скриптов Argus вне известных сгенерированных форм — оставлены оператору без изменений"
     fi
     return 0
 }
@@ -259,18 +366,13 @@ if module_enabled MODULE_LOCAL_SERVICES; then
     echo ""
     echo "📁 [LOCAL_SERVICES] локальный снимок топологии + консьюмер..."
     deploy_scripts "$HERMES_DIR/scripts" "${LOCAL_SERVICES_HERMES_SCRIPTS[@]}"
-    reconcile_local_services_cron "ON"
-    # Начальный сбор сразу после успешного деплоя — не ждём первый cron-тик.
-    if python3 "$HERMES_DIR/scripts/service-status-snapshot.py" --quiet; then
-        echo "   ✅ начальный снимок собран: $HERMES_DIR/state/service-status.json"
-    else
-        echo "   ⚠️  начальный снимок не удался — повторит cron-запуск через ≤5 мин (лог: service-status.log)"
-    fi
+    # RR1a: расписание ставит общий managed-блок в секции cron ниже;
+    # начальный сбор выполняется сразу после успешного reconciliation.
 else
-    # OFF: снять и ранее установленную вручную строку тоже (главный унаследованный
-    # разрыв PR #54). Установленные скрипты остаются, но без флага они no-op,
+    # OFF: расписание снимает общий managed-блок (секция cron ниже).
+    # Установленные скрипты остаются, но без флага они no-op,
     # а старый снимок читается как unknown (все читатели закрыты флагом).
-    reconcile_local_services_cron "OFF"
+    :
 fi
 
 if module_enabled MODULE_TG_BOT; then
@@ -391,52 +493,73 @@ if module_enabled MODULE_GH_HEARTBEAT; then
     fi
 fi
 
-# ── Генерация cron-строк по включённым модулям ─────────────────────────────
-# Только СТРОКИ: весь crontab юзера не заменяем.
+# ── Генерация расписания и managed-блока (RR1a: единый writer) ─────────────
 # CRON_PROFILE (C6 F6): full — весь набор; minimal — только тихие discovery/
-# health-check строки (для тест-VM, чтобы алерты не сыпались в реальный чат)
+# health-check строки (для тест-VM, чтобы алерты не сыпались в реальный чат).
+# CRON_FILE остаётся proposal/diagnostic-артефактом; установленное расписание —
+# это managed-блок в crontab, его пишет только reconcile_argus_cron.
 CRON_PROFILE="${CRON_PROFILE:-full}"
 CRON_FILE="${CRON_FILE:-/tmp/hermes-argus-crontab.txt}"
 
-CRON_TMP=$(mktemp)
-{
-    echo "# hermes-argus: cron-строки включённых модулей ($(date -Iseconds))"
-    if module_enabled MODULE_CORE && [ "$CRON_PROFILE" = "full" ]; then
-        echo "*/5 * * * * $HOME_DIR/scripts/hermes-watchdog.sh >> $HERMES_DIR/logs/watchdog-cron.log 2>&1"
-        echo "*/2 * * * * $HOME_DIR/scripts/network-guard.sh >> $HERMES_DIR/logs/network-guard-cron.log 2>&1"
-        echo "*/2 * * * * $HERMES_DIR/scripts/gateway-liveness.sh >> $HERMES_DIR/logs/gateway-liveness.log 2>&1"
-        echo "*/5 * * * * $HERMES_DIR/scripts/dashboard-liveness.sh >> $HERMES_DIR/logs/dashboard-liveness.log 2>&1"
-        echo "*/10 * * * * $HOME_DIR/scripts/auto-remediate.sh >> $HERMES_DIR/logs/auto-remediate.log 2>&1"
-        echo "0 3 * * 1 $HOME_DIR/scripts/check-updates.sh"
-        echo "30 * * * * $HERMES_DIR/scripts/watchdog-health.sh >> $HERMES_DIR/logs/watchdog-health-cron.log 2>&1"
-        echo "0 6 * * * $HERMES_DIR/scripts/ssl-expiry-check.sh >> $HERMES_DIR/logs/ssl-expiry-cron.log 2>&1"
-    fi
-    if module_enabled MODULE_LOCAL_SERVICES; then
-        # Один последовательный джоб: снимок → консьюмер (не конкурирующие cron'ы).
-        # Креденшелы алертов — из ~/.hermes/.env (set -a, значения не в argv).
-        echo "$LOCAL_SERVICES_CRON_LINE"
-    fi
-    if module_enabled MODULE_INTEGRATIONS; then
-        echo "*/10 * * * * $HOME_DIR/scripts/integration-discover-wrapper.sh >> $HERMES_DIR/logs/integration-discover-cron.log 2>&1"
-        echo "*/5 * * * * python3 $HOME_DIR/scripts/fallback-tracker-v2.py >> $HERMES_DIR/logs/fallback-tracker-v2.log 2>&1"
-        echo "20 * * * * $HOME_DIR/scripts/health-check-v2-wrapper.sh >> $HERMES_DIR/logs/health-check-v2.log 2>&1"
-    fi
-    if module_enabled MODULE_ANALYZER; then
-        echo "5 * * * * cd $HERMES_DIR/scripts && python3 health-analyzer.py --update >> $HERMES_DIR/logs/health-analyzer.log 2>&1"
-    fi
-    if module_enabled MODULE_HEARTBEAT; then
-        echo "*/5 * * * * set -a; source $HERMES_DIR/.env; set +a; $HOME_DIR/scripts/heartbeat.sh >> $HERMES_DIR/logs/heartbeat.log 2>&1"
-    fi
-} > "$CRON_TMP"
+SCHEDULE=""
+if module_enabled MODULE_CORE && [ "$CRON_PROFILE" = "full" ]; then
+    SCHEDULE+="*/5 * * * * $HOME_DIR/scripts/hermes-watchdog.sh >> $HERMES_DIR/logs/watchdog-cron.log 2>&1"$'\n'
+    SCHEDULE+="*/2 * * * * $HOME_DIR/scripts/network-guard.sh >> $HERMES_DIR/logs/network-guard-cron.log 2>&1"$'\n'
+    SCHEDULE+="*/2 * * * * $HERMES_DIR/scripts/gateway-liveness.sh >> $HERMES_DIR/logs/gateway-liveness.log 2>&1"$'\n'
+    SCHEDULE+="*/5 * * * * $HERMES_DIR/scripts/dashboard-liveness.sh >> $HERMES_DIR/logs/dashboard-liveness.log 2>&1"$'\n'
+    SCHEDULE+="*/10 * * * * $HOME_DIR/scripts/auto-remediate.sh >> $HERMES_DIR/logs/auto-remediate.log 2>&1"$'\n'
+    SCHEDULE+="0 3 * * 1 $HOME_DIR/scripts/check-updates.sh"$'\n'
+    SCHEDULE+="30 * * * * $HERMES_DIR/scripts/watchdog-health.sh >> $HERMES_DIR/logs/watchdog-health-cron.log 2>&1"$'\n'
+    SCHEDULE+="0 6 * * * $HERMES_DIR/scripts/ssl-expiry-check.sh >> $HERMES_DIR/logs/ssl-expiry-cron.log 2>&1"$'\n'
+fi
+if module_enabled MODULE_LOCAL_SERVICES; then
+    # Один последовательный джоб: снимок → консьюмер (не конкурирующие cron'ы).
+    # Креденшелы алертов — из ~/.hermes/.env (set -a, значения не в argv).
+    SCHEDULE+="$LOCAL_SERVICES_CRON_LINE"$'\n'
+fi
+if module_enabled MODULE_INTEGRATIONS; then
+    SCHEDULE+="*/10 * * * * $HOME_DIR/scripts/integration-discover-wrapper.sh >> $HERMES_DIR/logs/integration-discover-cron.log 2>&1"$'\n'
+    SCHEDULE+="*/5 * * * * python3 $HOME_DIR/scripts/fallback-tracker-v2.py >> $HERMES_DIR/logs/fallback-tracker-v2.log 2>&1"$'\n'
+    SCHEDULE+="20 * * * * $HOME_DIR/scripts/health-check-v2-wrapper.sh >> $HERMES_DIR/logs/health-check-v2.log 2>&1"$'\n'
+fi
+if module_enabled MODULE_ANALYZER; then
+    SCHEDULE+="5 * * * * cd $HERMES_DIR/scripts && python3 health-analyzer.py --update >> $HERMES_DIR/logs/health-analyzer.log 2>&1"$'\n'
+fi
+if module_enabled MODULE_HEARTBEAT; then
+    # RR1a: cron зовёт команды через /bin/sh — `source` там не существует;
+    # .env-загрузка требует явного /bin/bash -c (provenance: инцидент
+    # local-services, контракт docs PR #55).
+    SCHEDULE+="*/5 * * * * /bin/bash -c 'set -a; source $HERMES_DIR/.env; set +a; exec $HOME_DIR/scripts/heartbeat.sh' >> $HERMES_DIR/logs/heartbeat.log 2>&1"$'\n'
+fi
 
-if [ -s "$CRON_TMP" ]; then
+# Proposal/diagnostic-артефакт: то, что селектировано настройками. Не является
+# доказательством установленного расписания — им является managed-блок.
+CRON_TMP=$(mktemp)
+if [ -n "$SCHEDULE" ]; then
+    {
+        echo "# hermes-argus: proposal, установленное расписание живёт в managed-блоке crontab ($(date -Iseconds))"
+        printf '%s' "$SCHEDULE"
+    } > "$CRON_TMP"
     mv "$CRON_TMP" "$CRON_FILE"
-    echo ""
-    echo "📁 Cron-строки сгенерированы: $CRON_FILE"
-    echo "   ⚠️  НЕ заменяй весь crontab! Добавь строки к существующим (без дублей):"
-    echo "      (crontab -l 2>/dev/null || true; grep -v '^#' $CRON_FILE) | awk -v home=\"$HOME_DIR\" 'NF { line=\$0; gsub(/~\//, home \"/\", line); if (!seen[line]++) print }' | crontab -"
 else
     rm -f "$CRON_TMP"
+    rm -f "$CRON_FILE"
+fi
+
+# Установка/снятие managed-блока — единственная точка записи crontab.
+# Fail closed: сбой прерывает deploy (запись не состояла — не рапортуем успех).
+if ! reconcile_argus_cron; then
+    exit 1
+fi
+
+# Начальный сбор LOCAL_SERVICES — после успешного reconciliation (контракт
+# RR1a: reconciliation завершается до начальной коллекции).
+if module_enabled MODULE_LOCAL_SERVICES; then
+    if python3 "$HERMES_DIR/scripts/service-status-snapshot.py" --quiet; then
+        echo "   ✅ начальный снимок собран: $HERMES_DIR/state/service-status.json"
+    else
+        echo "   ⚠️  начальный снимок не удался — повторит cron-запуск через ≤5 мин (лог: service-status.log)"
+    fi
 fi
 
 echo ""

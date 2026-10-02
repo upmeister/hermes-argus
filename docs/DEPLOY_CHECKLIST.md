@@ -28,9 +28,21 @@ Analyzer state freshness is not proof that a Hermes L3 analysis job is installed
 Record log rotation and network-guard privileges/applicability separately.
 These prerequisites are not automatic installer behavior yet.
 
-After RR1a is implemented, read back its managed block and preserved operator
-cron. Until then, most generated entries still require manual installation;
-the contract itself is not a deployed scheduler change.
+## RR1a cron read-back (after the first RR1a deploy)
+
+1. Confirm the managed block is present exactly once:
+   `crontab -l | grep -c "# BEGIN HERMES-ARGUS"` must print `1`.
+2. Confirm the enabled-module jobs are inside the block and match the
+   generator proposal (`CRON_FILE`, if it exists) line for line.
+3. Confirm unrelated operator jobs, comments and environment declarations
+   survived verbatim, in their original order, outside the block — including
+   external wrapper/sync/backup jobs and saved Hermes `no_agent` entries.
+4. Confirm no Argus-generated job remains outside the block (legacy forms are
+   adopted once); if the deploy reported ambiguous same-script lines, review
+   them with the operator before removing anything manually.
+5. Rollback path: the pre-RR1a crontab content is recoverable from the
+   operator's saved `~/.hermes/backups/crontab-known-good.txt` **manually
+   only** — no Argus component installs it automatically anymore.
 
 ## RR0c operator migration steps (before the first RR0c deploy)
 

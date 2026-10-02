@@ -531,6 +531,62 @@ class WatchdogSwapTests(unittest.TestCase):
         self.assertIn("occupancy only", log)
 
 
+    def test_auto_remediate_never_touches_crontab(self) -> None:
+        """RR1a: stale full-crontab бэкап не должен триггерить восстановление —
+        auto-remediate больше не вызывает crontab ни в какой форме (валидное
+        малое расписание — не поломка; writer расписания — только deploy.sh)."""
+        cron_fixture = self.root / "crontab-fixture.txt"
+        cron_fixture.write_text(
+            "# operator job\n"
+            "0 9 * * 1-5 /usr/bin/operator-report --quiet\n"
+            "30 10 * * * /usr/bin/backup-tool run\n",
+            encoding="utf-8")
+        crontab_calls = self.root / "crontab-calls.log"
+        # flock-шим: среда без util-linux иначе рано выходит на lock-гейте
+        (self.bin / "flock").write_text("#!/bin/sh\nexit 0\n",
+                                        encoding="utf-8")
+        (self.bin / "flock").chmod(0o755)
+        (self.bin / "crontab").write_text(
+            "#!/bin/sh\n"
+            'printf "%s\\n" "$*" >> "$CRONTAB_CALLS"\n'
+            'case "$1" in\n'
+            '  -l) cat "$CRONTAB_FIXTURE";;\n'
+            '  -)  cat > "$CRONTAB_FIXTURE";;\n'
+            "  *) exit 0;;\n"
+            "esac\n",
+            encoding="utf-8")
+        (self.bin / "crontab").chmod(0o755)
+        backup_dir = self.hermes / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        (backup_dir / "crontab-known-good.txt").write_text(
+            "*/5 * * * * /old/scripts/hermes-watchdog.sh\n"
+            "*/2 * * * * /old/scripts/network-guard.sh\n",
+            encoding="utf-8")
+
+        env_extra = {
+            "CRONTAB_FIXTURE": str(cron_fixture),
+            "CRONTAB_CALLS": str(crontab_calls),
+        }
+        saved_env = {k: os.environ.get(k) for k in env_extra}
+        os.environ.update(env_extra)
+        try:
+            result = self._run_auto_remediate()
+        finally:
+            for k, v in saved_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(crontab_calls.exists(),
+                         "auto-remediate не должен вызывать crontab")
+        self.assertIn("operator-report", cron_fixture.read_text(encoding="utf-8"))
+        self.assertIn("backup-tool", cron_fixture.read_text(encoding="utf-8"))
+
+
+
+
 class RemediationAndContractTests(unittest.TestCase):
     def test_stateful_scripts_use_nonblocking_locks(self) -> None:
         for path in (WATCHDOG, AUTO_REMEDIATE, HEARTBEAT):
@@ -549,11 +605,24 @@ class RemediationAndContractTests(unittest.TestCase):
                 'curl -sS -m 15 -x "${TELEGRAM_PROXY', text, path.name
             )
 
-    def test_cron_merge_normalizes_home_paths(self) -> None:
+    def test_rr1a_cron_ownership_retirements(self) -> None:
+        """RR1a: единственный writer расписания — deploy.sh (managed-блок);
+        глобальная «<7 задач»-эвристика и whole-crontab восстановление сняты,
+        ручная установка предложенных строк больше не предлагается."""
         deploy = DEPLOY.read_text(encoding="utf-8")
-        self.assertIn("gsub(/~\\//", deploy)
-        self.assertIn("if (!seen[line]++)", deploy)
-
+        self.assertIn("# BEGIN HERMES-ARGUS", deploy)
+        self.assertIn("reconcile_argus_cron", deploy)
+        self.assertNotIn("grep -v '^#' $CRON_FILE) | awk", deploy)
+        self.assertNotIn("ожидалось ≥7", (REPO / "scripts" / "health-check-integrations.sh")
+                         .read_text(encoding="utf-8"))
+        self.assertNotIn("CRON_COUNT", (REPO / "scripts" / "health-check-integrations.sh")
+                         .read_text(encoding="utf-8"))
+        auto = AUTO_REMEDIATE.read_text(encoding="utf-8")
+        # ветка восстановления снята; упоминание файла в provenance-комментарии
+        # допустимо — запрещены только исполняемые следы ветки
+        self.assertNotIn('crontab "$CRON_BACKUP"', auto)
+        self.assertNotIn("восстанавливаю из бэкапа", auto)
+        self.assertNotIn("Crontab восстановлен", auto)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

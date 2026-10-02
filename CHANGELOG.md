@@ -53,6 +53,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by setting `TELEGRAM_PROXY`/`GITHUB_REPO` explicitly once (see
   `docs/DEPLOY_CHECKLIST.md`).
 
+### Changed
+
+- Argus now owns its schedule through a single managed crontab block
+  (`# BEGIN HERMES-ARGUS` / `# END HERMES-ARGUS`, RR1a). `deploy.sh`
+  reconciles that block from the existing module/profile generator: enabled
+  modules install their jobs, disabled ones lose them, unrelated operator
+  jobs, comments and environment declarations are preserved verbatim, and
+  known previously generated Argus lines are adopted once on first install
+  (both absolute and `~/` path spellings, the legacy bare-`source` heartbeat
+  form, and the producer-only local-services form). The manual "append these
+  lines to your crontab" instruction is retired; `CRON_FILE` remains a
+  proposal/diagnostic artifact only. The global "fewer than 7 crontab jobs"
+  quick-check criterion and the whole-crontab restoration from
+  `crontab-known-good.txt` in auto-remediation are removed: a small managed
+  schedule is valid, and a stale full-user backup can no longer resurrect
+  disabled Argus jobs or overwrite operator edits. Reconciliation is a
+  fail-closed, lock-serialized transaction: malformed block markers, a failed
+  crontab read/write, or a missing crontab utility abort the deploy with a
+  clear error instead of reporting success. The heartbeat cron line now loads
+  `.env` through an explicit `/bin/bash -c` (cron runs commands with `/bin/sh`,
+  where bare `source` silently does nothing). Existing maintainer production
+  keeps its behavior: the first managed deploy adopts the previously installed
+  Argus lines and leaves every unrelated job untouched.
+
 ### Removed
 
 - Dead and duplicate runtime surfaces (RR0b), each backed by a caller/deploy

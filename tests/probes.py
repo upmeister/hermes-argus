@@ -26,6 +26,8 @@ import os
 import sys
 import shlex
 import tempfile
+import re
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -1606,6 +1608,8 @@ def probe_deploy_cron_profile(tmp: Path):
           "  -)  cat > \"$CRONTAB_FIXTURE\";;\n"
           "  *) exit 1;;\n"
           "esac\n").chmod(0o755)
+    _write_argv_shim(shim_dir, "flock", "exit 0\n")
+    _write_argv_shim(shim_dir, "flock", "exit 0\n")
     env = dict(os.environ, HOME=str(home), CRON_PROFILE="minimal", CRON_FILE=str(cron),
                CRONTAB_FIXTURE=str(crontab_fixture),
                PATH=f"{shim_dir}{os.pathsep}{os.environ.get('PATH', '')}")
@@ -1673,6 +1677,7 @@ def probe_deploy_secret_not_in_argv(tmp: Path):
                      '  -)  cat > "$CRONTAB_FIXTURE";;\n'
                      '  *) exit 1;;\n'
                      'esac\n')
+    _write_argv_shim(shim, "flock", "exit 0\n")
     crontab_fixture = tmp / "deploy-secret-crontab.txt"
     crontab_fixture.write_text("", encoding="utf-8")
     env = _path_shim_env(home, {
@@ -1745,6 +1750,7 @@ def probe_deploy_gh_heartbeat_secret_not_in_argv(tmp: Path):
                      '  -)  cat > "$CRONTAB_FIXTURE";;\n'
                      '  *) exit 1;;\n'
                      'esac\n')
+    _write_argv_shim(shim, "flock", "exit 0\n")
     crontab_fixture = tmp / "gh-heartbeat-crontab.txt"
     crontab_fixture.write_text("", encoding="utf-8")
     env = _path_shim_env(home, {
@@ -1808,6 +1814,7 @@ def probe_deploy_gh_secret_failure_gates_deploy(tmp: Path):
                      '  -)  cat > "$CRONTAB_FIXTURE";;\n'
                      '  *) exit 1;;\n'
                      'esac\n')
+    _write_argv_shim(shim, "flock", "exit 0\n")
     gh_argv = tmp / "ghfail-argv.log"
     _write_argv_shim(shim, "gh",
                      f'printf \'%s\\n\' "$*" >> "{gh_argv.as_posix()}"\n'
@@ -2467,6 +2474,7 @@ def probe_rr0c_deploy_unit_handoff_detection(tmp: Path):
                      '  -)  cat > /dev/null;;\n'
                      '  *) exit 1;;\n'
                      'esac\n')
+    _write_argv_shim(shim, "flock", "exit 0\n")
 
     def _run_deploy(home: Path, cron_file: Path):
         env = _path_shim_env(home, {
@@ -2509,6 +2517,412 @@ def probe_rr0c_deploy_unit_handoff_detection(tmp: Path):
           f"rcB={res_b.returncode}")
 
 
+def _rr1a_home_for_deploy(home: Path) -> str:
+    """Форма HOME, которую deploy.sh реально увидит: MSYS-баш конвертирует
+    Windows-пути при импорте окружения, Linux оставляет как есть."""
+    r = subprocess.run(["bash", "-c", "printf %s \"$HOME\""],
+                       env={"HOME": home.as_posix(),
+                            "PATH": os.environ.get("PATH", "")},
+                       capture_output=True, text=True, timeout=30)
+    return (r.stdout or home.as_posix()).strip()
+
+
+def _rr1a_cron_shims(tmp: Path, tag: str, flock_fails: bool = False) -> Path:
+    """crontab shim на фикстуре: провал чтения/записи и пустой стейт
+    моделируются явно, никакой живой crontab не используется."""
+    shim = tmp / f"rr1a-cron-shim-{tag}"
+    shim.mkdir(parents=True, exist_ok=True)
+    _write_argv_shim(shim, "crontab",
+                     'case "$1" in\n'
+                     '  -l) if [ -n "${CRONTAB_READ_FAIL:-}" ]; then echo "crontab: backend failure" >&2; exit 2; fi\n'
+                     '      if [ -f "$CRONTAB_FIXTURE" ]; then cat "$CRONTAB_FIXTURE"; else echo "no crontab for argus-test" >&2; exit 1; fi ;;\n'
+                     '  -)  if [ -n "${CRONTAB_WRITE_FAIL:-}" ]; then exit 1; fi\n'
+                     '      cat > "$CRONTAB_FIXTURE" ;;\n'
+                     '  *) exit 1;;\n'
+                     'esac\n')
+    _write_argv_shim(shim, "flock",
+                     "exit " + ("1" if flock_fails else "0") + "\n")
+    return shim
+
+
+def _rr1a_modules(core=False, integrations=False, local_services=False,
+                  analyzer=False, heartbeat=False, tg_bot=False) -> str:
+    flags = {"MODULE_CORE": core, "MODULE_INTEGRATIONS": integrations,
+             "MODULE_LOCAL_SERVICES": local_services,
+             "MODULE_ANALYZER": analyzer, "MODULE_HEARTBEAT": heartbeat,
+             "MODULE_TG_BOT": tg_bot, "MODULE_GH_HEARTBEAT": False,
+             "MODULE_DISCORD_BOT": False}
+    return "".join(f"{k}={'ON' if v else 'OFF'}\n" for k, v in flags.items())
+
+
+def _rr1a_cron_deploy(tmp: Path, tag: str, home: Path, shim: Path,
+                      fixture: Path, modules: str, profile: str = "full",
+                      extra_env: dict | None = None) -> subprocess.CompletedProcess:
+    config = write(tmp / f"rr1a-{tag}-config.env", modules)
+    env = _probe_subprocess_env(home, {
+        "HOME": home.as_posix(),
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "CRONTAB_FIXTURE": fixture.as_posix(),
+        "CRON_FILE": (tmp / f"rr1a-{tag}-proposal.txt").as_posix(),
+        "CRON_PROFILE": profile,
+        **(extra_env or {}),
+    })
+    return subprocess.run(
+        ["bash", (REPO / "deploy.sh").as_posix(), config.as_posix()],
+        cwd=REPO.as_posix(), env=env, capture_output=True, text=True, timeout=180)
+
+
+def _rr1a_block(text: str) -> str | None:
+    m = re.search(r"^# BEGIN HERMES-ARGUS\n(.*?)^# END HERMES-ARGUS\n",
+                  text, re.S | re.M)
+    return m.group(1) if m else None
+
+
+def _rr1a_outside(text: str) -> str:
+    outside, in_block = [], False
+    for line in text.split("\n"):
+        if line == "# BEGIN HERMES-ARGUS":
+            in_block = True
+            continue
+        if line == "# END HERMES-ARGUS":
+            in_block = False
+            continue
+        if not in_block:
+            outside.append(line)
+    return "\n".join(outside)
+
+
+def probe_rr1a_cron_managed_block_fresh(tmp: Path):
+    """RR1a §6.1: свежая установка создаёт один managed-блок с job'ами
+    включённых модулей; повторный deploy байт-стабилен и не дублирует."""
+    home = tmp / "rr1a-fresh-home"
+    fixture = tmp / "rr1a-fresh-cron.txt"
+    shim = _rr1a_cron_shims(tmp, "fresh")
+    modules = _rr1a_modules(core=True, integrations=True, local_services=True)
+    r1 = _rr1a_cron_deploy(tmp, "fresh", home, shim, fixture, modules)
+    text1 = fixture.read_text(encoding="utf-8") if fixture.exists() else ""
+    block = _rr1a_block(text1)
+    outside = _rr1a_outside(text1)
+    r2 = _rr1a_cron_deploy(tmp, "fresh", home, shim, fixture, modules)
+    text2 = fixture.read_text(encoding="utf-8") if fixture.exists() else ""
+    cron_file = tmp / "rr1a-fresh-cron.txt".replace("cron.txt", "cron.txt")
+    proposal = (tmp / "rr1a-fresh-cron.txt")
+    ok = (r1.returncode == 0 and r2.returncode == 0
+          and text1.count("# BEGIN HERMES-ARGUS") == 1
+          and text1.count("# END HERMES-ARGUS") == 1
+          and block is not None
+          and block.count("hermes-watchdog.sh") == 1
+          and block.count("integration-discover-wrapper.sh") == 1
+          and block.count("service-status-snapshot.py") == 1
+          and "/bin/bash -c 'set -a; source" in block
+          and not outside.strip()
+          and text2 == text1
+          and "актуален" in r2.stdout)
+    check("rr1a_cron_managed_block_fresh", ok,
+          f"rc={r1.returncode}/{r2.returncode} block={block is not None} "
+          f"stable={text2 == text1} err={r1.stderr[-200:]!r}")
+
+
+def probe_rr1a_cron_module_transitions(tmp: Path):
+    """RR1a §6.2: ON→OFF каждого scheduling-модуля снимает только его строки;
+    все OFF снимает только блок; TG/Discord — не cron-операции."""
+    problems = []
+    cases = [("core", "hermes-watchdog.sh"),
+             ("integrations", "integration-discover-wrapper.sh"),
+             ("analyzer", "health-analyzer.py"),
+             ("heartbeat", "heartbeat.sh"),
+             ("local_services", "service-status-snapshot.py")]
+    for name, marker in cases:
+        home = tmp / f"rr1a-tr-home-{name}"
+        fixture = tmp / f"rr1a-tr-cron-{name}.txt"
+        shim = _rr1a_cron_shims(tmp, f"tr-{name}")
+        flags = {name: True}
+        on = _rr1a_cron_deploy(tmp, f"tr-{name}-on", home, shim, fixture,
+                               _rr1a_modules(**flags))
+        text_on = fixture.read_text(encoding="utf-8") if fixture.exists() else ""
+        off = _rr1a_cron_deploy(tmp, f"tr-{name}-off", home, shim, fixture,
+                                _rr1a_modules())
+        text_off = fixture.read_text(encoding="utf-8") if fixture.exists() else ""
+        if not (on.returncode == 0 and off.returncode == 0
+                and marker in (text_on or "")
+                and "# BEGIN HERMES-ARGUS" in (text_on or "")
+                and marker not in text_off
+                and "# BEGIN HERMES-ARGUS" not in text_off):
+            problems.append(f"{name}: on={on.returncode} off={off.returncode} "
+                            f"tab_on={marker in text_on} tab_off={text_off!r}")
+    # TG/Discord активация — не cron-операция: блока нет, crontab не пишется.
+    home = tmp / "rr1a-tr-home-tg"
+    fixture = tmp / "rr1a-tr-cron-tg.txt"
+    shim = _rr1a_cron_shims(tmp, "tr-tg")
+    tg = _rr1a_cron_deploy(tmp, "tr-tg", home, shim, fixture,
+                           _rr1a_modules(tg_bot=True))
+    if not (tg.returncode == 0 and not fixture.exists()):
+        problems.append(f"tg: rc={tg.returncode} fixture_exists={fixture.exists()}")
+    check("rr1a_cron_module_transitions", not problems, f"problems={problems[:3]}")
+
+
+def probe_rr1a_cron_minimal_profile(tmp: Path):
+    """RR1a §6.3: minimal-профиль остаётся тихим (без CORE-алертных job'ов),
+    selected integration/local-services job'ы сохраняют семантику генератора."""
+    home = tmp / "rr1a-min-home"
+    fixture = tmp / "rr1a-min-cron.txt"
+    shim = _rr1a_cron_shims(tmp, "min")
+    modules = _rr1a_modules(core=True, integrations=True, local_services=True)
+    r = _rr1a_cron_deploy(tmp, "min", home, shim, fixture, modules,
+                          profile="minimal")
+    block = _rr1a_block(fixture.read_text(encoding="utf-8")
+                        if fixture.exists() else "")
+    ok = (r.returncode == 0 and block is not None
+          and "hermes-watchdog.sh" not in block
+          and "network-guard.sh" not in block
+          and "integration-discover-wrapper.sh" in block
+          and "health-check-v2-wrapper.sh" in block
+          and "service-status-snapshot.py" in block)
+    check("rr1a_cron_minimal_profile", ok,
+          f"rc={r.returncode} block_quiet={block is not None and 'hermes-watchdog.sh' not in block} "
+          f"err={r.stderr[-200:]!r}")
+
+
+def probe_rr1a_cron_mixed_preservation(tmp: Path):
+    """RR1a §6.4: посторонние комментарии/env/job'ы (включая lookalike
+    basename и кастомный вызов нашего скрипта с другими аргументами)
+    сохраняются дословно и в исходном порядке; внешние обёртки не усыновляются."""
+    home = tmp / "rr1a-mix-home"
+    fixture = tmp / "rr1a-mix-cron.txt"
+    shim = _rr1a_cron_shims(tmp, "mix")
+    original = [
+        "# operator crontab — do not sort",
+        "MAILTO=ops@example.invalid",
+        "",
+        "0 9 * * 1-5 /usr/bin/operator-report --quiet",
+        "0 0 * * 0 /usr/local/bin/infra-sync.sh",
+        "30 2 * * * /usr/local/bin/app-backup.sh >> /var/log/backup.log 2>&1",
+        "0 0 * * * /opt/fake/scripts/hermes-watchdog.sh --fake >> /tmp/fake.log 2>&1",
+        f"0 4 * * * {home.as_posix()}/scripts/auto-remediate.sh --dry-run "
+        f">> {home.as_posix()}/.hermes/logs/custom-remediate.log 2>&1",
+        "*/10 * * * * ~/scripts/check-integrations.sh >> ~/.hermes/logs/quick-check.log 2>&1",
+    ]
+    write(fixture, "\n".join(original) + "\n")
+    r = _rr1a_cron_deploy(tmp, "mix", home, shim, fixture,
+                          _rr1a_modules(core=True))
+    text = fixture.read_text(encoding="utf-8") if fixture.exists() else ""
+    outside = [l for l in _rr1a_outside(text).split("\n") if l != "" or True]
+    outside = _rr1a_outside(text).split("\n")[:-1] if _rr1a_outside(text) else []
+    block = _rr1a_block(text)
+    ok = (r.returncode == 0 and block is not None
+          and outside == original
+          and block.count("hermes-watchdog.sh") == 1
+          and "сохранено" in r.stdout
+          and "check-integrations.sh" not in (block or ""))
+    check("rr1a_cron_mixed_preservation", ok,
+          f"rc={r.returncode} preserved={outside == original} "
+          f"out={r.stdout[-300:]!r} err={r.stderr[-200:]!r}")
+
+
+def probe_rr1a_cron_legacy_adoption(tmp: Path):
+    """RR1a §6.5: известные ранее сгенерированные формы (оба написания путей,
+    включая легаси heartbeat с голым source и producer-only local-services)
+    усыновляются ровно один раз в managed-блок; внешние/saved job'ы не тронуты."""
+    home = tmp / "rr1a-adopt-home"
+    fixture = tmp / "rr1a-adopt-cron.txt"
+    shim = _rr1a_cron_shims(tmp, "adopt")
+    hp = _rr1a_home_for_deploy(home)
+    legacy = [
+        "# pre-RR1a manually installed argus lines",
+        f"*/5 * * * * {hp}/scripts/hermes-watchdog.sh >> {hp}/.hermes/logs/watchdog-cron.log 2>&1",
+        "*/2 * * * * ~/scripts/network-guard.sh >> ~/.hermes/logs/network-guard-cron.log 2>&1",
+        f"*/5 * * * * python3 {hp}/scripts/fallback-tracker-v2.py >> {hp}/.hermes/logs/fallback-tracker-v2.log 2>&1",
+        "*/5 * * * * set -a; source ~/.hermes/.env; set +a; ~/scripts/heartbeat.sh >> ~/.hermes/logs/heartbeat.log 2>&1",
+        f"*/5 * * * * python3 {hp}/.hermes/scripts/service-status-snapshot.py --quiet >> {hp}/.hermes/logs/service-status.log 2>&1",
+        f"5 * * * * cd {hp}/.hermes/scripts && python3 health-analyzer.py --update >> {hp}/.hermes/logs/health-analyzer.log 2>&1",
+        f"0 3 * * 1 {hp}/scripts/check-updates.sh",
+        "0 7 * * * hermes no_agent saved-full-check --full",
+        "15 3 * * * /usr/local/bin/operator-backup.sh",
+    ]
+    write(fixture, "\n".join(legacy) + "\n")
+    modules = _rr1a_modules(core=True, integrations=True, analyzer=True,
+                            heartbeat=True, local_services=True)
+    r1 = _rr1a_cron_deploy(tmp, "adopt", home, shim, fixture, modules)
+    text1 = fixture.read_text(encoding="utf-8") if fixture.exists() else ""
+    outside = _rr1a_outside(text1)
+    block = _rr1a_block(text1) or ""
+    r2 = _rr1a_cron_deploy(tmp, "adopt", home, shim, fixture, modules)
+    text2 = fixture.read_text(encoding="utf-8") if fixture.exists() else ""
+    ok = (r1.returncode == 0 and r2.returncode == 0
+          and outside.split("\n")[:-1] == [legacy[0], legacy[8], legacy[9]]
+          and block.count("hermes-watchdog.sh") == 1
+          and block.count("network-guard.sh") == 1
+          and block.count("fallback-tracker-v2.py") == 1
+          and block.count("heartbeat.sh") == 1
+          and "set -a; source" in block
+          and "bin/bash -c 'set -a; source" in block
+          and "source ~/.hermes/.env; set +a; ~/scripts/heartbeat.sh" not in text1
+          and block.count("service-status-snapshot.py") == 1
+          and block.count("health-analyzer.py") == 1
+          and block.count("check-updates.sh") == 1
+          and text2 == text1)
+    check("rr1a_cron_legacy_adoption", ok,
+          f"rc={r1.returncode}/{r2.returncode} stable={text2 == text1} "
+          f"outside={outside!r} err={r1.stderr[-200:]!r}")
+
+
+def probe_rr1a_cron_fail_paths(tmp: Path):
+    """RR1a §6.6: отсутствие crontab, сбой чтения и сбой записи — громкий
+    nonzero deploy; прежний fixture не заменяется пустым расписанием."""
+    problems = []
+    # a) сбой чтения: generic ошибка не трактуется как пустой crontab
+    home = tmp / "rr1a-fail-read-home"
+    fixture = tmp / "rr1a-fail-read-cron.txt"
+    write(fixture, "0 9 * * 1-5 /usr/bin/operator-report --quiet\n")
+    shim = _rr1a_cron_shims(tmp, "fail-read")
+    r = _rr1a_cron_deploy(tmp, "fail-read", home, shim, fixture,
+                          _rr1a_modules(core=True),
+                          extra_env={"CRONTAB_READ_FAIL": "1"})
+    if not (r.returncode != 0 and "неопознанной ошибкой" in r.stdout + r.stderr
+            and fixture.read_text(encoding="utf-8")
+            == "0 9 * * 1-5 /usr/bin/operator-report --quiet\n"):
+        problems.append(f"read-fail rc={r.returncode} tab={fixture.read_text()!r}")
+    # b) сбой записи
+    home = tmp / "rr1a-fail-write-home"
+    fixture = tmp / "rr1a-fail-write-cron.txt"
+    write(fixture, "0 9 * * 1-5 /usr/bin/operator-report --quiet\n")
+    shim = _rr1a_cron_shims(tmp, "fail-write")
+    r = _rr1a_cron_deploy(tmp, "fail-write", home, shim, fixture,
+                          _rr1a_modules(core=True),
+                          extra_env={"CRONTAB_WRITE_FAIL": "1"})
+    if not (r.returncode != 0 and "не удалось записать" in r.stdout + r.stderr
+            and fixture.read_text(encoding="utf-8")
+            == "0 9 * * 1-5 /usr/bin/operator-report --quiet\n"):
+        problems.append(f"write-fail rc={r.returncode} tab={fixture.read_text()!r}")
+    # c) отсутствие crontab-утилиты: директория с именем crontab исключает
+    # command -v (не исполняемый файл) — детерминировано на любой платформе.
+    home = tmp / "rr1a-fail-nocron-home"
+    fixture = tmp / "rr1a-fail-nocron-cron.txt"
+    write(fixture, "0 9 * * 1-5 /usr/bin/operator-report --quiet\n")
+    shim = _rr1a_cron_shims(tmp, "fail-nocron")
+    (shim / "crontab").unlink(missing_ok=True)
+    (shim / "crontab").mkdir()
+    r = _rr1a_cron_deploy(tmp, "fail-nocron", home, shim, fixture,
+                          _rr1a_modules(core=True))
+    if not (r.returncode != 0 and "crontab недоступен" in r.stdout + r.stderr
+            and fixture.read_text(encoding="utf-8")
+            == "0 9 * * 1-5 /usr/bin/operator-report --quiet\n"):
+        problems.append(f"no-crontab rc={r.returncode} out={r.stdout[-200:]!r}")
+    check("rr1a_cron_fail_paths", not problems, f"problems={problems}")
+
+
+def probe_rr1a_cron_malformed_markers(tmp: Path):
+    """RR1a §6.7: дублированные/незакрытые/перевёрнутые маркеры отклоняются
+    без записи; установленный crontab не меняется."""
+    problems = []
+    layouts = {
+        "dup-begin": ["# BEGIN HERMES-ARGUS", "# BEGIN HERMES-ARGUS",
+                      "0 9 * * 1-5 /usr/bin/operator-report --quiet",
+                      "# END HERMES-ARGUS"],
+        "unmatched-begin": ["# BEGIN HERMES-ARGUS",
+                            "0 9 * * 1-5 /usr/bin/operator-report --quiet"],
+        "reversed": ["0 9 * * 1-5 /usr/bin/operator-report --quiet",
+                     "# END HERMES-ARGUS", "# BEGIN HERMES-ARGUS"],
+    }
+    for name, lines in layouts.items():
+        home = tmp / f"rr1a-mm-home-{name}"
+        fixture = tmp / f"rr1a-mm-cron-{name}.txt"
+        original = "\n".join(lines) + "\n"
+        write(fixture, original)
+        shim = _rr1a_cron_shims(tmp, f"mm-{name}")
+        r = _rr1a_cron_deploy(tmp, f"mm-{name}", home, shim, fixture,
+                              _rr1a_modules(core=True))
+        if not (r.returncode != 0
+                and "разметк" in r.stdout + r.stderr
+                and fixture.read_text(encoding="utf-8") == original):
+            problems.append(f"{name}: rc={r.returncode} "
+                            f"unchanged={fixture.read_text(encoding='utf-8') == original}")
+    check("rr1a_cron_malformed_markers", not problems, f"problems={problems}")
+
+
+def probe_rr1a_cron_contention(tmp: Path):
+    """RR1a §6.8: занятый nonblocking-лок даёт явный contention-результат
+    без записи и без дублирования блока (flock-шим моделирует удержание)."""
+    home = tmp / "rr1a-lock-home"
+    fixture = tmp / "rr1a-lock-cron.txt"
+    write(fixture, "0 9 * * 1-5 /usr/bin/operator-report --quiet\n")
+    shim = _rr1a_cron_shims(tmp, "lock", flock_fails=True)
+    r = _rr1a_cron_deploy(tmp, "lock", home, shim, fixture,
+                          _rr1a_modules())
+    text = fixture.read_text(encoding="utf-8") if fixture.exists() else ""
+    ok = (r.returncode != 0
+          and "параллельный deploy" in r.stdout + r.stderr
+          and "# BEGIN HERMES-ARGUS" not in text
+          and text.count("# BEGIN HERMES-ARGUS") <= 1)
+    check("rr1a_cron_contention", ok,
+          f"rc={r.returncode} out={r.stdout[-200:]!r} err={r.stderr[-200:]!r}")
+
+
+def probe_rr1a_cron_block_shell_safety(tmp: Path):
+    """RR1a §6.11: команды блока парсятся под явным шеллом, .env-загрузка
+    только через явный /bin/bash -c, креденшел-канарейка не попадает в cron."""
+    home = tmp / "rr1a-shell-home"
+    fixture = tmp / "rr1a-shell-cron.txt"
+    shim = _rr1a_cron_shims(tmp, "shell")
+    canary = "ARGUS_CANARY_TOKEN_RR1A"
+    modules = ("MODULE_CORE=ON\nMODULE_INTEGRATIONS=ON\nMODULE_LOCAL_SERVICES=ON\n"
+               "MODULE_ANALYZER=ON\nMODULE_HEARTBEAT=ON\n"
+               "MODULE_TG_BOT=OFF\nMODULE_GH_HEARTBEAT=OFF\n"
+               "MODULE_DISCORD_BOT=OFF\n"
+               f"WATCHDOG_BOT_TOKEN={canary}\n")
+    r = _rr1a_cron_deploy(tmp, "shell", home, shim, fixture, modules)
+    block = _rr1a_block(fixture.read_text(encoding="utf-8")
+                        if fixture.exists() else "") or ""
+    parse_fail = []
+    for line in block.splitlines():
+        if not line.strip():
+            continue
+        parsed = subprocess.run(["bash", "-n", "-c", line],
+                                capture_output=True, text=True, timeout=20)
+        if parsed.returncode != 0:
+            parse_fail.append(line[:60])
+        if "source" in line and "/bin/bash -c 'set -a; source" not in line:
+            parse_fail.append(f"bare-source: {line[:60]}")
+    ok = (r.returncode == 0 and block
+          and not parse_fail
+          and canary not in fixture.read_text(encoding="utf-8"))
+    check("rr1a_cron_block_shell_safety", ok,
+          f"rc={r.returncode} parse_fail={parse_fail[:3]}")
+
+
+def probe_rr1a_quick_no_global_cron_count(tmp: Path):
+    """RR1a §6.10a: валидное малое расписание не флагается снятой
+    «<7 задач»-эвристикой quick-проверки (红 на pre-RR1a: 2 строки < 7)."""
+    home = tmp / "rr1a-quick-home"
+    shim = tmp / "rr1a-quick-shim"
+    shim.mkdir()
+    cron_fixture = tmp / "rr1a-quick-crontab.txt"
+    write(cron_fixture,
+        "0 9 * * 1-5 /usr/bin/operator-report --quiet\n"
+        "30 10 * * * /usr/bin/backup-tool run\n")
+    _write_argv_shim(shim, "crontab",
+                     'case "$1" in\n'
+                     '  -l) cat "$CRONTAB_FIXTURE";;\n'
+                     '  *) exit 1;;\n'
+                     'esac\n')
+    _write_argv_shim(shim, "flock", "exit 0\n")
+    argv_log, stdin_log = _install_curl_shim(shim, tmp, "rr1a-quick",
+                                             stdout="HTTP 000")
+    write(home / ".hermes" / ".env", f"GITHUB_TOKEN={R1C_GH}\n")
+    env = _path_shim_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "CRONTAB_FIXTURE": cron_fixture.as_posix(),
+    })
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts" / "health-check-integrations.sh"), "--quick"],
+        cwd=REPO, env=env, input="", capture_output=True, text=True, timeout=120)
+    ok = ("Crontab" not in result.stdout
+          and "найдено" not in result.stdout
+          and R1C_GH not in (result.stdout + result.stderr))
+    check("rr1a_quick_no_global_cron_count", ok,
+          f"rc={result.returncode} out={result.stdout[-200:]!r}")
+
+
 def probe_rr0c_install_single_active_producer(tmp: Path):
     """RR0c B3 (remediation): install.sh включает канонический вотчер только
     при отсутствии живого legacy-юнита. Legacy, который enabled ИЛИ фактически
@@ -2548,6 +2962,7 @@ def probe_rr0c_install_single_active_producer(tmp: Path):
                      '  -)  cat > /dev/null;;\n'
                      '  *) exit 1;;\n'
                      'esac\n')
+    _write_argv_shim(shim, "flock", "exit 0\n")
     _write_argv_shim(shim, "systemctl",
                      'LOG="$SYSTEMCTL_CALL_LOG"\n'
                      'printf \'%s\\n\' "$*" >> "$LOG"\n'
@@ -5155,6 +5570,8 @@ def probe_ls_deploy_on_off_cron(tmp: Path):
           '  -)  cat > "$CRONTAB_FIXTURE";;\n'
           "  *) exit 1;;\n"
           "esac\n").chmod(0o755)
+    _write_argv_shim(shims, "flock", "exit 0\n")
+    _write_argv_shim(shims, "flock", "exit 0\n")
     write(shims / "python3",
           "#!/bin/sh\n"
           'echo "$@" >> "$PY3_LOG"\n'
@@ -5167,6 +5584,8 @@ def probe_ls_deploy_on_off_cron(tmp: Path):
           '  -l) cat "$CRONTAB_FIXTURE" 2>/dev/null;;\n'
           "  *) exit 1;;\n"
           "esac\n").chmod(0o755)
+    _write_argv_shim(shims_fail, "flock", "exit 0\n")
+    _write_argv_shim(shims_fail, "flock", "exit 0\n")
     legacy_cron = ("*/5 * * * * python3 /home/legacy/.hermes/scripts/"
                    "service-status-snapshot.py --quiet "
                    ">> /home/legacy/.hermes/logs/service-status.log 2>&1")
@@ -5376,6 +5795,17 @@ def main() -> int:
     probe_rr0c_proxy_check_explicit(hc)
     probe_rr0c_deploy_unit_handoff_detection(tmp)
     probe_rr0c_install_single_active_producer(tmp)
+    # RR1a: managed cron ownership (блок/writer/adoption/fail-closed)
+    probe_rr1a_cron_managed_block_fresh(tmp)
+    probe_rr1a_cron_module_transitions(tmp)
+    probe_rr1a_cron_minimal_profile(tmp)
+    probe_rr1a_cron_mixed_preservation(tmp)
+    probe_rr1a_cron_legacy_adoption(tmp)
+    probe_rr1a_cron_fail_paths(tmp)
+    probe_rr1a_cron_malformed_markers(tmp)
+    probe_rr1a_cron_contention(tmp)
+    probe_rr1a_cron_block_shell_safety(tmp)
+    probe_rr1a_quick_no_global_cron_count(tmp)
     # R1c: Authorization headers out of child argv (shell + ai-deep-check)
     probe_r1c_shell_full_auth_not_in_argv(tmp)
     probe_r1c_quick_github_header_not_in_argv(tmp)
