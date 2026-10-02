@@ -261,8 +261,8 @@ R1c DONE
  -> R2a/R2a.1 DONE
  -> R2c.1 DONE / PR #49
  -> RR0a DONE / PR #51
- -> RR0b dead/duplicate runtime removal        <-- CURRENT GATE
- -> RR0c public defaults/naming migration
+ -> RR0b DONE / PR #63
+ -> RR0c public defaults/naming migration        <-- CURRENT GATE
  -> RR1 installer/dependency/managed-cron hardening
  -> RR2 runtime i18n (en + ru)
  -> RR3 release acceptance
