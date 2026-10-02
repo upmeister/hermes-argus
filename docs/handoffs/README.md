@@ -14,8 +14,8 @@ Read in this order:
 
 Current selected task:
 
-- **RR0b** — dead/duplicate runtime removal. The implementation contract is
-  ready; RR0a is already complete and RR0c is queued behind RR0b.
+- **RR0c** — public defaults and naming migration. The implementation
+  contract is ready; RR0a and RR0b are complete.
 
 Completed:
 
@@ -30,6 +30,7 @@ Completed:
 - R2a.1 plugin metadata hardening + baseline follow-up — **DONE / PR #47**
 - R2c.1 canonical fallback_providers inventory — **DONE / PR #49**
 - RR0a default-module/runtime truth — **DONE / PR #51**
+- RR0b dead/duplicate runtime removal — **DONE / PR #63**
 - MCP disabled-server reporting — **DONE / PR #59**
 - canonical gateway matcher maintenance fix — **DONE / PR #60**
 
@@ -40,12 +41,13 @@ Closed/upstream-gated:
 ## Exact current baseline
 
 ```text
-Argus main = aeb11aa05ff07a6f9dde0dff238167e1597fc793
+Argus main = 72a801f (merge of PR #63, 2026-10-02)
 R2c.1 merged = 7d6fcf8940c26625103c78004fe69ba65fab4ccb (PR #49, 2026-09-24)
 local-services merged = 21cd7edb5bd503e3d5ce01d872b13e73f4720c2d (PR #56, 2026-09-27)
 RR0a merged = f1f9a77659b349a10983fb330badef9ef52b5996 (PR #51, 2026-09-24)
 MCP disabled-server merged = 3551b08 (PR #59, 2026-10-02)
 gateway matcher merged = b39b256 (PR #60, 2026-10-02)
+RR0b merged = 72a801f (PR #63, 2026-10-02; implementation 4fa5473, remediation 78fea55)
 ```
 
 R2c.1 is confirmed against Hermes stable v0.21.5 — see the 2026-10-01 upstream
@@ -59,8 +61,8 @@ R1c DONE
  -> R2a/R2a.1 DONE
  -> R2c.1 DONE
  -> RR0a DONE / PR #51
- -> RR0b dead/duplicate runtime removal            <-- CURRENT CONTRACT
- -> RR0c public defaults/naming migration
+ -> RR0b DONE / PR #63
+ -> RR0c public defaults/naming migration        <-- CURRENT CONTRACT
  -> RR1 installer/dependency/managed-cron
  -> RR2 runtime i18n: en + ru
  -> RR3 release acceptance
@@ -95,14 +97,15 @@ dependency-on-Hermes list is `docs/research/hermes-argus-seams.md`.
 
 Current:
 
-- `rr0b-dead-runtime-removal-contract.md` — selected; reviewer: **Codex**.
-- `rr0c-public-defaults-naming-migration-contract.md` — queued after RR0b;
+- `rr0c-public-defaults-naming-migration-contract.md` — selected;
   reviewer: **Codex**.
 
 Completed:
 
 - `r2c-static-discovery-compat-contract.md` — R2c.1 (PR #49)
 - `rr0a-default-module-runtime-truth-contract.md` — RR0a (PR #51)
+- `rr0b-dead-runtime-removal-contract.md` — RR0b (PR #63; reviewer Codex,
+  verdict PASS-TO-MAINTAINER after one remediation pass)
 - `mcp-disabled-server-compat-contract.md` — MCP disabled-server handling
   (PR #59)
 - `r2a-baseline-degradation-followup-contract.md`
