@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unavailable exactly where the check is required. Regression probes cover the
   argv-substring ban, manifest presence, and the `rc=2` path.
 
+- Align watchdog self-health with the configured module surface (RR0a): the
+  default install no longer requires the optional Analyzer, Telegram bot,
+  unmanaged Netdata, a historical integration-checker path, or a legacy
+  heartbeat directory. Enabled module surfaces still report missing or stale
+  owned state, and existing GitHub-heartbeat installations retain bounded
+  legacy-directory compatibility.
+
 ### Added
 
 - Opt-in `MODULE_LOCAL_SERVICES` monitoring (OFF by default): deploy now ships a

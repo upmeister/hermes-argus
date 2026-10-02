@@ -5,7 +5,7 @@ handoffs. **Old handoff presence is not implementation authority.**
 
 Repository `AGENTS.md` scope-control rules apply to every document here.
 
-## Active baseline — updated 2026-10-01
+## Active baseline — updated 2026-10-02
 
 Read in this order:
 
@@ -14,8 +14,8 @@ Read in this order:
 
 Current selected task:
 
-- **none** — R2c.1 is complete; the next release gate is RR0, whose contract is
-  not yet selected.
+- **RR0b** — dead/duplicate runtime removal. The implementation contract is
+  ready; RR0a is already complete and RR0c is queued behind RR0b.
 
 Completed:
 
@@ -29,6 +29,9 @@ Completed:
 - R2a malformed authoritative YAML fail-safe — **DONE / PR #44**
 - R2a.1 plugin metadata hardening + baseline follow-up — **DONE / PR #47**
 - R2c.1 canonical fallback_providers inventory — **DONE / PR #49**
+- RR0a default-module/runtime truth — **DONE / PR #51**
+- MCP disabled-server reporting — **DONE / PR #59**
+- canonical gateway matcher maintenance fix — **DONE / PR #60**
 
 Closed/upstream-gated:
 
@@ -37,9 +40,12 @@ Closed/upstream-gated:
 ## Exact current baseline
 
 ```text
-Argus main = a58cfcdaadea094281c9aa1e459d7b4bf76f9032
+Argus main = b39b25646c9fa9473fbe30be9cf9357fc909df
 R2c.1 merged = 7d6fcf8940c26625103c78004fe69ba65fab4ccb (PR #49, 2026-09-24)
 local-services merged = 21cd7edb5bd503e3d5ce01d872b13e73f4720c2d (PR #56, 2026-09-27)
+RR0a merged = f1f9a77659b349a10983fb330badef9ef52b5996 (PR #51, 2026-09-24)
+MCP disabled-server merged = 3551b08 (PR #59, 2026-10-02)
+gateway matcher merged = b39b256 (PR #60, 2026-10-02)
 ```
 
 R2c.1 is confirmed against Hermes stable v0.21.5 — see the 2026-10-01 upstream
@@ -52,7 +58,9 @@ rework.
 R1c DONE
  -> R2a/R2a.1 DONE
  -> R2c.1 DONE
- -> RR0 legacy/personal-dependency reduction      <-- CURRENT GATE
+ -> RR0a DONE / PR #51
+ -> RR0b dead/duplicate runtime removal            <-- CURRENT CONTRACT
+ -> RR0c public defaults/naming migration
  -> RR1 installer/dependency/managed-cron
  -> RR2 runtime i18n: en + ru
  -> RR3 release acceptance
@@ -87,12 +95,16 @@ dependency-on-Hermes list is `docs/research/hermes-argus-seams.md`.
 
 Current:
 
-- **none selected.** R2c.1 completed; RR0 is the next gate and awaits a
-  maintainer-selected contract.
+- `rr0b-dead-runtime-removal-contract.md` — selected; reviewer: **Codex**.
+- `rr0c-public-defaults-naming-migration-contract.md` — queued after RR0b;
+  reviewer: **Codex**.
 
 Completed:
 
 - `r2c-static-discovery-compat-contract.md` — R2c.1 (PR #49)
+- `rr0a-default-module-runtime-truth-contract.md` — RR0a (PR #51)
+- `mcp-disabled-server-compat-contract.md` — MCP disabled-server handling
+  (PR #59)
 - `r2a-baseline-degradation-followup-contract.md`
 - `r2a-malformed-yaml-contract.md`
 - `r1c-authorization-header-argv-contract.md`
@@ -109,6 +121,9 @@ Closed/upstream-gated:
 Deferred:
 
 - `r2b-gateway-liveness-contract.md`
+
+Non-blocking findings and deferred maintenance are tracked in
+[`docs/BACKLOG.md`](../BACKLOG.md).
 
 ## Role-based workflow
 
@@ -127,6 +142,7 @@ A reviewer finding outside the active contract is recorded, not automatically
 implemented. Before merge recommendation, refresh the PR body/evidence receipt
 to the exact candidate head.
 
-Reviewer assignment is per-contract. The default focused reviewer on the Peetna
-MCP is **not** currently in effect; a contract names its reviewer explicitly
-until further notice.
+Reviewer assignment is per-contract. **Codex** is the current project
+reviewer/architect; a contract may name another reviewer when the maintainer
+chooses one. Merge authority follows the production-risk classification in
+`AGENTS.md`, and deployment always remains a separate maintainer action.

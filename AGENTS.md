@@ -58,29 +58,47 @@ agent product:
 - **Focused reviewer** — adversarially checks the contract and may request one
   bounded remediation.
 - **Maintainer** — selects scope, resolves blockers, performs the final exact-head
-  gate, and alone authorizes merge/deploy/release actions.
+  gate, and authorizes deploy/release actions. Merge authority may be delegated
+  by the active contract for an explicitly low-risk PR.
 
 Changing which tool or model fills a role does not change the contract.
 
-Pytna is the default focused reviewer across projects and is reached through
-the Peetna MCP. Unless the task names another reviewer, send Pytna the
-implementation PR link and the source handoff from the contract/docs PR, plus
-the exact candidate head, scope, acceptance criteria, constraints, and focused
-review questions. Check Peetna health first; start the review only after the
-handoff is ready, then read the completed result before deciding on remediation.
+Codex is the current default focused reviewer and project architect for this
+repository. A contract may name another reviewer when the maintainer chooses
+one. The former Pytna default is not currently in effect; use the Peetna MCP
+only when a contract explicitly assigns that review path.
 
 Reviewer assignment is per-contract and may be changed by the maintainer at any
-time. The Pytna default is **not** currently in effect (maintainer is trialing a
-new review pipeline); until further notice every contract names its reviewer
-explicitly, and a contract that names none has no assigned reviewer.
+time. Contracts for this project should name **Codex** unless the maintainer
+selects a different reviewer.
 
 A task assignment that links a documentation PR as its active contract counts
 as acceptance and authorizes merging that contract PR before implementation.
 Base implementation work on the resulting `main`. An implementation task
 authorizes a task branch, commit, push, and opening or updating its PR by
 default, unless the maintainer sets a local-only or no-publication constraint.
-Implementation PR merges, deploys, releases, and production actions require
-separate authorization.
+Implementation PRs may be merged only under the active contract's merge
+authority. Deploys, releases, and production actions always require separate
+maintainer authorization.
+
+### Merge authority and production-risk assessment
+
+Every implementation contract must declare `Production risk` and `Merge
+authority` when it is created. The contract author makes this assessment before
+implementation begins.
+
+- **Low risk / auto-merge on PASS:** documentation, research, or other changes
+  with no runtime, deployment, generated-config, or production-state effect.
+  After a PASS, the assigned reviewer may merge the exact reviewed head when
+  required CI is green, the receipt matches that head, and no blocker or status
+  drift exists.
+- **Medium or high risk / maintainer merge:** runtime, installer, default,
+  migration, monitoring, or deployment-surface changes. The reviewer returns a
+  merge recommendation; the maintainer performs the exact-head gate and gives
+  the merge authorization.
+
+`Auto-merge on PASS` never authorizes deployment, service restart, production
+state migration, release publication, or branch-protection changes.
 
 ### Reviewer authority
 
@@ -141,6 +159,8 @@ evidence that the design is wrong and STOP for maintainer review.
 - Generated `registry.yaml` comes from `scripts/gen-registry.py`; do not
   hand-edit generated entries.
 - Runtime copies must be compared with repository templates after deploy.
+- [`docs/DEPLOY_CHECKLIST.md`](docs/DEPLOY_CHECKLIST.md) is the required
+  read-back procedure for production deployment.
 
 Repository layout of authority:
 
@@ -165,6 +185,8 @@ describe that state **in the same change**, not in a follow-up:
 - `docs/ROADMAP.md` — release path and upstream authority;
 - `AGENTS.md` — release direction and the upstream authority block;
 - `CHANGELOG.md` — user-facing change;
+- `docs/BACKLOG.md` — non-blocking findings and deferred maintenance;
+- `docs/DEPLOY_CHECKLIST.md` — production deploy and read-back procedure;
 - the Obsidian project card (vault) when the change moves project state.
 
 Status surfaces must never lag merged reality: a merged contract is not "NOW",
@@ -172,6 +194,10 @@ and a gate that has moved is not the current gate. A change that ships without
 its doc update forces the next agent — or the maintainer returning after a pause
 — to re-derive the wrong state. This is exactly how R2c.1 looked unfinished for
 a week after PR #49 had already merged.
+
+Non-blocking findings from a builder or reviewer go into
+[`docs/BACKLOG.md`](docs/BACKLOG.md) in the same handoff or review update,
+with their source, reason for deferral, and re-entry trigger.
 
 ## Invariants
 
@@ -234,7 +260,9 @@ Public release path:
 R1c DONE
  -> R2a/R2a.1 DONE
  -> R2c.1 DONE / PR #49
- -> RR0 legacy/personal-dependency reduction   <-- CURRENT GATE
+ -> RR0a DONE / PR #51
+ -> RR0b dead/duplicate runtime removal        <-- CURRENT GATE
+ -> RR0c public defaults/naming migration
  -> RR1 installer/dependency/managed-cron hardening
  -> RR2 runtime i18n (en + ru)
  -> RR3 release acceptance
@@ -249,6 +277,8 @@ release-readiness task, not permission to duplicate documentation.
 - `README.md` — public product/status overview.
 - `docs/ROADMAP.md` — public release roadmap.
 - `docs/handoffs/README.md` — active implementation authority.
+- `docs/BACKLOG.md` — deferred findings and maintenance queue.
+- `docs/DEPLOY_CHECKLIST.md` — production deployment procedure.
 - `docs/adr/0001-integration-evidence-policy.md` — evidence/verdict policy.
 - `docs/adr/0002-hermes-discovery-sync-boundary.md` — historical bridge record.
 - `CHANGELOG.md` — Keep a Changelog user-facing history.

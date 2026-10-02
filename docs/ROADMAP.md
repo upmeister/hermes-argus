@@ -51,7 +51,9 @@ OA2 remains **closed/upstream-gated**.
 R1c  Authorization-header argv debt                 DONE / PR #42
  -> R2a/R2a.1 fail-safe discovery hardening         DONE / PR #44 + #47
  -> R2c.1 canonical fallback_providers inventory    DONE / PR #49
- -> RR0 legacy/personal-dependency reduction        NOW
+ -> RR0a default-module/runtime truth               DONE / PR #51
+ -> RR0b dead/duplicate runtime removal             NOW
+ -> RR0c public defaults/naming migration
  -> RR1 installer/dependency/managed-cron hardening
  -> RR2 runtime i18n (English + Russian)
  -> RR3 clean-install/upgrade/uninstall acceptance
@@ -130,11 +132,32 @@ High-value findings include:
 - personal GitHub/proxy/old-kit defaults remain;
 - some deployed code/settings have no demonstrated live owner.
 
-RR0 is a release gate but must be split into focused contracts rather than an
-omnibus refactor.
+RR0 is a release gate split into three focused contracts rather than an
+omnibus refactor:
+
+1. **RR0a — default-module/runtime truth — DONE / PR #51.** The default
+   watchdog no longer requires optional Analyzer, Telegram bot, unmanaged
+   Netdata, historical integration-checker paths, or a legacy heartbeat
+   directory. Existing legacy heartbeat compatibility remains bounded.
+2. **RR0b — dead/duplicate runtime removal — NOW.** Establish ownership for
+   the remaining deployed scripts/settings and remove only surfaces proven to
+   have no live owner.
+3. **RR0c — public defaults and naming migration — QUEUED.** Remove
+   maintainer-specific proxy, GitHub, identity, and resource-name assumptions
+   while preserving an explicit migration path for existing production.
 
 Research:
 [pre-release legacy audit](research/2026-09-21-pre-release-legacy-audit.md).
+
+Contracts:
+
+- [RR0a default-module/runtime truth](handoffs/rr0a-default-module-runtime-truth-contract.md) — complete;
+- [RR0b dead/duplicate runtime removal](handoffs/rr0b-dead-runtime-removal-contract.md) — current;
+- [RR0c public defaults/naming migration](handoffs/rr0c-public-defaults-naming-migration-contract.md) — queued.
+
+The canonical gateway matcher fix in **PR #60** is merged maintenance that
+keeps watchdog and gateway liveness aligned with the current Hermes startup
+shape. The broader R2b gateway-liveness redesign remains deferred.
 
 ## RR1 — public installation contract
 
@@ -220,7 +243,11 @@ monitoring core: proven in maintainer production
 R1c: closed
 R2a/R2a.1: closed and deployed
 R2c.1: closed (PR #49) and confirmed against stable v0.21.5
-RR0: current release gate; required before installer hardening
+RR0a: closed (PR #51)
+RR0b/RR0c: current release gate; required before installer hardening
 distribution contract: incomplete
 public RC: gated by RR0 + RR1/RR2/RR3
 ```
+
+Deferred findings are tracked in [BACKLOG.md](BACKLOG.md). Production changes
+use the [deployment checklist](DEPLOY_CHECKLIST.md).

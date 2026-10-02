@@ -1,6 +1,9 @@
 # RR0a contract — default module/runtime truth
 
-Status: **NEXT AFTER R2c.1 / IMPLEMENTATION CONTRACT**
+Status: **DONE / IMPLEMENTED IN PR #51**
+
+Implementation: `f1f9a776` merged into `main` on 2026-09-24. This contract is
+historical authority; do not start a new implementation from it.
 
 This contract is the first bounded slice of RR0. It fixes demonstrated release-
 blocking runtime wiring only. It is not a general cleanup/refactor permission.
