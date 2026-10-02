@@ -40,7 +40,7 @@ Closed/upstream-gated:
 ## Exact current baseline
 
 ```text
-Argus main = b39b25646c9fa9473fbe30be9cf9357fc909df
+Argus main = aeb11aa05ff07a6f9dde0dff238167e1597fc793
 R2c.1 merged = 7d6fcf8940c26625103c78004fe69ba65fab4ccb (PR #49, 2026-09-24)
 local-services merged = 21cd7edb5bd503e3d5ce01d872b13e73f4720c2d (PR #56, 2026-09-27)
 RR0a merged = f1f9a77659b349a10983fb330badef9ef52b5996 (PR #51, 2026-09-24)
