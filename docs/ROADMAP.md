@@ -50,8 +50,8 @@ OA2 remains **closed/upstream-gated**.
 ```text
 R1c  Authorization-header argv debt                 DONE / PR #42
  -> R2a/R2a.1 fail-safe discovery hardening         DONE / PR #44 + #47
- -> R2c.1 canonical fallback_providers inventory    NOW
- -> RR0 legacy/personal-dependency reduction
+ -> R2c.1 canonical fallback_providers inventory    DONE / PR #49
+ -> RR0 legacy/personal-dependency reduction        NOW
  -> RR1 installer/dependency/managed-cron hardening
  -> RR2 runtime i18n (English + Russian)
  -> RR3 clean-install/upgrade/uninstall acceptance
@@ -60,6 +60,9 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> v0.1.0
 ```
 
+R2c.1 is confirmed against Hermes stable `v0.21.5 / v2026.9.24` — see the
+2026-10-01 upstream watch.
+
 After the first RC:
 
 ```text
@@ -67,16 +70,22 @@ R2c.2 bounded scoped/auxiliary fallback coverage
  -> low-risk archive/docs cleanup as ordinary maintenance
 ```
 
+R2c.2's scope rationale changed on 2026-10-01: `scoped_fallback_chain()` is now
+a **stable** Hermes seam (introduced by `e7bff4b6d831`, #120312), not
+warning-source main only. It remains post-RC, but it is now bounded stable
+compatibility work rather than unstable-main mirroring.
+
 Separate/deferred:
 
 - R2b gateway-liveness redesign;
 - MP0-MP5 multi-profile monitoring;
 - OA2 dynamic account-status shadow.
 
-## R2c.1 — current stage
+## R2c.1 — complete
 
-Hermes stable `v0.21.4 / v2026.9.21` now directly defines the canonical
-top-level fallback-chain semantics Argus needs to inventory:
+Hermes stable `v0.21.4 / v2026.9.21` (and unchanged in `v0.21.5 / v2026.9.24`)
+directly defines the canonical top-level fallback-chain semantics Argus
+inventories:
 
 ```text
 fallback_providers first, preserving order
@@ -86,10 +95,7 @@ fallback_providers first, preserving order
 
 The stable CLI writes only `fallback_providers` and removes the legacy key.
 
-Argus currently inventories only one legacy `fallback_model`, so a normal
-current Hermes fallback chain can remain invisible.
-
-R2c.1 is deliberately static and top-level only:
+R2c.1 was deliberately static and top-level only:
 
 - preserve canonical chain order;
 - retain bounded legacy compatibility;
@@ -102,6 +108,11 @@ R2c.1 is deliberately static and top-level only:
 
 Implementation contract:
 [docs/handoffs/r2c-static-discovery-compat-contract.md](handoffs/r2c-static-discovery-compat-contract.md).
+
+Landing: **PR #49**, merged 2026-09-24 into `main`
+(`7d6fcf8940c26625103c78004fe69ba65fab4ccb`). The 2026-10-01 upstream watch
+re-verified `get_fallback_chain()` at stable `v0.21.5`: semantics are
+unchanged, so the shipped inventory needs no rework.
 
 ## RR0 — pre-release legacy/personal-dependency reduction
 
@@ -167,29 +178,30 @@ Before `v0.1.0-rc.1`:
 Argus targets supported Hermes stable behavior first and treats upstream
 `main` as a warning/research source.
 
-2026-09-24 authority:
+2026-10-01 authority:
 
 ```text
-stable = v2026.9.21 / v0.21.4
-stable tag commit = d337b736aa1e8ebecfab043842d13e4a2d2f48a3
-warning-source main = 35b14ad5e24137b836d5c47c21a50c6ea7aeb785
-main is ~1413 commits ahead of the stable tag at this watch
+stable = v2026.9.24 / v0.21.5
+stable tag commit = f97608f178d1ffeca59860195ab7da295f7c8e5f
+previous warning-source main = 35b14ad5e24137b836d5c47c21a50c6ea7aeb785
+main is ~4908 commits ahead of the stable tag at this watch
 ```
 
 Stable findings relevant to Argus:
 
-- canonical top-level fallback-chain semantics are now supported stable;
-- `hermes mcp test` now returns 0 on connect, 1 on connection failure and 3
-  when the server is absent, while retaining the output markers Argus parses;
+- canonical top-level fallback-chain semantics are supported stable and
+  unchanged since the R2c.1 baseline;
+- `hermes mcp test` returns 0 on connect, 1 on connection failure and 3 when
+  the server is absent, while retaining the output markers Argus parses;
 - the runtime restore marker consumed by Argus remains
   `Primary runtime restored for new turn: ...`.
 
-Warning-source main keeps the same `get_fallback_chain()` behavior but adds a
-new `scoped_fallback_chain()` policy for pinned/unpinned route owners such as
-delegated children and cron jobs. That is not R2c.1 authority and remains
-post-RC R2c.2 research.
+`scoped_fallback_chain()` for pinned/unpinned route owners is now **stable**
+(introduced by `e7bff4b6d831`, #120312). It is still not R2c.1 authority, but
+R2c.2 is now bounded stable compatibility work rather than unstable-main
+mirroring. It remains post-RC.
 
-OA2 remains closed in both stable and the watched main:
+OA2 remains closed in both stable and upstream main:
 
 - Qwen status still refresh-validates;
 - OAuth status cards still include `token_preview`;
@@ -197,7 +209,9 @@ OA2 remains closed in both stable and the watched main:
   machine-authenticated no-secret monitoring seam.
 
 Full watch:
-[2026-09-24 Hermes upstream watch](research/2026-09-24-hermes-upstream-watch.md).
+[2026-10-01 Hermes upstream watch](research/2026-10-01-hermes-upstream-watch.md).
+Argus' dependency-on-Hermes list:
+[hermes-argus-seams](research/hermes-argus-seams.md).
 
 ## Release threshold
 
@@ -205,8 +219,8 @@ Full watch:
 monitoring core: proven in maintainer production
 R1c: closed
 R2a/R2a.1: closed and deployed
-R2c.1: current compatibility gate
-RR0: required before installer hardening
+R2c.1: closed (PR #49) and confirmed against stable v0.21.5
+RR0: current release gate; required before installer hardening
 distribution contract: incomplete
-public RC: gated by R2c.1 + RR0 + RR1/RR2/RR3
+public RC: gated by RR0 + RR1/RR2/RR3
 ```
