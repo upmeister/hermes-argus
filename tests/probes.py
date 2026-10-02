@@ -2509,6 +2509,95 @@ def probe_rr0c_deploy_unit_handoff_detection(tmp: Path):
           f"rcB={res_b.returncode}")
 
 
+def probe_rr0c_install_single_active_producer(tmp: Path):
+    """RR0c B3 (remediation): install.sh включает канонический вотчер только
+    при отсутствии живого legacy-юнита. Legacy, который enabled ИЛИ фактически
+    active (active-but-not-enabled — ручной/транзиентный запуск), блокирует
+    автовключение канонического: два активных producer'а невозможны.
+
+    Полный прогон install.sh под shims: dpkg/git/systemctl/crontab; deploy
+    внутри — настоящий, из локального клона кандидата. Offline."""
+    home = tmp / "rr0c-install-home"
+    cron_file = tmp / "rr0c-install-cron.txt"
+    call_log = tmp / "rr0c-systemctl-calls.log"
+    # Фикстура-копия рабочего дерева кандидата (install.sh сам делает cd
+    # внутрь и зовёт deploy.sh оттуда); pull-шаг внутри install.sh уходит
+    # в git-шим, .git-заглушка имитирует уже склонированный репозиторий.
+    fixture = home / "hermes-argus"
+    shutil.copytree(REPO, fixture,
+                    ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
+    (fixture / ".git").mkdir()
+    write(fixture / "config.env",
+          "MODULE_CORE=ON\n"
+          "MODULE_INTEGRATIONS=ON\n"
+          "MODULE_TG_BOT=OFF\n"
+          "MODULE_ANALYZER=OFF\n"
+          "MODULE_HEARTBEAT=OFF\n"
+          "MODULE_GH_HEARTBEAT=OFF\n"
+          "MODULE_DISCORD_BOT=OFF\n"
+          "MODULE_LOCAL_SERVICES=OFF\n"
+          f"WATCHDOG_BOT_TOKEN={R1B_TOKEN}\n"
+          f"WATCHDOG_CHAT_ID={R1B_CHAT}\n")
+    shim = tmp / "rr0c-install-shim"
+    shim.mkdir()
+    _write_argv_shim(shim, "dpkg", "exit 0\n")
+    _write_argv_shim(shim, "git", "exit 0\n")
+    _write_argv_shim(shim, "crontab",
+                     'case "$1" in\n'
+                     '  -l) printf "" ;;\n'
+                     '  -)  cat > /dev/null;;\n'
+                     '  *) exit 1;;\n'
+                     'esac\n')
+    _write_argv_shim(shim, "systemctl",
+                     'LOG="$SYSTEMCTL_CALL_LOG"\n'
+                     'printf \'%s\\n\' "$*" >> "$LOG"\n'
+                     '[ "$1" = "--user" ] && shift\n'
+                     'case "$1" in\n'
+                     '  is-enabled)\n'
+                     '    if [ "$2" = "hermes-vps-kit-config.path" ]; then\n'
+                     '      [ "${LEGACY_ENABLED:-0}" = "1" ]; exit $?;\n'
+                     '    fi; exit 1 ;;\n'
+                     '  is-active)\n'
+                     '    if [ "$2" = "hermes-vps-kit-config.path" ]; then\n'
+                     '      [ "${LEGACY_ACTIVE:-0}" = "1" ]; exit $?;\n'
+                     '    fi; exit 3 ;;\n'
+                     '  list-unit-files)\n'
+                     '    printf \'hermes-argus-config.path enabled enabled\\n\'\n'
+                     '    exit 0 ;;\n'
+                     '  *) exit 0 ;;\n'
+                     'esac\n')
+
+    def _run_install(legacy_active: str):
+        call_log.unlink(missing_ok=True)
+        env = _path_shim_env(home, {
+            "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+            "CRON_FILE": str(cron_file),
+            "SYSTEMCTL_CALL_LOG": str(call_log),
+            "LEGACY_ENABLED": "0",
+            "LEGACY_ACTIVE": legacy_active,
+        })
+        return subprocess.run(["bash", str(fixture / "install.sh")],
+                              cwd=fixture, env=env, capture_output=True,
+                              text=True, timeout=180)
+
+    # Case A: legacy активен, но НЕ enabled (active-but-not-enabled) —
+    # канонический вотчер НЕ включается, печатается ручной хэндофф.
+    res_a = _run_install(legacy_active="1")
+    calls_a = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
+    case_a = (res_a.returncode == 0
+              and "legacy hermes-vps-kit-config.path" in res_a.stdout
+              and "enable --now hermes-argus-config.path" not in calls_a)
+    # Case B: legacy нет/не активен — канонический вотчер включается.
+    res_b = _run_install(legacy_active="0")
+    calls_b = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
+    case_b = (res_b.returncode == 0
+              and "enable --now hermes-argus-config.path" in calls_b)
+    check("rr0c_install_single_active_producer",
+          case_a and case_b,
+          f"caseA={case_a} rcA={res_a.returncode} caseB={case_b} "
+          f"rcB={res_b.returncode}")
+
+
 def probe_rr0b_removed_surfaces_stay_removed():
     """RR0b: снятые поверхности не возвращаются; удержанные настройки сохраняют
     живых потребителей.
@@ -5286,6 +5375,7 @@ def main() -> int:
     probe_rr0c_public_defaults_no_personal_assumptions()
     probe_rr0c_proxy_check_explicit(hc)
     probe_rr0c_deploy_unit_handoff_detection(tmp)
+    probe_rr0c_install_single_active_producer(tmp)
     # R1c: Authorization headers out of child argv (shell + ai-deep-check)
     probe_r1c_shell_full_auth_not_in_argv(tmp)
     probe_r1c_quick_github_header_not_in_argv(tmp)
