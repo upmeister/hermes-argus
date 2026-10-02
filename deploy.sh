@@ -27,11 +27,8 @@ HERMES_PORT="${HERMES_PORT:-9119}"
 NETDATA_PORT="${NETDATA_PORT:-19999}"
 WATCHDOG_CHAT_ID="${WATCHDOG_CHAT_ID:-}"
 WATCHDOG_BOT_TOKEN="${WATCHDOG_BOT_TOKEN:-}"
-HERMES_BOT_TOKEN="${HERMES_BOT_TOKEN:-}"
-HERMES_BOT_UID="${HERMES_BOT_UID:-}"
 BREAKER_MAX="${BREAKER_MAX:-3}"
 DMS_SNITCH="${DMS_SNITCH:-change_me}"
-DMS_API_KEY="${DMS_API_KEY:-change_me}"
 GITHUB_REPO="${GITHUB_REPO:-upmeister/hermes-infra}"
 
 # ── Модули: deploy ставит только включённое ────────────────────────────────
@@ -84,11 +81,8 @@ deploy_template() {
         printf 's/@MODULE_TG_BOT@/%s/g\n' "$(module_enabled MODULE_TG_BOT && echo ON || echo OFF)"
         printf 's/@WATCHDOG_BOT_TOKEN@/%s/g\n' "$WATCHDOG_BOT_TOKEN"
         printf 's/@WATCHDOG_CHAT_ID@/%s/g\n' "$WATCHDOG_CHAT_ID"
-        printf 's/@HERMES_BOT_TOKEN@/%s/g\n' "$HERMES_BOT_TOKEN"
-        printf 's/@HERMES_BOT_UID@/%s/g\n' "$HERMES_BOT_UID"
         printf 's/@BREAKER_MAX@/%s/g\n' "$BREAKER_MAX"
         printf 's/@DMS_SNITCH@/%s/g\n' "$DMS_SNITCH"
-        printf 's/@DMS_API_KEY@/%s/g\n' "$DMS_API_KEY"
         printf 's/@NETDATA_PORT@/%s/g\n' "$NETDATA_PORT"
         printf 's|@GITHUB_REPO@|%s|g\n' "$GITHUB_REPO"
         printf 's/@HOSTNAME@/%s/g\n' "$(hostname)"
@@ -112,8 +106,7 @@ deploy_template() {
 # hermes-watchdog.sh и gateway-liveness.sh; без него оба считают gateway
 # мёртвым (или, наоборот, молча пропускают проверку). Идёт в $HOME_DIR/scripts.
 CORE_HOME_SCRIPTS=(hermes-watchdog.sh hermes-gateway-pids.py auto-remediate.sh \
-                   check-updates.sh network-guard.sh collect-metrics.sh \
-                   send-monitoring-report.sh)
+                   check-updates.sh network-guard.sh collect-metrics.sh)
 CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.sh ssl-expiry-check.sh)
 
 # LOCAL_SERVICES: opt-in сборщик снимка + консьюмер (манифест, гистерезис,

@@ -36,6 +36,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owned state, and existing GitHub-heartbeat installations retain bounded
   legacy-directory compatibility.
 
+### Removed
+
+- Dead and duplicate runtime surfaces (RR0b), each backed by a caller/deploy
+  search: `send-monitoring-report.sh` (deployed by CORE with no live caller —
+  the watchdog, gateway/dashboard liveness and the v2 wrapper own the
+  established secret-safe Telegram delivery), the legacy
+  `scripts/legacy/model-fallback-tracker.py` (superseded by
+  `fallback-tracker-v2.py`, whose schedule is untouched), and the full mode of
+  `health-check-integrations.sh` (the structured full check is owned by
+  `health-check-v2.py`; the deployed script now runs the quick canon for
+  `--quick`, `--full` and bare invocation, preserving the output format the
+  watchdog parses). Dead deploy substitutions `HERMES_BOT_TOKEN`,
+  `HERMES_BOT_UID` and `DMS_API_KEY` are removed from `deploy.sh` and the
+  config template; `WEBHOOK_SECRET_TOKEN` and `DMS_SNITCH` keep their live
+  consumers.
+
 ### Added
 
 - Opt-in `MODULE_LOCAL_SERVICES` monitoring (OFF by default): deploy now ships a

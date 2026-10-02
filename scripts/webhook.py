@@ -1294,8 +1294,8 @@ def menu_keyboard():
 def alert_keyboard():
     """Клавиатура для критических алертов (актуализирована 2026-08-15).
 
-    ⚠️ Этот набор — канон. Дублируется в bash-скриптах (hermes-watchdog.sh,
-    send-monitoring-report.sh) — при изменении обновлять ВСЕ ТРИ места."""
+    ⚠️ Этот набор — канон. Дублируется в hermes-watchdog.sh — при изменении
+    обновлять ОБА места."""
     return {
         "inline_keyboard": [
             [
