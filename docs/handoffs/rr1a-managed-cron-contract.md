@@ -1,7 +1,8 @@
 # RR1a contract — managed Argus cron ownership
 
-Status: **IMPLEMENTED / PR #68 — awaiting maintainer merge and separate
-production authorization**
+Status: **DONE / PR #68** (merged 2026-10-03 as `9aaf0a5`; reviewer Codex,
+PASS-TO-MAINTAINER after two bounded remediation passes). Production rollout
+remains separately authorized via DEPLOY_CHECKLIST.md.
 
 ## Authority and delivery
 

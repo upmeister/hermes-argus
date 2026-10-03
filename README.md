@@ -266,7 +266,7 @@ R1c  Authorization headers out of child argv — DONE
  -> RR0a  default-module/runtime truth — DONE / PR #51
  -> RR0b  dead/duplicate runtime removal — DONE / PR #63
  -> RR0c  public defaults/naming migration — DONE / PR #65
- -> RR1a  managed cron ownership — IMPLEMENTED / PR #68 (awaiting merge)
+ -> RR1a  managed cron ownership — DONE / PR #68
  -> RR1b  dependency/preflight/config and module payloads
  -> RR1c/RR1d  versioned lifecycle and bounded uninstall
  -> RR2  runtime i18n: English + Russian

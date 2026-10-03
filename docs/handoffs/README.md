@@ -19,9 +19,10 @@ current selected-task pointer.
 
 Current selected task:
 
-- **RR1a** — managed cron ownership — IMPLEMENTED / PR #68, awaiting
-  maintainer merge; reviewer: **Codex** (verdict after one remediation pass).
-  Production rollout stays separately authorized via DEPLOY_CHECKLIST.
+- **None selected.** RR0a/RR0b/RR0c and RR1a are complete; RR1b
+  (dependency/preflight/config and module payloads) is the next slice and
+  requires its own maintainer-selected contract. Planning input:
+  `docs/research/2026-10-03-production-deployment-dependencies.md`.
 
 Completed:
 
@@ -38,6 +39,7 @@ Completed:
 - RR0a default-module/runtime truth — **DONE / PR #51**
 - RR0b dead/duplicate runtime removal — **DONE / PR #63**
 - RR0c public defaults/naming migration — **DONE / PR #65**
+- RR1a managed cron ownership — **DONE / PR #68**
 - MCP disabled-server reporting — **DONE / PR #59**
 - canonical gateway matcher maintenance fix — **DONE / PR #60**
 
@@ -48,12 +50,15 @@ Closed/upstream-gated:
 ## Implementation baseline recorded 2026-10-03
 
 ```text
-Argus implementation baseline = 2588581a27234b6e0be2b38b29e39f29476d328e (PR #65)
+Argus main = 9aaf0a5a094d0ac950f4a49c2b89fcea9d07a280 (merge of PR #68, 2026-10-03)
 R2c.1 merged = 7d6fcf8940c26625103c78004fe69ba65fab4ccb (PR #49, 2026-09-24)
 local-services merged = 21cd7edb5bd503e3d5ce01d872b13e73f4720c2d (PR #56, 2026-09-27)
 RR0a merged = f1f9a77659b349a10983fb330badef9ef52b5996 (PR #51, 2026-09-24)
 MCP disabled-server merged = 3551b08 (PR #59, 2026-10-02)
 gateway matcher merged = b39b256 (PR #60, 2026-10-02)
+RR0b merged = 72a801f (PR #63, 2026-10-02; implementation 4fa5473, remediation 78fea55)
+RR0c merged = 2588581 (PR #65, 2026-10-02; implementation e271317, remediation 0823885)
+RR1a merged = 9aaf0a5 (PR #68, 2026-10-03; implementation e14df0f, remediations 88c8237 / 8679158)
 RR0b merged = 72a801f (PR #63, 2026-10-02; implementation 4fa5473, remediation 78fea55)
 RR0c merged = 2588581 (PR #65; implementation e271317, remediation 0823885)
 ```
@@ -74,7 +79,8 @@ R1c DONE
  -> RR0a DONE / PR #51
  -> RR0b DONE / PR #63
  -> RR0c DONE / PR #65
- -> RR1a managed cron ownership                 PR #68 (awaiting merge)
+ -> RR1a managed cron ownership                 DONE / PR #68
+ -> RR1b dependency/preflight/config and module payloads  (contract not yet selected)
  -> RR1b dependency/preflight/config and module payloads
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
@@ -111,8 +117,7 @@ dependency-on-Hermes list is `docs/research/hermes-argus-seams.md`.
 
 Current:
 
-- `rr1a-managed-cron-contract.md` — selected;
-  reviewer: **Codex**.
+- None selected. RR1b is the next slice and needs its own contract.
 
 RR1b/c/d require later focused contracts. Planning input:
 [production deployment dependencies](../research/2026-10-03-production-deployment-dependencies.md).
@@ -124,6 +129,8 @@ Completed:
 - `rr0b-dead-runtime-removal-contract.md` — RR0b (PR #63; reviewer Codex,
   verdict PASS-TO-MAINTAINER after one remediation pass)
 - `rr0c-public-defaults-naming-migration-contract.md` — RR0c (PR #65)
+- `rr1a-managed-cron-contract.md` — RR1a (PR #68; reviewer Codex,
+  verdict PASS-TO-MAINTAINER after two bounded remediation passes)
 - `mcp-disabled-server-compat-contract.md` — MCP disabled-server handling
   (PR #59)
 - `r2a-baseline-degradation-followup-contract.md`
