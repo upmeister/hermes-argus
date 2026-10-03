@@ -197,7 +197,12 @@ a week after PR #49 had already merged.
 
 Non-blocking findings from a builder or reviewer go into
 [`docs/BACKLOG.md`](docs/BACKLOG.md) in the same handoff or review update,
-with their source, reason for deferral, and re-entry trigger.
+using its human-readable format: impact, status, source, next action/owner,
+closure evidence and release disposition. Link the specific card when an ID
+appears in a receipt; an ID alone is not a finding description. Keep the vault
+project backlog index synchronized for the maintainer. Distinguish merged
+resolution from deployment verification; GitHub Issues may be linked separately
+and must not be confused with local `DEBT-*` identifiers.
 
 ## Invariants
 
@@ -281,6 +286,13 @@ contains external Netdata, egress, log rotation and Hermes L3 setup that Argus
 does not currently provision. RR1a is merged; no further RR1 slice is
 admitted until the maintainer selects a bounded contract for it (RR1b
 dependency/preflight/config and module payloads is next).
+
+Netdata is an optional external enhancement; watchdog OS metrics do not depend
+on its trends. Remaining mandatory quick-check/UI assumptions are backlog
+work, not an implicit permission to install Netdata. Before selecting further
+RR1/heartbeat contracts, read
+`docs/research/2026-10-03-heartbeat-delivery-roadmap.md`; its proposed subdivisions
+and receiver placement require discussion. RR1a is not deployed yet.
 
 ## References
 

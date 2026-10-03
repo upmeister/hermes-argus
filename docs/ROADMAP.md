@@ -207,6 +207,30 @@ current public baseline must not silently require the maintainer's complete
 host stack. These later choices need focused contracts; RR1a installs none of
 that infrastructure.
 
+RR1a is merged but **not deployed**, per the maintainer. Its production rollout
+is independent of selecting the next builder task.
+
+Accepted clarification: **Netdata remains an optional external enhancement**
+for Analyzer trends, not the source of native watchdog resource metrics.
+[Monitoring-source map](monitoring-sources.md). The remaining mandatory
+quick-check/UI assumptions are [DEBT-007](BACKLOG.md#debt-007).
+
+### Revision under discussion — no new contract selected
+
+The maintainer requested a separate Cronping -> bot Argus delivery cycle and
+public heartbeat setup documentation. The existing RR1b umbrella should be
+split before implementation: runtime dependency truth/payloads, installer
+preflight/config, and host lifecycle/setup each need bounded acceptance.
+Heartbeat placement/selection/delivery is a parallel planning track; its
+receiver must remain available when the monitored host fails.
+
+The [heartbeat/RR1 discussion report](research/2026-10-03-heartbeat-delivery-roadmap.md)
+records accepted preferences, source evidence, the proposed sequence and open
+decisions. Bot Argus is preferred; the hosting and delivery-error policy still
+need decisions. RR1c/RR1d remain versioned lifecycle and limited uninstall;
+RR2/RR3 remain localization and release acceptance. This section is a proposal,
+not admission for a new notification subsystem or a combined installer refactor.
+
 ## RR2 — runtime localization
 
 Runtime/operator UI must support at least:
