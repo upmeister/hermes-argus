@@ -263,7 +263,7 @@ R1c DONE
  -> RR0a DONE / PR #51
  -> RR0b DONE / PR #63
  -> RR0c DONE / PR #65
- -> RR1a managed cron ownership                 PR #68 (awaiting merge)
+ -> RR1a managed cron ownership                 DONE / PR #68
  -> RR1b dependency/preflight/config and reproducible module payloads
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
@@ -278,8 +278,9 @@ release-readiness task, not permission to duplicate documentation.
 RR1 planning must read
 `docs/research/2026-10-03-production-deployment-dependencies.md`. Production
 contains external Netdata, egress, log rotation and Hermes L3 setup that Argus
-does not currently provision. Only RR1a is admitted for implementation; later
-slices need bounded contracts after the recorded dependency decisions.
+does not currently provision. RR1a is merged; no further RR1 slice is
+admitted until the maintainer selects a bounded contract for it (RR1b
+dependency/preflight/config and module payloads is next).
 
 ## References
 
