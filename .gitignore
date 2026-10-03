@@ -16,3 +16,6 @@ Thumbs.db
 *.swp
 *~backup/
 *.lnk
+
+# ZCode session working artifacts (plans, patches, snapshots)
+.zcode/
