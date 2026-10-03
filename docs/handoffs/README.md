@@ -24,6 +24,10 @@ Current selected task:
   requires its own maintainer-selected contract. Planning input:
   `docs/research/2026-10-03-production-deployment-dependencies.md`.
 
+RR1a is merged, not deployed. Subsequent RR1 subdivisions and the requested
+Cronping -> bot Argus heartbeat cycle are
+[under discussion](../research/2026-10-03-heartbeat-delivery-roadmap.md).
+
 Completed:
 
 - R1a deploy/GitHub-heartbeat secret-in-argv — **DONE / PR #29**
@@ -59,8 +63,6 @@ gateway matcher merged = b39b256 (PR #60, 2026-10-02)
 RR0b merged = 72a801f (PR #63, 2026-10-02; implementation 4fa5473, remediation 78fea55)
 RR0c merged = 2588581 (PR #65, 2026-10-02; implementation e271317, remediation 0823885)
 RR1a merged = 9aaf0a5 (PR #68, 2026-10-03; implementation e14df0f, remediations 88c8237 / 8679158)
-RR0b merged = 72a801f (PR #63, 2026-10-02; implementation 4fa5473, remediation 78fea55)
-RR0c merged = 2588581 (PR #65; implementation e271317, remediation 0823885)
 ```
 
 This records the latest implementation at the audit, not a promise that GitHub
@@ -81,7 +83,6 @@ R1c DONE
  -> RR0c DONE / PR #65
  -> RR1a managed cron ownership                 DONE / PR #68
  -> RR1b dependency/preflight/config and module payloads  (contract not yet selected)
- -> RR1b dependency/preflight/config and module payloads
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n: en + ru

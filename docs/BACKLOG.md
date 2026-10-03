@@ -1,28 +1,63 @@
 # Project backlog
 
-This file is the repository's durable backlog for known technical debt,
-deferred maintenance, and follow-up work discovered during implementation or
-review. The repository remains the source of truth; a GitHub issue is an
-optional working handle for a task, not a second canonical backlog.
+This is the canonical repository ledger of findings, decisions and maintenance.
+`DEBT-004` is a local ledger ID, **not a GitHub issue number**. Link actual
+GitHub issues separately. The vault project backlog is a readable index using
+these same IDs and canonical card links.
 
-## How to use it
+## Recording and finding a tail
 
-Add a finding as soon as a builder or reviewer identifies it and the finding is
-outside the active contract or intentionally deferred. Each entry records the
-source, the reason it is deferred, and the trigger that should bring it back.
+Use this format here and in other projects: **plain-language problem, operator
+impact, current status, source/evidence, next action and responsible role,
+closure evidence, and release disposition**. An ID/link alone is insufficient.
+Receipts and review reports must link the specific card with its short title.
 
-Use a GitHub issue when a task needs discussion, an implementation PR, or a
-visible external report. Link the issue here when one exists. Close or update
-the backlog entry in the same change that changes its status.
+The maintainer selects product decisions and production changes; the architect
+scopes follow-up; the builder works only after contract selection. Record the
+next responsible role when a task is assigned. A merged fix is not a deployed
+fix: keep closure PR and deployment state separate, and retain resolved IDs.
 
-Release gates and active implementation contracts stay in
-[`docs/ROADMAP.md`](ROADMAP.md) and
-[`docs/handoffs/README.md`](handoffs/README.md). Do not duplicate their
-acceptance criteria here.
+The table is the scan view; cards retain evidence. Update table, card and vault
+index together when status changes. No private credentials, commands or raw
+production payloads belong in any of them.
 
-## Open items
+The [roadmap](ROADMAP.md) sequences release work; the
+[handoff index](handoffs/README.md) selects implementation authority.
+A backlog entry is not implementation authorization.
+
+## All findings at a glance
+
+| ID | Problem | Status | Next action |
+| --- | --- | --- | --- |
+| [DEBT-001](#debt-001) | MCP probe assumes obsolete exit codes | Deferred | Correct the comment; separately decide exit-code adoption. |
+| [DEBT-002](#debt-002) | Unused deploy substitutions | Deferred | Remove only the three unused substitution lines. |
+| [DEBT-003](#debt-003) | Obsolete secret-delivery comments | Deferred | Correct the named provenance comments. |
+| [DEBT-004](#debt-004) | Decide whether the old full integration checker can be retired | Owner decision | Retire, migrate or deliberately retain the saved full-mode Hermes job. |
+| [DEBT-005](#debt-005) | Remove old paths after all callers migrate | Partial migration | Confirm config readers and heartbeat-directory migration separately. |
+| [DEBT-006](#debt-006) | Personal bot handle in docstrings | Deferred | Replace provenance handles with generic descriptions if desired. |
+| [DEBT-007](#debt-007) | Optional Netdata/GitHub treated as mandatory | Open | Define absent/configured/broken dependency expectations. |
+| [DEBT-008](#debt-008) | Analyzer/Discord payload and interpreter gaps | Open | Fix collector path and independent Discord payload/imports. |
+| [DEBT-009](#debt-009) | L3 analysis job is external to ANALYZER | Open | Publish a generic Hermes job/model/delivery recipe. |
+| [DEBT-010](#debt-010) | Privileges, lifecycle and log rotation supplied externally | Open | Resolve dashboard, linger, sudo, network policy and rotation. |
+| [DEBT-011](#debt-011) | Global cron restore/count removed | Merged; deploy pending | Deploy RR1a separately and read back preserved operator cron. |
+| [DEBT-012](#debt-012) | Provisioning and notification claims need correction | Open | Describe actual external setup and verification. |
+| [DEBT-013](#debt-013) | Some cron senders ignore configured proxy | Open | Load/apply the existing Telegram proxy in affected senders. |
+| [DEBT-014](#debt-014) | Heartbeat credentials exposed in curl arguments | Open | Contract the bounded stdin-channel correction. |
+| [DEBT-015](#debt-015) | Empty-crontab detection is locale-sensitive | Deferred | Make empty/read-error detection locale-independent. |
+| [DEBT-016](#debt-016) | Heartbeat selection follows credentials | Needs decision | Choose explicit backend selection and compatibility migration. |
+| [DEBT-017](#debt-017) | Cronping Telegram delivery/setup incomplete | Needs hosting decision | Plan external webhook delivery through bot Argus and public setup guide. |
+| [DEBT-018](#debt-018) | Public GitHub workflow differs from production | Needs decision | Choose public timing/dedup/recovery/pin behavior. |
+
+## Open finding cards
+
+<a id="debt-001"></a>
 
 ### DEBT-001 — adopt `hermes mcp test` exit-code semantics
+
+- **Operator impact:** Misleading maintenance guidance.
+- **Next action / responsible roles:** Correct the comment; separately decide exit-code adoption. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Comment/behavior match supported Hermes with compatibility probes.
+- **Release disposition:** Maintenance; no current blocker.
 
 - **Status:** deferred maintenance
 - **Source:** PR #59 focused review; Hermes stable v0.21.5
@@ -37,7 +72,14 @@ acceptance criteria here.
 - **Scope guard:** do not fold this into MCP disabled-server handling or an
   unrelated health-check change.
 
+<a id="debt-002"></a>
+
 ### DEBT-002 — dead deploy substitutions outside the RR0b candidate set
+
+- **Operator impact:** Unclear mapping of settings to runtime.
+- **Next action / responsible roles:** Remove only the three unused substitution lines. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** No active template changes after marker/consumer search.
+- **Release disposition:** Maintenance.
 
 - **Status:** deferred maintenance
 - **Source:** RR0b C4 owner-matrix search (marker → template-consumer mapping)
@@ -54,7 +96,14 @@ acceptance criteria here.
   `DMS_API_KEY` and the webhook/Netdata remnants; these three substitutions
   were deliberately left in place.
 
+<a id="debt-003"></a>
+
 ### DEBT-003 — stale provenance comments on secret-delivery history
+
+- **Operator impact:** Old documentation misdescribes setup.
+- **Next action / responsible roles:** Correct the named provenance comments. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Comments agree with runtime readers; behavior unchanged.
+- **Release disposition:** Cosmetic.
 
 - **Status:** deferred maintenance (cosmetic)
 - **Source:** RR0b C4 owner-matrix search
@@ -69,33 +118,41 @@ acceptance criteria here.
 - **Trigger:** whenever those files are next touched for a functional change.
 - **Scope guard:** comment-only; do not use it to reopen RR0b deletions.
 
-### DEBT-004 — health-check-integrations full mode: uncertain owner retained
+<a id="debt-004"></a>
 
-- **Status:** retained in place (contract rule: uncertainty is not a deletion
-  signal); removal deferred
-- **Source:** RR0b C1 owner-matrix; review #1 on PR #63 (REMEDIATE)
-- **Evidence:** the full mode has no in-repository caller (no cron line, no
-  systemd unit, no manifest entry invokes it; the deployed integrations
-  schedule owns the structured full check via `health-check-v2-wrapper.sh`),
-  but the script header documents a historical operator entry point —
-  "Hermes cron daily no_agent" (2026-08-20) — on the maintainer's personal
-  host, which cannot be verified or disproved from the repository.
-- **Required follow-up:** maintainer verifies the live crontab on the
-  production host. If no bare invocation of
-  `~/.hermes/scripts/health-check-integrations.sh` exists, remove the full
-  mode (plus its full-only helpers) in a dedicated pass and drop this entry;
-  if it exists, either point that cron at `--quick` or at the v2 wrapper and
-  then remove the surface.
-- **Trigger:** maintainer production verification, or the RR0c/RR1 window.
-- **Scope guard:** until verified, the full mode stays exactly as shipped;
-  do not shrink or redirect it silently.
+### DEBT-004 ? old full integration-check mode: retire or retain?
 
-- **2026-10-03 observation:** the OS cron wrapper delegates to `--quick`, but
-  a disabled Hermes `no_agent` job still references the full checker. Saved
-  Hermes jobs must be included in the ownership decision; the absence of an
-  active OS-cron invocation is not sufficient deletion evidence.
+- **Operator impact:** Deletion could break a saved job; retention leaves two full-check surfaces.
+- **Next action / responsible roles:** Retire, migrate or deliberately retain the saved full-mode Hermes job. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Every active/saved caller has an approved disposition; --quick is preserved.
+- **Release disposition:** Deferred cleanup, not a demonstrated RC blocker.
+
+- **Status:** waiting for a maintainer ownership decision; full mode retained.
+- **Source:** [RR0b / PR #63](https://github.com/upmeister/hermes-argus/pull/63),
+  C1 remediation; [production dependency audit](research/2026-10-03-production-deployment-dependencies.md#legacy-follow-up-evidence).
+- **What exists:** `health-check-integrations.sh` runs `--quick` for watchdog
+  compatibility, but a bare invocation or `--full` runs the older expanded
+  checker. Structured full checks are now owned by the v2 engine.
+- **Known caller:** the audited OS-cron wrapper calls `--quick`. A disabled,
+  saved Hermes `no_agent` job still references the old full checker. Deleting
+  code would leave that job broken if the operator re-enables it.
+- **Decision needed:** retire the saved job, migrate it to the v2 wrapper, or
+  deliberately keep its full-mode support? Switching to `--quick` changes
+  coverage and is not an equivalent replacement.
+- **Next action:** account for active AND saved OS/Hermes schedules; record the
+  maintainer's choice, then contract the corresponding small change. This
+  documentation task neither deletes the mode nor edits production jobs.
+- **Required boundary:** preserve `--quick`, its output/incident semantics and
+  secret-safe requests. Full-mode retirement is separate from RR1a.
+
+<a id="debt-005"></a>
 
 ### DEBT-005 — legacy personal-path read fallbacks cleanup after RR0c handoff
+
+- **Operator impact:** Premature deletion could break current configuration/heartbeat.
+- **Next action / responsible roles:** Confirm config readers and heartbeat-directory migration separately. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Every listed legacy reader is retired with evidence or explicitly retained.
+- **Release disposition:** Compatibility follow-up.
 
 - **Status:** intentional bounded compatibility, deferred cleanup
 - **Source:** RR0c B3/B4 evidence gathering (PR #65 review window)
@@ -118,7 +175,18 @@ acceptance criteria here.
   the legacy watcher is absent, but heartbeat still uses its legacy Git
   directory. Unit handoff completion alone does not close the path debt.
 
+- **Later heartbeat audit:** dedicated heartbeat and infra clones have been
+  separated. This supersedes the earlier heartbeat-path observation; legacy
+  config readers still require their own confirmation.
+
+<a id="debt-006"></a>
+
 ### DEBT-006 — historical bot handle in module docstrings
+
+- **Operator impact:** Personal identity remains in source only.
+- **Next action / responsible roles:** Replace provenance handles with generic descriptions if desired. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Named docstrings cleaned; configured runtime identity unchanged.
+- **Release disposition:** Cosmetic.
 
 - **Status:** cosmetic polish, out of RR0c scope by contract
 - **Source:** RR0c B4 search
@@ -132,7 +200,14 @@ acceptance criteria here.
 - **Trigger:** any RR1/RR2 docs or i18n pass touching those modules.
 - **Scope guard:** comment-only; no behavior change.
 
+<a id="debt-007"></a>
+
 ### DEBT-007 — hidden Netdata/GitHub requirements in optional-service reporting
+
+- **Operator impact:** Clean installs can report unwanted dependency failures.
+- **Next action / responsible roles:** Define absent/configured/broken dependency expectations. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Unconfigured is neutral; expected broken components stay visible.
+- **Release disposition:** Clean-install prerequisite.
 
 - **Status:** RR1b clean-install prerequisite
 - **Source:** [production dependency audit](research/2026-10-03-production-deployment-dependencies.md), D1
@@ -145,7 +220,14 @@ acceptance criteria here.
 - **Trigger:** RR1b dependency contract; required before RR3 default install.
 - **Scope guard:** no mandatory Netdata install or unrelated v2 schema change.
 
+<a id="debt-008"></a>
+
 ### DEBT-008 — optional-module payload/interpreter dependencies
+
+- **Operator impact:** Old production files mask fresh-install failures.
+- **Next action / responsible roles:** Fix collector path and independent Discord payload/imports. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Independent module fixtures pass; missing collector is not a clean scan.
+- **Release disposition:** Enabled-module prerequisite.
 
 - **Status:** RR1b clean-install prerequisite
 - **Source:** production audit D2/D3; deploy manifests and bot imports
@@ -159,7 +241,14 @@ acceptance criteria here.
 - **Trigger:** RR1b optional-module fixture acceptance.
 - **Scope guard:** bounded wiring/dependency changes, no general plugin system.
 
+<a id="debt-009"></a>
+
 ### DEBT-009 — L3 workflow setup remains external to ANALYZER
+
+- **Operator impact:** Installing scripts does not install full L3 analysis.
+- **Next action / responsible roles:** Publish a generic Hermes job/model/delivery recipe. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Public recipe reproduces workflow without private prompts.
+- **Release disposition:** Before claiming reproducible L3.
 
 - **Status:** RR1b documentation/setup requirement
 - **Source:** production audit D3; active Hermes analysis job metadata
@@ -171,7 +260,14 @@ acceptance criteria here.
 - **Scope guard:** no automatic copying of production prompts or second
   scheduler/provider runtime.
 
+<a id="debt-010"></a>
+
 ### DEBT-010 — host lifecycle/privilege assumptions need explicit admission
+
+- **Operator impact:** New hosts lack declared setup or may adopt unsuitable policy.
+- **Next action / responsible roles:** Resolve dashboard, linger, sudo, network policy and rotation. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Every selected host prerequisite has tested availability/error behavior.
+- **Release disposition:** Public installer prerequisite.
 
 - **Status:** RR1b deployment requirement
 - **Source:** production audit D5 and ownership map
@@ -185,32 +281,14 @@ acceptance criteria here.
 - **Scope guard:** no global sudo grants, host-network redesign or application
   backup installation by default.
 
-### DEBT-011 — whole-user cron count and restore violate schedule ownership
-
-- **Status:** RESOLVED by RR1a (managed block, PR #68): the `<7` heuristic and
-  the whole-crontab restore branch are removed; the saved backup file remains
-  for operator use; deploy.sh is the single schedule writer.
-- **Source:** production audit D4; quick checker and auto-remediation
-- **Evidence (historical):** fewer than seven jobs was treated as corruption,
-  and a stale full-user backup could replace the current schedule. Module
-  OFF/minimal schedules and unrelated operator edits could therefore be undone.
-
-### DEBT-015 — `no crontab for` detection is locale-sensitive
-
-- **Status:** deferred maintenance (fail-closed direction, not a false green)
-- **Source:** RR1a implementation review of `reconcile_argus_cron`
-- **Evidence:** an absent user crontab is recognized by the English cron
-  message `no crontab for`. On a system with a localized cron (non-English
-  message catalog) the same state is treated as a failed read and the deploy
-  stops with a clear error — safe but noisy for that configuration.
-- **Required follow-up:** switch detection to a locale-independent probe
-  (for example `crontab -l </dev/null` exit-status semantics verified per
-  cron implementation) in a maintenance pass.
-- **Trigger:** when a localized-cron host is actually in scope, or next time
-  deploy.sh cron reconciliation is touched.
-- **Scope guard:** keep fail-closed behavior for genuinely failed reads.
+<a id="debt-012"></a>
 
 ### DEBT-012 — external provisioning and native-alert claims need reconciliation
+
+- **Operator impact:** Pings/API availability can be mistaken for working alerts.
+- **Next action / responsible roles:** Describe actual external setup and verification. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Docs distinguish setup, ping acceptance and delivery.
+- **Release disposition:** Setup-documentation prerequisite.
 
 - **Status:** optional setup/documentation follow-up
 - **Source:** production audit; Netdata notification and heartbeat paths
@@ -225,7 +303,14 @@ acceptance criteria here.
 - **Scope guard:** no send test, account creation or credential migration during
   the read-only audit or RR1a.
 
+<a id="debt-013"></a>
+
 ### DEBT-013 — explicit Telegram proxy is not loaded by every cron sender
+
+- **Operator impact:** Different senders can use different delivery paths.
+- **Next action / responsible roles:** Load/apply the existing Telegram proxy in affected senders. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Direct/proxy fixtures cover affected senders with secret-safe argv.
+- **Release disposition:** Configured-delivery prerequisite.
 
 - **Status:** RR1b delivery/config prerequisite
 - **Source:** production audit D6; gateway/dashboard liveness and weekly updates
@@ -238,7 +323,14 @@ acceptance criteria here.
 - **Scope guard:** local existing senders only; no new proxy implementation or
   unapproved production notification tests.
 
+<a id="debt-014"></a>
+
 ### DEBT-014 — external heartbeat secret URLs remain in curl argv
+
+- **Operator impact:** Secret URLs can appear in process listings.
+- **Next action / responsible roles:** Contract the bounded stdin-channel correction. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Argv canary absent while unchanged ping request is delivered.
+- **Release disposition:** Secret invariant; disposition before RC.
 
 - **Status:** separate secret-handling maintenance; release disposition required
 - **Source:** production audit D6; `heartbeat.sh` Cronping and DMS backends
@@ -250,3 +342,95 @@ acceptance criteria here.
   heartbeat backends or publishing the first RC.
 - **Scope guard:** no credential rotation, vendor/account provisioning or RR1a
   transport changes.
+
+<a id="debt-015"></a>
+
+### DEBT-015 — `no crontab for` detection is locale-sensitive
+
+- **Operator impact:** Localized cron can block an otherwise valid deploy.
+- **Next action / responsible roles:** Make empty/read-error detection locale-independent. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Empty localized cron works; actual read failure remains fail-closed.
+- **Release disposition:** Portability follow-up.
+
+- **Status:** deferred maintenance (fail-closed direction, not a false green)
+- **Source:** RR1a implementation review of `reconcile_argus_cron`
+- **Evidence:** an absent user crontab is recognized by the English cron
+  message `no crontab for`. On a system with a localized cron (non-English
+  message catalog) the same state is treated as a failed read and the deploy
+  stops with a clear error — safe but noisy for that configuration.
+- **Required follow-up:** switch detection to a locale-independent probe
+  (for example `crontab -l </dev/null` exit-status semantics verified per
+  cron implementation) in a maintenance pass.
+- **Trigger:** when a localized-cron host is actually in scope, or next time
+  deploy.sh cron reconciliation is touched.
+- **Scope guard:** keep fail-closed behavior for genuinely failed reads.
+
+<a id="debt-016"></a>
+
+### DEBT-016 ? explicit heartbeat backend selection is missing
+
+- **Operator impact:** Old credentials can unintentionally activate extra backends.
+- **Next action / responsible roles:** Choose explicit backend selection and compatibility migration. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Selected backend set and credential failures have tested semantics.
+- **Release disposition:** Heartbeat cycle; not contracted.
+
+- **Status:** product semantics not selected.
+- **Source:** [heartbeat/RR1 review](research/2026-10-03-heartbeat-delivery-roadmap.md);
+  `heartbeat.sh` checks all credential sets independently.
+- **Evidence:** `MODULE_GH_HEARTBEAT` controls provisioning rather than
+  runtime selection. Existing credentials determine backend activation.
+- **Boundary:** one backend/list/redundancy and migration need a maintainer
+  decision; a redundant backend is not automatically failover.
+
+<a id="debt-017"></a>
+
+### DEBT-017 ? Cronping Telegram delivery and public heartbeat setup
+
+- **Operator impact:** Account audit reports pings without Telegram notification.
+- **Next action / responsible roles:** Plan external webhook delivery through bot Argus and public setup guide. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Independent receiver and synthetic outage/recovery evidence, with public guide.
+- **Release disposition:** Requested heartbeat cycle; not implemented.
+
+- **Status:** requested cycle; bot Argus preferred, independent hosting open.
+- **Source:** later heartbeat audit and maintainer clarification;
+  [discussion](research/2026-10-03-heartbeat-delivery-roadmap.md).
+- **Evidence:** audit reports accepted pings but no Telegram integration.
+  [Cronping](https://cronping.com/docs/integrations) offers a provider bot or
+  generic webhook; the maintainer prioritizes delivery from bot Argus.
+- **Boundary:** no bridge on the monitored host for full-host-loss coverage;
+  no live sends, account provisioning or deployment during docs work.
+
+<a id="debt-018"></a>
+
+### DEBT-018 ? GitHub heartbeat public template differs from the audited workflow
+
+- **Operator impact:** New-user template does not reproduce audited production behavior.
+- **Next action / responsible roles:** Choose public timing/dedup/recovery/pin behavior. Maintainer selects; architect scopes; builder after contract.
+- **Closure evidence:** Template tests/docs describe chosen public behavior and actual secret names.
+- **Release disposition:** Public heartbeat acceptance.
+
+- **Status:** supported public behavior not selected.
+- **Source:** [comparison](research/2026-10-03-heartbeat-delivery-roadmap.md#public-github-template-is-not-the-production-workflow);
+  `modules/gh-heartbeat/heartbeat-alert.yml`.
+- **Evidence:** public template uses fifteen-minute schedule/900-second age
+  threshold and repeats stale alerts; audit describes five minutes/ten minutes
+  with dedup/pinning in a separate production workflow.
+- **Boundary:** choose public behavior explicitly; do not copy private
+  workflow/config or claim those features are already shipped.
+
+## Resolved source changes with pending deployment
+
+<a id="debt-011"></a>
+
+### DEBT-011 — whole-user cron count and restore violate schedule ownership
+
+- **Status:** RESOLVED by RR1a (managed block, PR #68): the `<7` heuristic and
+  the whole-crontab restore branch are removed; the saved backup file remains
+  for operator use; deploy.sh is the single schedule writer.
+- **Source:** production audit D4; quick checker and auto-remediation
+- **Evidence (historical):** fewer than seven jobs was treated as corruption,
+  and a stale full-user backup could replace the current schedule. Module
+  OFF/minimal schedules and unrelated operator edits could therefore be undone.
+
+- **Deployment status:** not deployed, per maintainer. Source closure is
+  PR #68; production acceptance requires a separately authorized read-back.

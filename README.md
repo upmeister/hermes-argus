@@ -138,6 +138,14 @@ The core watchdog covers areas such as:
 Systemd memory-limit drop-ins can protect small VPS deployments from runaway
 memory pressure.
 
+Netdata is an **optional, separately provisioned enhancement** for Analyzer's
+historical host trends. Watchdog disk/RAM/swap/process values come from the OS,
+not Netdata. Current quick-check/UI paths still treat its absence too strictly;
+that remaining clean-install gap is tracked in
+[DEBT-007](docs/BACKLOG.md#debt-007). See
+[monitoring sources](docs/monitoring-sources.md) for each layer's actual input
+and alert producer.
+
 ### Operator control plane
 
 The optional Telegram module provides interactive monitoring/status commands
@@ -317,8 +325,10 @@ contract under [docs/handoffs/](docs/handoffs/).
 - [Hermes discovery boundary ADR](docs/adr/0002-hermes-discovery-sync-boundary.md)
 - [Implementation handoffs](docs/handoffs/README.md)
 - [Project backlog](docs/BACKLOG.md)
+- [Monitoring sources and optional Netdata](docs/monitoring-sources.md)
 - [Production deployment checklist](docs/DEPLOY_CHECKLIST.md)
 - [Production dependency audit](docs/research/2026-10-03-production-deployment-dependencies.md)
+- [Heartbeat/RR1 discussion](docs/research/2026-10-03-heartbeat-delivery-roadmap.md)
 - [Changelog](CHANGELOG.md)
 
 Historical handoffs remain useful research records, but their presence does not
