@@ -2527,18 +2527,46 @@ def _rr1a_home_for_deploy(home: Path) -> str:
     return (r.stdout or home.as_posix()).strip()
 
 
+# Утилиты, которые deploy.sh вызывает, выводятся из PATH целиком: белый
+# список хрупок (dirname, flock, id…), а каталоги с crontab из PATH
+# исключаются — на Linux /usr/bin содержит и crontab, и bash, поэтому нужен
+# доступ к остальным командам через обёртки.
+_RR1A_NEVER_WRAP = {"crontab", "crontab.exe"}
+
+
 def _rr1a_path_without_crontab(shim_dir: str) -> str:
-    """PATH без каталогов, содержащих crontab: command -v не находит
-    утилиту, и deploy физически не может писать в живое расписание."""
-    kept = []
-    for entry in os.environ.get("PATH", "").split(os.pathsep):
+    """PATH, в котором crontab недостижим, а остальные утилиты доступны.
+
+    Из PATH исключаются каталоги с crontab; каждая найденная команда
+    пробрасывается обёрткой `exec <абс-путь> "$@"` в отдельный bin. Так
+    `command -v crontab` не находит утилиту нигде (проба не может писать в
+    живое расписание), и одновременно bash/sed/dirname/… остаются
+    вызываемыми на любой платформе.
+    """
+    real = os.environ.get("PATH", "")
+    wrapper_bin = Path(shim_dir) / "nobin"
+    wrapper_bin.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+    for entry in real.split(os.pathsep):
         if not entry:
             continue
-        if any(os.path.exists(os.path.join(entry, name))
-               for name in ("crontab", "crontab.exe")):
+        try:
+            names = sorted(os.listdir(entry))
+        except OSError:
             continue
-        kept.append(entry)
-    return os.pathsep.join([shim_dir] + kept)
+        for name in names:
+            base = name
+            if base in _RR1A_NEVER_WRAP or base.lower() in _RR1A_NEVER_WRAP:
+                continue
+            if base in seen:
+                continue
+            candidate = Path(entry) / name
+            if not candidate.is_file():
+                continue
+            seen.add(base)
+            _write_argv_shim(wrapper_bin, base,
+                             'exec "' + candidate.as_posix() + '" "$@"\n')
+    return os.pathsep.join([shim_dir, str(wrapper_bin)])
 
 
 def _rr1a_cron_shims(tmp: Path, tag: str, flock_fails: bool = False) -> Path:
@@ -5723,14 +5751,15 @@ def probe_ls_deploy_on_off_cron(tmp: Path):
     cron_text = cron_file.read_text(encoding="utf-8") if cron_file.exists() else ""
     check("ls_deploy_on_installs_owned_cron",
           on.returncode == 0
-          and on_tab.count("service-status-snapshot.py") == 1
-          and on_tab.count("local_services_check.py") == 1
+          # наш job — ровно один и ВНУТРИ managed-блока; второй вхождение
+          # во всём crontab — операторская чужая установка (вне блока)
+          and (_rr1a_block(on_tab) or "").count("service-status-snapshot.py") == 1
+          and (_rr1a_block(on_tab) or "").count("local_services_check.py") == 1
           and "source" in on_tab and ".env" in on_tab
           and unrelated in on_tab
-          # чужая установка с тем же basename остаётся операторской
           and foreign_cron in on_tab
           and on_tab.count("service-status-snapshot.py") == 2
-          and "other-tenant" not in _rr1a_block(on_tab)
+          and "other-tenant" not in (_rr1a_block(on_tab) or "")
           and "local_services_check.py" in cron_text
           and "service-status-snapshot.py" in py3_log.read_text(encoding="utf-8"),
           f"rc={on.returncode} tab={on_tab!r} "
