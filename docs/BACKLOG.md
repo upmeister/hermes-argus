@@ -187,15 +187,28 @@ acceptance criteria here.
 
 ### DEBT-011 — whole-user cron count and restore violate schedule ownership
 
-- **Status:** selected RR1a scope
+- **Status:** RESOLVED by RR1a (managed block, PR #68): the `<7` heuristic and
+  the whole-crontab restore branch are removed; the saved backup file remains
+  for operator use; deploy.sh is the single schedule writer.
 - **Source:** production audit D4; quick checker and auto-remediation
-- **Evidence:** fewer than seven jobs is treated as corruption, and a stale
-  full-user backup can replace the current schedule. Module OFF/minimal
-  schedules and unrelated operator edits can therefore be undone.
-- **Follow-up:** retire the count heuristic and whole-crontab restore alongside
-  the managed block; preserve saved backups for operator use.
-- **Trigger:** [RR1a contract](handoffs/rr1a-managed-cron-contract.md).
-- **Scope guard:** no recurring scheduler repair framework or new state schema.
+- **Evidence (historical):** fewer than seven jobs was treated as corruption,
+  and a stale full-user backup could replace the current schedule. Module
+  OFF/minimal schedules and unrelated operator edits could therefore be undone.
+
+### DEBT-015 — `no crontab for` detection is locale-sensitive
+
+- **Status:** deferred maintenance (fail-closed direction, not a false green)
+- **Source:** RR1a implementation review of `reconcile_argus_cron`
+- **Evidence:** an absent user crontab is recognized by the English cron
+  message `no crontab for`. On a system with a localized cron (non-English
+  message catalog) the same state is treated as a failed read and the deploy
+  stops with a clear error — safe but noisy for that configuration.
+- **Required follow-up:** switch detection to a locale-independent probe
+  (for example `crontab -l </dev/null` exit-status semantics verified per
+  cron implementation) in a maintenance pass.
+- **Trigger:** when a localized-cron host is actually in scope, or next time
+  deploy.sh cron reconciliation is touched.
+- **Scope guard:** keep fail-closed behavior for genuinely failed reads.
 
 ### DEBT-012 — external provisioning and native-alert claims need reconciliation
 

@@ -192,10 +192,11 @@ except Exception:
         "http://@HERMES_HOST@:@NETDATA_PORT@/api/v1/info" 2>/dev/null); HTTP_CODE=${HTTP_CODE:-000}
     [ "$HTTP_CODE" != "200" ] && PROBLEMS+=("📊 Netdata API: HTTP $HTTP_CODE (ожидался 200)")
 
-    # 4. Целостность crontab
-    local CRON_COUNT
-    CRON_COUNT=$(crontab -l 2>/dev/null | grep -v "^#" | grep -v "^$" | wc -l)
-    [ "$CRON_COUNT" -lt 7 ] && PROBLEMS+=("📋 Crontab: найдено $CRON_COUNT задач (ожидалось ≥7) — возможна потеря!")
+    # RR1a: глобальная эвристика «<7 задач в crontab» снята — расписание
+    # принадлежит managed-блоку deploy.sh; unrelated job'ы оператора не
+    # доказывают здоровье Argus, а валидное малое расписание — не поломка.
+    # Именованные проверки расписаний watchdog/gateway/dashboard остаются
+    # в watchdog-health.sh.
 
     if [ ${#PROBLEMS[@]} -gt 0 ]; then
         echo "=== INTEGRATION HEALTH PROBLEMS ==="

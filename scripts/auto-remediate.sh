@@ -104,17 +104,12 @@ if [[ "$DISK_PCT" =~ ^[0-9]+$ ]] && [ "$DISK_PCT" -gt 85 ]; then
     DID_SOMETHING=true
 fi
 
-# ── 3. Crontab recovery ──────────────────────────────────────────────────
-CRON_COUNT=$( (crontab -l 2>/dev/null || true) | grep -v "^#" | grep -v "^$" | wc -l )
-CRON_BACKUP="$HERMES_DIR/backups/crontab-known-good.txt"
-if [ "$CRON_COUNT" -lt 7 ] && [ -f "$CRON_BACKUP" ]; then
-    printf '[%s] Crontab: %s задач (<7) — восстанавливаю из бэкапа\n' \
-        "$(date -u +'%Y-%m-%d %H:%M UTC')" "$CRON_COUNT" >> "$LOG_FILE"
-    crontab "$CRON_BACKUP" 2>/dev/null || true
-    NEW_COUNT=$( (crontab -l 2>/dev/null || true) | grep -v "^#" | grep -v "^$" | wc -l )
-    REPORT="${REPORT:+$REPORT\\n}📋 Crontab восстановлен: было ${CRON_COUNT} → стало ${NEW_COUNT} задач"
-    DID_SOMETHING=true
-fi
+# RR1a: ветка whole-crontab восстановления из backups/crontab-known-good.txt
+# снята — малое управляемое расписание или сокращение модулей не есть поломка,
+# а восстановление целого crontab'а resurrect'ил бы выключенные job'ы и
+# затирал независимые правки оператора. Файл бэкапа не удаляется: оператор
+# может использовать его вручную. Единственный writer расписания — deploy.sh
+# (managed-блок); recovery-демон/переустановка по расписанию не вводятся.
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Circuit breaker: увеличиваем счётчик если что-то делали

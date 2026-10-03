@@ -54,7 +54,7 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> RR0a default-module/runtime truth               DONE / PR #51
  -> RR0b dead/duplicate runtime removal             DONE / PR #63
  -> RR0c public defaults/naming migration            DONE / PR #65
- -> RR1a managed cron ownership                     NOW
+ -> RR1a managed cron ownership                     PR #68 (awaiting merge)
  -> RR1b dependency/preflight/config and module payloads
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
@@ -187,8 +187,10 @@ After RR0 defines the truthful live module surface:
 
 The maintainer-selected sequence is:
 
-1. **RR1a — managed cron ownership — selected.** One owned block, preservation
-   of operator cron and retirement of the whole-user count/backup restore.
+1. **RR1a — managed cron ownership — IMPLEMENTED / PR #68 (awaiting merge).**
+   One owned block, in-place replacement preserving operator cron and cron
+   environment variables, adoption of previously generated lines, and
+   retirement of the whole-user count heuristic and backup restore.
    [Builder contract](handoffs/rr1a-managed-cron-contract.md).
 2. **RR1b — dependencies/preflight/config — planned.** Module/interpreter
    dependencies, Analyzer collector and shared bot payloads, optional Netdata
@@ -278,7 +280,7 @@ R2a/R2a.1: closed and deployed
 R2c.1: closed (PR #49) and confirmed against stable v0.21.5
 RR0a/RR0b: closed (PR #51 / PR #63)
 RR0c: closed (PR #65); maintainer reports deployment
-RR1: current distribution gate; RR1a contract selected
+RR1: current distribution gate; RR1a implemented (PR #68), awaiting merge
 distribution contract: incomplete
 public RC: gated by RR1/RR2/RR3
 ```

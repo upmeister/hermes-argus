@@ -188,9 +188,11 @@ bash install.sh
 runs the module-aware deploy, enables the config watcher and performs
 post-deploy checks.
 
-This is still a **pre-release installation path**. In the current tree, the
-generated Argus cron entries still require a manual merge step, and dependency /
-upgrade / uninstall ownership is being hardened before the first public RC.
+This is still a **pre-release installation path**. Argus installs its own
+schedule into one marked crontab block (`# BEGIN HERMES-ARGUS` /
+`# END HERMES-ARGUS`) and reconciles it on every deploy — no manual cron merge
+step is required. Dependency / upgrade / uninstall ownership is still being
+hardened before the first public RC.
 Do not treat today's `main` bootstrap as the final one-command release
 installer.
 
@@ -264,7 +266,7 @@ R1c  Authorization headers out of child argv — DONE
  -> RR0a  default-module/runtime truth — DONE / PR #51
  -> RR0b  dead/duplicate runtime removal — DONE / PR #63
  -> RR0c  public defaults/naming migration — DONE / PR #65
- -> RR1a  managed cron ownership — NOW
+ -> RR1a  managed cron ownership — IMPLEMENTED / PR #68 (awaiting merge)
  -> RR1b  dependency/preflight/config and module payloads
  -> RR1c/RR1d  versioned lifecycle and bounded uninstall
  -> RR2  runtime i18n: English + Russian
