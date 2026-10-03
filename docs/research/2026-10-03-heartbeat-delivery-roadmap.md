@@ -105,6 +105,9 @@ preferred planning path. Native delivery remains the smaller fallback option
 if the maintainer later accepts a provider bot. The bridge requires no second
 Telegram poller: an external handler can call
 [`sendMessage`](https://core.telegram.org/bots/api#sendmessage) from bot Argus.
+This is a receiver for Cronping events, not a Telegram `setWebhook` change.
+Keep the existing bot's long polling unchanged; switching its incoming-update
+transport would be a separate control-plane change.
 
 Its additional costs are independent hosting/lifecycle, receiving endpoint
 authentication, handling duplicates/reordered recovery, and the behavior when
