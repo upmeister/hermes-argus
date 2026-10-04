@@ -49,7 +49,7 @@ maintainer read an incomplete project state.
 | [DEBT-014](#debt-014) | Heartbeat credentials exposed in curl arguments | Open | Contract the bounded stdin-channel correction. |
 | [DEBT-015](#debt-015) | Empty-crontab detection is locale-sensitive | Deferred | Make empty/read-error detection locale-independent. |
 | [DEBT-016](#debt-016) | Heartbeat selection follows credentials | Needs decision | Choose explicit backend selection and compatibility migration. |
-| [DEBT-017](#debt-017) | Cronping Telegram delivery/setup incomplete | Needs hosting decision | Plan external webhook delivery through bot Argus and public setup guide. |
+| [DEBT-017](#debt-017) | Native Cronping Telegram setup | Native route selected; setup pending | Publish provider-bot instructions and verify delivery separately from pings. |
 | [DEBT-018](#debt-018) | Public GitHub workflow differs from production | Needs decision | Choose public timing/dedup/recovery/pin behavior. |
 | [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Open | Maintainer selects a stale-evidence policy before RR3. |
 | [DEBT-020](#debt-020) | Discord `!deepcheck` needs a TG_BOT-owned payload | Open | Maintainer decides payload ownership vs. unsupported-module reporting. |
@@ -403,21 +403,21 @@ maintainer read an incomplete project state.
 
 <a id="debt-017"></a>
 
-### DEBT-017 ? Cronping Telegram delivery and public heartbeat setup
+### DEBT-017 — native Cronping Telegram setup and public heartbeat guide
 
-- **Operator impact:** Account audit reports pings without Telegram notification.
-- **Next action / responsible roles:** Plan external webhook delivery through bot Argus and public setup guide. Maintainer selects; architect scopes; builder after contract.
-- **Closure evidence:** Independent receiver and synthetic outage/recovery evidence, with public guide.
-- **Release disposition:** Requested heartbeat cycle; not implemented.
-
-- **Status:** requested cycle; bot Argus preferred, independent hosting open.
-- **Source:** later heartbeat audit and maintainer clarification;
-  [discussion](research/2026-10-03-heartbeat-delivery-roadmap.md).
-- **Evidence:** audit reports accepted pings but no Telegram integration.
-  [Cronping](https://cronping.com/docs/integrations) offers a provider bot or
-  generic webhook; the maintainer prioritizes delivery from bot Argus.
-- **Boundary:** no bridge on the monitored host for full-host-loss coverage;
-  no live sends, account provisioning or deployment during docs work.
+- **Operator impact:** accepted pings do not establish a configured Telegram route.
+- **Status:** native provider-bot delivery selected on 2026-10-04; setup/delivery
+  verification and public guide remain open.
+- **Source:** maintainer correction and
+  [heartbeat review](research/2026-10-03-heartbeat-delivery-roadmap.md).
+- **Next action / responsible roles:** document Dashboard setup, Telegram bot
+  activation, heartbeat integration assignment and a separately authorized
+  outage/recovery test. Optional API assistance requires a later bounded task.
+- **Closure evidence:** public instructions match native configuration, and
+  chosen delivery is verified separately from successful pings.
+- **Release disposition:** heartbeat setup/acceptance; outside frozen RR1b.
+- **Boundary:** no Argus webhook or external-VPS prerequisite; no automatic
+  account operations or real notification sends in this docs repair.
 
 <a id="debt-018"></a>
 
@@ -504,20 +504,19 @@ maintainer read an incomplete project state.
 
 <a id="sync-001"></a>
 
-### SYNC-001 — Windows vault stage is missing the Argus project tree
+### SYNC-001 — vault synchronization repaired and regressed notes restored
 
-- **Operator impact:** a local maintainer view can appear to have no Argus
-  backlog even though the connected server vault contains it.
-- **Status:** open infrastructure finding.
-- **Source:** 2026-10-04 read-back of the connected Obsidian MCP vault and
-  `C:\Users\covhnw\vault-stage\files`; detailed ownership is in
-  [`docs/VAULT-SYNC.md`](VAULT-SYNC.md).
-- **Next action / responsible role:** sync owner identifies the stage-population
-  process and restores a deterministic project-tree sync; maintainer verifies
-  the three required paths.
-- **Closure evidence:** local stage contains the Argus card, roadmap, backlog
-  index and latest selected/research pointers, with a recorded source revision
-  or sync date.
-- **Release disposition:** documentation operations; does not block runtime
-  code, but agents must not treat the incomplete local stage as a complete
-  mirror.
+- **Status:** closed after maintainer repair and documentation recovery.
+- **Operator impact (historical):** stale local notes were published over newer
+  server notes; three Argus documents lost current project decisions/status.
+- **Source:** actual Obsidian vault configuration and Git history. A temporary
+  staging folder was mistakenly treated as the local vault in the earlier
+  audit. Desktop vault commit `2d76b33` regressed the card, roadmap and audit;
+  the pre-regression notes were recovered from `4e835c3`.
+- **Closure evidence:** recovered/current Argus notes committed through the
+  real local vault, published to its GitHub remote and compared with the
+  connected server vault. See [VAULT-SYNC.md](VAULT-SYNC.md).
+- **Next action:** none for this finding; future updates must distinguish
+  actual vault Git mirrors from temporary staging directories.
+- **Release disposition:** documentation operations; neither this closure nor
+  note restoration certifies an Argus runtime deployment.

@@ -20,7 +20,7 @@ The later heartbeat-backends audit reports separation of the dedicated
 heartbeat and infrastructure clones. That supersedes the earlier legacy Git
 directory observation below; other config-reader fallbacks are not thereby
 verified. [Heartbeat review](2026-10-03-heartbeat-delivery-roadmap.md) preserves
-that audit's facts separately from open receiver/config decisions.
+that audit's facts separately from the later native-Cronping delivery decision.
 
 This report is the consolidated input for a **later installer contract**.
 It does not admit all these changes into one implementation task:
@@ -34,9 +34,9 @@ It does not admit all these changes into one implementation task:
 | Provider setup claims | Correct unimplemented provisioning/native-alert statements | [DEBT-012](../BACKLOG.md#debt-012) |
 | Configured Telegram transport | Apply runtime proxy in every existing affected sender | [DEBT-013](../BACKLOG.md#debt-013) |
 | External heartbeat secret channel | Keep ping tokens out of child argv | [DEBT-014](../BACKLOG.md#debt-014) |
-| Explicit heartbeat backend/delivery setup | Later heartbeat cycle with public guide and independent receiver | [DEBT-016](../BACKLOG.md#debt-016), [DEBT-017](../BACKLOG.md#debt-017) |
+| Explicit heartbeat backend/delivery setup | Later heartbeat cycle with native provider-bot setup guide | [DEBT-016](../BACKLOG.md#debt-016), [DEBT-017](../BACKLOG.md#debt-017) |
 | Public GitHub behavior | Reconcile actual shipped workflow and claimed alert behavior | [DEBT-018](../BACKLOG.md#debt-018) |
-| Installer itself | Module-specific OS/interpreter/Hermes preflight, private config, module-neutral post-deploy gates | RR1b contract to be selected |
+| Installer itself | Module-specific OS/interpreter/Hermes preflight, private config, module-neutral post-deploy gates | Frozen RR1b module-runtime contract in progress; broader installer task later |
 
 Netdata may be offered/documented without making it a baseline dependency.
 No replacement time-series stack or personal proxy infrastructure is required
@@ -262,7 +262,7 @@ RR3: clean-install/upgrade/uninstall acceptance
 ```
 
 This sequence records the audit's original planning result. RR1a is now
-complete in source, not deployed. No next builder contract is selected;
-RR1b subdivision and the separate heartbeat cycle are
+complete in source, not deployed. RR1b module-runtime implementation is in
+progress; the broader subdivision and separate heartbeat setup cycle are
 [discussion input](2026-10-03-heartbeat-delivery-roadmap.md). Findings and
 release prerequisites are indexed in [the backlog](../BACKLOG.md).
