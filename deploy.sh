@@ -56,6 +56,11 @@ echo ""
 # ── Функция: развернуть bash-шаблон ──────────────────────────────────────
 # Заменяет @МАРКЕРЫ@ на значения из конфига. Новый маркер = новая printf-строка.
 SED_SCRIPT_TMP=""
+# B4 (RR1b): развёрнутые payload'ы. deploy — единственное место, которое знает
+# ВЫБРАННЫЕ модули и фактически куда положила каждый файл, поэтому проверка
+# «поставлено то, что просили» живёт здесь, а не дублируется в bootstrap
+# отдельным списком артефактов и собственной таблицей дефолтов.
+DEPLOYED_PATHS=()
 cleanup_sed_script() { [ -z "$SED_SCRIPT_TMP" ] || rm -f "$SED_SCRIPT_TMP"; }
 trap cleanup_sed_script EXIT
 
@@ -95,6 +100,7 @@ deploy_template() {
     # Делаем исполняемым если исходник был
     [ -x "$src" ] && chmod +x "$dst"
 
+    DEPLOYED_PATHS+=("$dst")
     echo "   ✅ $name → $dst"
 }
 
@@ -385,6 +391,41 @@ deploy_systemd() {
     done
 }
 
+# ── Проверка развёрнутого payload (RR1b, B4) ────────────────────────────────
+# Проверяются РОВНО те файлы, которые deploy положил по манифестам включённых
+# модулей: ни чужая инфраструктура в целевых каталогах, ни остатки отключённых
+# модулей сюда не попадают. Проверяется всё, а не один представитель на модуль.
+verify_deployed_payload() {
+    local f bad=0
+    echo ""
+    echo "🔎 Проверка развёрнутого payload..."
+    for f in ${DEPLOYED_PATHS[@]+"${DEPLOYED_PATHS[@]}"}; do
+        if [ ! -f "$f" ]; then
+            echo "   ❌ файл не создан: $f"; bad=1; continue
+        fi
+        if grep -q '@[A-Z_]*@' "$f" 2>/dev/null; then
+            echo "   ❌ незаменённые маркеры: $f"; bad=1
+        fi
+        case "$f" in
+            *.sh)
+                if ! bash -n "$f" 2>/dev/null; then
+                    echo "   ❌ ошибка синтаксиса: $f"; bad=1
+                fi
+                ;;
+            *.py)
+                if ! python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' "$f" 2>/dev/null; then
+                    echo "   ❌ ошибка синтаксиса: $f"; bad=1
+                fi
+                ;;
+        esac
+    done
+    if [ "$bad" -ne 0 ]; then
+        echo "   ❌ payload не прошёл проверку — развёртка считается неуспешной."
+        return 1
+    fi
+    echo "   ✅ payload проверен: ${#DEPLOYED_PATHS[@]} файл(ов), маркеров и синтаксических ошибок нет"
+}
+
 # ── Развёртка по модулям ───────────────────────────────────────────────────
 if module_enabled MODULE_CORE; then
     echo ""
@@ -659,11 +700,13 @@ if module_enabled MODULE_LOCAL_SERVICES; then
 fi
 
 echo ""
+verify_deployed_payload
+
+echo ""
 echo "✅ Развёртка завершена!"
 echo ""
 echo "👉 Что дальше:"
-echo "   1. Проверь, что нет незаменённых маркеров:"
-echo "      grep -rn '@[A-Z_]*@' $HOME_DIR/scripts/ $HERMES_DIR/scripts/ 2>/dev/null || echo 'Чисто!'"
+echo "   1. Маркеры и синтаксис уже проверены выше — повторно грепать не нужно"
 echo "   2. Если включены TG-алерты/бот — проверь токены в config.env"
 echo "   3. Перезагрузи systemd: systemctl --user daemon-reload"
 if module_enabled MODULE_INTEGRATIONS; then

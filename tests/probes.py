@@ -6186,18 +6186,27 @@ def probe_rr1b_discord_only_payload(tmp: Path):
 
 
 def _rr1b_install_fixture(tmp: Path, tag: str, config_body: str,
-                          deploy_mode: str = "real") -> tuple[subprocess.CompletedProcess, Path]:
+                          deploy_mode: str = "real",
+                          mutate_repo=None, plant=None
+                          ) -> tuple[subprocess.CompletedProcess, Path]:
     """Полный прогон install.sh под shims (dpkg/git/systemctl/crontab/flock/bash).
     deploy внутри — настоящий, из локальной копии дерева кандидата.
 
-    deploy_mode: real | skip (deploy не отрабатывает — артефактов нет) |
-    broken-watchdog (deploy кладёт CORE-артефакт с ошибкой синтаксиса)."""
+    deploy_mode: real | skip (deploy не отрабатывает) |
+    broken-watchdog (deploy кладёт CORE-артефакт с ошибкой синтаксиса).
+    mutate_repo(fixture) правит копию репозитория ДО deploy (порча шаблона,
+    удаление источника манифеста); plant(home) кладёт файлы в HOME (чужая
+    инфраструктура оператора, остатки отключённого модуля)."""
     home = tmp / f"rr1b-install-home-{tag}"
     fixture = home / "hermes-argus"
     shutil.copytree(REPO, fixture,
                     ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
     (fixture / ".git").mkdir()
     write(fixture / "config.env", config_body)
+    if mutate_repo is not None:
+        mutate_repo(fixture)
+    if plant is not None:
+        plant(home)
     shim = tmp / f"rr1b-install-shim-{tag}"
     shim.mkdir(parents=True, exist_ok=True)
     _write_argv_shim(shim, "dpkg", "exit 0\n")
@@ -6259,53 +6268,67 @@ _RR1B_TEMPLATE_CFG = (
 
 
 def probe_rr1b_install_module_neutral_gate(tmp: Path):
-    """RR1b B4 §6.5: post-deploy гейт следует выбранным модулям.
+    """RR1b B4 §6.5: гейт следует выбранным модулям и проверяет ровно то, что
+    deploy положил по манифестам включённых модулей.
 
-    Четыре случая, каждый из которых ловил свою ошибку (ревью F1/F2):
-    шаблонный комментированный CORE=OFF доходит до финала и НЕ упоминает
-    watchdog; отсутствующий артефакт ВКЛЮЧЁННОГО модуля (в т.ч. при CORE=OFF)
-    роняет установку; ошибка синтаксиса в развёрнутом артефакте роняет её, а
-    не проходит гейт насквозь.
+    Каждый случай ловит свою ошибку (ревью F1/F2 + повторное ревью R1/R2/R3):
+    шаблонный комментированный CORE=OFF доходит до финала; минимальный конфиг
+    без optional-флагов тоже (дефолты deploy'а — OFF, а не ON); чужая
+    инфраструктура оператора и остатки ОТКЛЮЧЁННОГО модуля с маркером не роняют
+    установку; при этом битый скрипт ВКЛЮЧЁННОГО модуля, не являющийся
+    «представителем», и отсутствующий источник манифеста — роняют.
     """
-    res_off, home_off = _rr1b_install_fixture(tmp, "template-off",
-                                              _RR1B_TEMPLATE_CFG, "real")
-    watchdog_absent = not (home_off / "scripts" / "hermes-watchdog.sh").exists()
-    integrations_present = (home_off / "scripts" / "integration-discover-wrapper.sh").is_file()
-    # Секция гейта — отдельно от потока вывода deploy, который install.sh
-    # транслирует и где имя watchdog может встретиться по другим причинам.
-    gate = res_off.stdout[res_off.stdout.find("Post-deploy gates:"):]
-    off_ok = (res_off.returncode == 0 and watchdog_absent
-              and integrations_present
-              and "Готово" in res_off.stdout
-              # Гейт проверил ровно включённый модуль и не искал CORE-артефакт.
-              and "integration-discover-wrapper.sh" in gate
-              and "hermes-watchdog.sh" not in gate)
+    marker_plant = lambda home: (  # noqa: E731 — короткий фикстурный хук
+        write(home / "scripts" / "operator-owned.sh",
+              "#!/bin/bash\n# чужой файл оператора: @DUMMY_OPERATOR_MARKER@\nexit 0\n"),
+        write(home / "scripts" / "heartbeat.sh",
+              "#!/bin/bash\n# остаток отключённого модуля: @DUMMY_LEFTOVER_MARKER@\nexit 0\n"),
+    )
 
-    # Включённый CORE, артефакта нет (deploy не отработал) — loud fail.
-    on_cfg = (_rr1b_modules(core=True, integrations=False)
-              + f"WATCHDOG_BOT_TOKEN={RR1B_TOKEN}\nWATCHDOG_CHAT_ID={RR1B_CHAT}\n")
-    res_missing, _ = _rr1b_install_fixture(tmp, "core-on-missing", on_cfg, "skip")
-    missing_ok = (res_missing.returncode != 0
-                  and "hermes-watchdog.sh" in (res_missing.stdout + res_missing.stderr))
+    def gate_ok(res: subprocess.CompletedProcess) -> bool:
+        return (res.returncode == 0
+                and "payload: проверен deploy.sh" in res.stdout
+                and "Готово" in res.stdout)
 
-    # CORE=OFF, но включён INTEGRATIONS и его артефакта нет — тоже loud fail.
-    res_int, _ = _rr1b_install_fixture(tmp, "int-missing", _RR1B_TEMPLATE_CFG, "skip")
-    int_ok = (res_int.returncode != 0
-              and "MODULE_INTEGRATIONS" in (res_int.stdout + res_int.stderr))
+    # 1. Шаблонный конфиг с комментариями, CORE=OFF.
+    res_tpl, home_tpl = _rr1b_install_fixture(tmp, "template-off", _RR1B_TEMPLATE_CFG)
+    template_ok = (gate_ok(res_tpl)
+                   and not (home_tpl / "scripts" / "hermes-watchdog.sh").exists()
+                   and (home_tpl / "scripts" / "integration-discover-wrapper.sh").is_file()
+                   and "payload проверен" in res_tpl.stdout)
 
-    # Развёрнутый артефакт с ошибкой синтаксиса — loud fail, а не тихий проход.
-    res_bad, _ = _rr1b_install_fixture(
-        tmp, "bad-syntax", _rr1b_modules(core=True, integrations=False)
-        + f"WATCHDOG_BOT_TOKEN={RR1B_TOKEN}\nWATCHDOG_CHAT_ID={RR1B_CHAT}\n",
-        "broken-watchdog")
-    bad_ok = res_bad.returncode != 0
+    # 2. Минимальный конфиг: optional-флаги не указаны → deploy считает их OFF.
+    minimal = ("MODULE_CORE=OFF\nMODULE_INTEGRATIONS=ON\n"
+               f"WATCHDOG_BOT_TOKEN={RR1B_TOKEN}\nWATCHDOG_CHAT_ID={RR1B_CHAT}\n")
+    res_min, _ = _rr1b_install_fixture(tmp, "minimal", minimal)
+    minimal_ok = gate_ok(res_min)
+
+    # 3. Чужая инфраструктура и остатки отключённого модуля с маркерами.
+    res_foreign, _ = _rr1b_install_fixture(tmp, "foreign", _RR1B_TEMPLATE_CFG,
+                                          plant=marker_plant)
+    foreign_ok = gate_ok(res_foreign)
+
+    # 4. Битый скрипт ВКЛЮЧЁННОГО модуля, не входящий в «представители».
+    res_broken, _ = _rr1b_install_fixture(
+        tmp, "broken-wrapper", _RR1B_TEMPLATE_CFG,
+        mutate_repo=lambda fx: write(fx / "scripts" / "health-check-v2-wrapper.sh",
+                                     "#!/bin/bash\nif then\n"))
+    broken_ok = res_broken.returncode != 0
+
+    # 5. Отсутствующий источник манифеста включённого модуля.
+    res_absent, _ = _rr1b_install_fixture(
+        tmp, "absent-source", _RR1B_TEMPLATE_CFG,
+        mutate_repo=lambda fx: (fx / "scripts" / "integration-discover-wrapper.sh").unlink())
+    absent_ok = res_absent.returncode != 0
 
     check("rr1b_install_module_neutral_gate",
-          off_ok and missing_ok and int_ok and bad_ok,
-          f"off={off_ok}(rc={res_off.returncode}) missing={missing_ok}"
-          f"(rc={res_missing.returncode}) integrations={int_ok}(rc={res_int.returncode}) "
-          f"bad_syntax={bad_ok}(rc={res_bad.returncode}) "
-          f"off_out={res_off.stdout[-260:]!r}")
+          template_ok and minimal_ok and foreign_ok and broken_ok and absent_ok,
+          f"template={template_ok}(rc={res_tpl.returncode}) "
+          f"minimal={minimal_ok}(rc={res_min.returncode}) "
+          f"foreign={foreign_ok}(rc={res_foreign.returncode}) "
+          f"broken={broken_ok}(rc={res_broken.returncode}) "
+          f"absent={absent_ok}(rc={res_absent.returncode}) "
+          f"tpl_out={res_tpl.stdout[-260:]!r}")
 
 
 def main() -> int:

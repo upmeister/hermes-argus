@@ -54,12 +54,17 @@ production host:
    exists and was refreshed by this deploy, and that deploy reported the
    `discord-venv` import check. If it warns about missing imports, install them
    into the venv the unit runs and re-check.
-5. **Core-off installs (only if `MODULE_CORE=OFF`).** The installer must reach
-   its completion text and print the artifact list it checked; that list must
-   contain the enabled modules' artifacts and must not contain CORE's watchdog.
-   A raw `No such file or directory` from `bash -n` indicates a gate that never
-   ran correctly.
-6. **Discord interpreter check (only if `MODULE_DISCORD_BOT=ON`).** Deploy must
+5. **Core-off installs (only if `MODULE_CORE=OFF`).** `deploy.sh` must print
+   `✅ payload проверен: N файл(ов)` and `install.sh` must reach its completion
+   text with `payload: проверен deploy.sh`. A raw `No such file or directory`
+   from `bash -n` indicates a gate that never ran correctly.
+6. **Deploy fails on a bad payload.** Confirm the deployer's own check is real:
+   a deployed file with a syntax error, or a manifest source missing from the
+   repository, must make `deploy.sh` exit non-zero with `❌ payload не прошёл
+   проверку` / `❌ Манифест требует …`, and `install.sh` must abort with no
+   completion text. This is the property that replaced the installer's own
+   artifact list.
+7. **Discord interpreter check (only if `MODULE_DISCORD_BOT=ON`).** Deploy must
    print either `✅ discord-venv импортирует discord + yaml` or a named
    missing-import warning. If it reports that the import check itself could not
    run, the deploy fails and the module must not be started.

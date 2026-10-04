@@ -36,18 +36,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owned state, and existing GitHub-heartbeat installations retain bounded
   legacy-directory compatibility.
 
-- The installer's post-deploy gate follows the selected modules instead of
-  assuming CORE (RR1b). `install.sh` used to run a CORE-only syntax check on
-  `hermes-watchdog.sh` unconditionally, so a clean `MODULE_CORE=OFF` install
-  probed a file the module never installs — printing no result and leaking a
-  raw `No such file or directory` from bash. The gate now reads each module
-  flag exactly the way `deploy.sh` does (the same `config.env`, shell semantics
-  and defaults, so a commented `MODULE_CORE="OFF"  # …` template line is read
-  correctly), verifies that each *enabled* module's own artifact was deployed,
-  propagates syntax failures instead of letting `bash -n … && echo` swallow
-  them, and reports which artifacts it checked. `deploy.sh` likewise no longer
-  silently skips a manifest source that is missing from the repository: a
-  module enabled without its payload is a failed deploy, not a successful one.
+- The deployer now verifies its own payload, and the installer's post-deploy
+  gate follows the selected modules instead of assuming CORE (RR1b). `install.sh`
+  used to run a CORE-only syntax check on `hermes-watchdog.sh` unconditionally,
+  so a clean `MODULE_CORE=OFF` install probed a file the module never installs —
+  printing no result and leaking a raw `No such file or directory` from bash.
+  The verification now lives where the selection already exists: `deploy.sh`
+  records every file it wrote from the enabled manifests and checks each one
+  for unresolved `@MARKER@` placeholders and syntax before reporting success,
+  failing the deploy — and therefore the install — if any of them is wrong.
+  Checks cover every deployed script of every enabled module, not one
+  representative per module; they never touch foreign infrastructure or
+  leftovers of disabled modules that happen to live in the target directories,
+  and they never consult a second copy of the module defaults. `deploy.sh`
+  also no longer silently skips a manifest source missing from the repository:
+  an enabled module without its payload is a failed deploy, not a successful
+  one. `install.sh` confirms fail-closed that the payload check actually ran.
 
 ### Changed
 
