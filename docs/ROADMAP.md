@@ -55,7 +55,7 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> RR0b dead/duplicate runtime removal             DONE / PR #63
  -> RR0c public defaults/naming migration            DONE / PR #65
  -> RR1a managed cron ownership                     DONE / PR #68
- -> RR1b dependency/preflight/config and module payloads
+ -> RR1b dependency/preflight/config and module payloads  (candidate prepared)
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (English + Russian)
@@ -196,6 +196,9 @@ The maintainer-selected sequence is:
    dependencies, Analyzer collector and shared bot payloads, optional Netdata
    and GitHub reporting, safe private config, user-manager/privilege/network
    applicability, log rotation and truthful L3 setup instructions.
+   A first bounded candidate is prepared in
+   [the RR1b module-runtime truth contract](handoffs/rr1b-module-runtime-truth-contract.md),
+   but it is not selected yet.
 3. **RR1c — versioned installation/update — planned.** Explicit stable/edge
    selection and a bounded update path.
 4. **RR1d — uninstall/resource migration — planned.** Remove only Argus-owned

@@ -269,7 +269,7 @@ R1c DONE
  -> RR0b DONE / PR #63
  -> RR0c DONE / PR #65
  -> RR1a managed cron ownership                 DONE / PR #68
- -> RR1b dependency/preflight/config and reproducible module payloads
+ -> RR1b dependency/preflight/config and reproducible module payloads  (candidate prepared)
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (en + ru)
@@ -287,6 +287,11 @@ does not currently provision. RR1a is merged; no further RR1 slice is
 admitted until the maintainer selects a bounded contract for it (RR1b
 dependency/preflight/config and module payloads is next).
 
+The proposed next contract is
+`docs/handoffs/rr1b-module-runtime-truth-contract.md`; it is not selected until
+the maintainer accepts its exact B1–B4 scope. Documentation-surface sync
+status is recorded in `docs/VAULT-SYNC.md`.
+
 Netdata is an optional external enhancement; watchdog OS metrics do not depend
 on its trends. Remaining mandatory quick-check/UI assumptions are backlog
 work, not an implicit permission to install Netdata. Before selecting further
@@ -301,6 +306,7 @@ and receiver placement require discussion. RR1a is not deployed yet.
 - `docs/handoffs/README.md` — active implementation authority.
 - `docs/BACKLOG.md` — deferred findings and maintenance queue.
 - `docs/DEPLOY_CHECKLIST.md` — production deployment procedure.
+- `docs/VAULT-SYNC.md` — documentation-surface ownership and sync status.
 - `docs/adr/0001-integration-evidence-policy.md` — evidence/verdict policy.
 - `docs/adr/0002-hermes-discovery-sync-boundary.md` — historical bridge record.
 - `CHANGELOG.md` — Keep a Changelog user-facing history.

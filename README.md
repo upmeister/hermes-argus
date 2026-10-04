@@ -326,9 +326,11 @@ contract under [docs/handoffs/](docs/handoffs/).
 - [Implementation handoffs](docs/handoffs/README.md)
 - [Project backlog](docs/BACKLOG.md)
 - [Monitoring sources and optional Netdata](docs/monitoring-sources.md)
+- [Vault sync and documentation surfaces](docs/VAULT-SYNC.md)
 - [Production deployment checklist](docs/DEPLOY_CHECKLIST.md)
 - [Production dependency audit](docs/research/2026-10-03-production-deployment-dependencies.md)
 - [Heartbeat/RR1 discussion](docs/research/2026-10-03-heartbeat-delivery-roadmap.md)
+- [Proposed RR1b contract](docs/handoffs/rr1b-module-runtime-truth-contract.md)
 - [Changelog](CHANGELOG.md)
 
 Historical handoffs remain useful research records, but their presence does not
