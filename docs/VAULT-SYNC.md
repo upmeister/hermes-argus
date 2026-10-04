@@ -42,6 +42,12 @@ Use the vault Git history and changed-note parity to establish convergence;
 a successful transport/sync process alone does not prove that the content is
 the newest accepted project state.
 
+The 2026-10-04 RR1b status update was published as vault commit `baa6648`.
+Local vault, GitHub vault and server vault all point to that commit; normalized
+SHA-256 values match for the four updated Argus notes. The receipt records PR
+#71 as merged/not deployed, PR #73 as the selected host-readiness contract and
+DEBT-021 in the readable vault backlog.
+
 ## Future status updates
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.
