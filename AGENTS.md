@@ -270,7 +270,7 @@ R1c DONE
  -> RR0c DONE / PR #65
  -> RR1a managed cron ownership                 DONE / PR #68
  -> RR1b module/runtime truth                         DONE / PR #71
- -> RR1b host readiness                                CURRENT CONTRACT
+ -> RR1b host readiness                        IMPLEMENTED / PR #75 (review pending)
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (en + ru)
@@ -285,9 +285,9 @@ RR1 planning must read
 `docs/research/2026-10-03-production-deployment-dependencies.md`. Production
 contains external Netdata, egress, log rotation and Hermes L3 setup that Argus
 does not currently provision. RR1a is merged; RR1b B1–B4 are merged as PR #71 and remain not deployed.
-The selected next implementation is the host-readiness contract below.
-Assignment of that docs contract authorizes the builder task branch/PR; it does
-not authorize deployment.
+The host-readiness contract below is implemented on `feat/rr1b-host-readiness`
+from baseline `7245cf9` (PR #75) and awaits reviewer verdict and maintainer
+merge; it does not authorize deployment.
 
 The selected contract is docs/handoffs/rr1b-host-readiness-contract.md.
 Documentation-surface sync status is recorded in docs/VAULT-SYNC.md.

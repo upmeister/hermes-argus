@@ -101,20 +101,25 @@ check without a maintainer decision.
 4. **Network guard.** `MODULE_NETWORK_GUARD` is recorded separately from CORE
    and is OFF by default. With OFF, confirm no network-guard entry exists in the
    managed cron block and that `~/scripts/network-guard.sh` was not freshly
-   installed. With ON, the deploy fails closed unless `resolvectl`, `ip` and a
-   NOPASSWD policy covering exactly `resolvectl revert`, `ip route flush table`
-   and `ip rule del` are present; the check runs `sudo -n -l` only and performs
-   no rollback, and mutates no route, DNS, interface or sudoers entry.
+   installed. With ON, the deploy fails closed unless `resolvectl` and `ip`
+   exist and passwordless `sudo -n -l` succeeds while listing NOPASSWD entries
+   matching the exact argument boundaries of `resolvectl revert`,
+   `ip route flush table` and `ip rule del`; a PASSWD-only listing, or a
+   listing with lookalike commands (`revert-not-real`), is a failure. The check
+   executes no rollback and mutates no route, DNS, interface or sudoers entry.
    **Production action:** if this host relies on the guard, set the flag
    explicitly in `config.env` before deploying — the default is deliberately OFF
    and no automatic migration is performed.
-5. **File-log rotation.** Confirm `~/.hermes/argus-logrotate.conf` exists, names
-   only the configured `$HERMES_DIR/logs/*.log` surface, and uses daily rotation,
-   7 archived copies, a 50M threshold, `compress`, `delaycompress` and
-   `copytruncate`; the deploy validated it with a `logrotate --debug` dry-run.
-   Activate it in the host scheduler if the deploy could not write
-   `/etc/logrotate.d` (it prints the exact command). systemd journal retention,
-   Hermes log ownership and unrelated `/var/log` files stay external.
+5. **File-log rotation.** Confirm `~/.hermes/argus-logrotate.conf` exists and
+   was ACTIVATED as `/etc/logrotate.d/argus` (the deploy fails rather than
+   reporting success if it could not activate it), enumerates the Argus file
+   logs explicitly — Hermes-owned `agent.log` and `gateway.log` must not appear
+   in the rotated set — and uses `daily` with `rotate 7` and `maxsize 50M`,
+   `compress`, `delaycompress` and `copytruncate`; the deploy validated it with
+   a `logrotate --debug` dry-run. Confirm with the host scheduler that rotation
+   actually runs (`logrotate --debug /etc/logrotate.d/argus` must exit 0).
+   systemd journal retention, Hermes log ownership and unrelated `/var/log`
+   files stay external.
 6. **No production-side effects beyond the authorized deploy.** Do not enable
    linger, alter sudoers, change network policy or rotate live logs as part of
    this read-back unless the maintainer separately authorizes it.

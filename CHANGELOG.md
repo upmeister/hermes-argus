@@ -25,14 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconfigures Hermes.
 
 - One Argus-owned log-rotation policy for Argus file logs (RR1b,
-  host-readiness): daily, seven archived rotations, 50M threshold, `compress`,
+  host-readiness): `daily` with `rotate 7` and `maxsize 50M`, `compress`,
   `delaycompress` and append-safe `copytruncate`, generated at
   `~/.hermes/argus-logrotate.conf` and validated with a `logrotate --debug`
-  dry-run. It uses the host's existing `logrotate` scheduler — no second
-  scheduler is introduced — and a missing `logrotate` is an actionable install
-  failure rather than unbounded log growth. Scope is Argus file logs only:
-  systemd journal retention, Hermes log ownership and unrelated `/var/log`
-  files stay external.
+  dry-run. `maxsize` — not `size` — is deliberate: `size` after `daily` cancels
+  the periodic rotation entirely, which real `logrotate` reports as
+  "size overrides previously specified daily". The policy enumerates Argus
+  file logs explicitly rather than globbing `logs/*.log`, because that
+  directory also holds Hermes-owned logs (`agent.log`, `gateway.log`) that
+  Argus only reads. It uses the host's existing `logrotate` scheduler — no
+  second scheduler is introduced — and the deploy refuses to complete when
+  `logrotate` is missing or when neither the scheduler directory nor a
+  passwordless `sudo install` can activate the policy. systemd journal
+  retention, Hermes log ownership and unrelated `/var/log` files stay
+  external.
 
 ### Changed
 
@@ -44,11 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed nor scheduled — a previously generated line is recognised as
   Argus-owned and removed from the crontab rather than adopted into the managed
   block. With the flag ON the deploy fails closed unless the host has
-  `resolvectl`, `ip` and a narrowly sufficient NOPASSWD policy covering exactly
-  `resolvectl revert`, `ip route flush table` and `ip rule del`; the check runs
-  `sudo -n -l` only and executes no rollback, mutates no route, DNS, interface
-  or sudoers entry, and does not infer applicability from the number of
-  interfaces. Existing production users must set the flag explicitly before a
+  `resolvectl`, `ip` and a passwordless sudo policy that is actually NOPASSWD
+  and matches the exact argument boundaries of `resolvectl revert`,
+  `ip route flush table` and `ip rule del`; `sudo -n -l` must itself succeed
+  (a PASSWD-only listing is a failure, not a confirmation), the check executes
+  no rollback, mutates no route, DNS, interface or sudoers entry, and does not
+  infer applicability from the number of interfaces. Existing production users must set the flag explicitly before a
   future deployment; this change performs no migration.
 
 ### Fixed

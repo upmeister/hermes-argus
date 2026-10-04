@@ -35,9 +35,17 @@ assert_private_config() {
         echo "   Починка: chown $(id -un) $cfg" >&2
         return 1
     fi
-    mode=$(stat -c '%a' "$cfg" 2>/dev/null || echo "")
+    mode=$(stat -c '%a' "$cfg" 2>/dev/null || true)
+    # H1: недоступный режим = невозможно доказать безопасность = отказ.
+    # Раньше пустая строка трактовалась как «ок», и сбой чтения прав делал
+    # конфиг с секретами «безопасным».
+    if [ -z "$mode" ]; then
+        echo "❌ Не удалось определить режим доступа $cfg — доказательств, что" >&2
+        echo "   файл не читается посторонними, нет." >&2
+        return 1
+    fi
     # group/other-биты = доступ посторонним к секретам в файле.
-    if [ -n "$mode" ] && [ $(( 0$mode & 077 )) -ne 0 ]; then
+    if [ $(( 0$mode & 077 )) -ne 0 ]; then
         echo "❌ $cfg доступен группе/остальным (режим $mode)." >&2
         echo "   Починка: chmod 600 $cfg" >&2
         return 1
@@ -97,10 +105,15 @@ module_needs_user_units() {
         || module_enabled MODULE_TG_BOT || module_enabled MODULE_DISCORD_BOT
 }
 
-# Модули, которые читают Hermes-owned пути: ~/.hermes и её исполняемый файл
-# (H3). Argus не ставит и не запускает Hermes — он наблюдает существующий.
-module_needs_hermes() {
-    module_enabled MODULE_CORE || module_enabled MODULE_INTEGRATIONS
+# Модули, чей runtime использует интерпретатор Hermes venv (H3). Их юниты и
+# скрипты исполняются этим интерпретатором: CORE (hermes-gateway-pids.py
+# ре-exec'ится под ним), INTEGRATIONS (health-check читает конфиг Hermes),
+# TG_BOT (monitoring-bot-poller.service стартует venv-питоном).
+# DISCORD_BOT и LOCAL_SERVICES пользуются СВОИМ/системным python3 — требовать
+# от них Hermes venv было бы выходом за контракт.
+module_uses_hermes_venv() {
+    module_enabled MODULE_CORE || module_enabled MODULE_INTEGRATIONS \
+        || module_enabled MODULE_TG_BOT
 }
 
 echo "🔧 Развёртка hermes-argus"
@@ -169,6 +182,8 @@ deploy_template() {
 # H3 — цель liveness: непустой хост и целочисленный порт 1..65535.
 # Пустое значение, заданное оператором ОСОЗНАННО, ошибка, а не повод молча
 # подставить дефолт (иначе опечатка в конфиге выглядит как рабочая установка).
+# Десятичный домен ограничен длиной ДО арифметики: `[ 9223… -lt 1 ]` на
+# переполнении печатает «integer expected», но не делает условие ложным.
 preflight_target() {
     local ok=1
     if [ "$RAW_HERMES_HOST" = "__UNSET__" ]; then
@@ -177,11 +192,14 @@ preflight_target() {
         echo "❌ HERMES_HOST задан пустым — цель liveness не определена." >&2
         ok=0
     fi
-    if [ "$RAW_HERMES_PORT" != "__UNSET__" ] \
-       && { ! [[ "$RAW_HERMES_PORT" =~ ^[0-9]+$ ]] \
-            || [ "$RAW_HERMES_PORT" -lt 1 ] || [ "$RAW_HERMES_PORT" -gt 65535 ]; }; then
-        echo "❌ HERMES_PORT='$RAW_HERMES_PORT' — ожидалось целое 1..65535." >&2
-        ok=0
+    if [ "$RAW_HERMES_PORT" != "__UNSET__" ]; then
+        if ! [[ "$RAW_HERMES_PORT" =~ ^[0-9]{1,5}$ ]]; then
+            echo "❌ HERMES_PORT='$RAW_HERMES_PORT' — ожидалось целое 1..65535." >&2
+            ok=0
+        elif [ "$RAW_HERMES_PORT" -lt 1 ] || [ "$RAW_HERMES_PORT" -gt 65535 ]; then
+            echo "❌ HERMES_PORT='$RAW_HERMES_PORT' — вне диапазона 1..65535." >&2
+            ok=0
+        fi
     fi
     if [ "$ok" -ne 1 ]; then
         echo "   Починка: задай HERMES_HOST и HERMES_PORT в config.env." >&2
@@ -189,23 +207,33 @@ preflight_target() {
     fi
 }
 
-# H3 — Hermes-owned пути для модулей, которые их читают. Argus наблюдает
-# существующий Hermes и не имеет права его чинить.
+# H3 — Hermes venv для модулей, чей runtime его реально использует.
+# Argus наблюдает существующий Hermes и не имеет права его чинить.
+# Проверяется не только `-x`: исполняемый бит не доказывает, что интерпретатор
+# работает, поэтомуCapability проверяется безобидным запуском.
 preflight_hermes() {
-    module_needs_hermes || return 0
-    local names="" m bindir ok=1
-    for m in MODULE_CORE MODULE_INTEGRATIONS; do
+    module_uses_hermes_venv || return 0
+    local names="" m bindir ok=1 out
+    for m in MODULE_CORE MODULE_INTEGRATIONS MODULE_TG_BOT; do
         module_enabled "$m" && names="$names ${m#MODULE_}"
     done
     bindir="$HERMES_DIR/hermes-agent/venv/bin"
     [ -d "$HERMES_DIR/hermes-agent" ] || {
         echo "❌ Не найден $HERMES_DIR/hermes-agent (модули:$names)." >&2; ok=0; }
-    [ -x "$bindir/hermes" ] || {
-        echo "❌ Hermes-исполняемый $bindir/hermes отсутствует или не исполняем (модули:$names)." >&2
-        ok=0; }
-    [ -x "$bindir/python" ] || {
-        echo "❌ Интерпретатор Hermes $bindir/python отсутствует (модули:$names)." >&2
-        ok=0; }
+    if [ "$ok" -eq 1 ]; then
+        [ -x "$bindir/python" ] || {
+            echo "❌ Интерпретатор Hermes $bindir/python отсутствует или не исполняем (модули:$names)." >&2
+            ok=0; }
+        [ -x "$bindir/hermes" ] || {
+            echo "❌ Hermes-исполняемый $bindir/hermes отсутствует или не исполняем (модули:$names)." >&2
+            ok=0; }
+        if [ "$ok" -eq 1 ] \
+           && ! out=$("$bindir/python" -c 'import sys; sys.exit(0)' 2>&1); then
+            echo "❌ Интерпретатор Hermes не работает: $bindir/python → ${out:-нет вывода}" >&2
+            echo "   (модули:$names)" >&2
+            ok=0
+        fi
+    fi
     if [ "$ok" -ne 1 ]; then
         echo "   Argus не устанавливает Hermes. Поставь его своим штатным" >&2
         echo "   workflow и повтори deploy." >&2
@@ -239,7 +267,19 @@ preflight_user_manager() {
 
 # H4 — применимость сетевого guard'а. `sudo -n -l` ТОЛЬКО печатает право: ни
 # один откат при проверке не выполняется.
-NETGUARD_SUDO_REQUIRED=("resolvectl revert" "ip route flush table" "ip rule del")
+#
+# Доказательство требуем НЕ через подстроку, а по трём независимым признакам:
+#  1. сам список обязан УСПЕШНО завершиться (rc != 0 = неинтерактивного sudo нет);
+#  2. совпавшая строка обязана содержать NOPASSWD (PASSWD-политика просит пароль
+#     в cron, где его ввести некому — откат молча не сработает);
+#  3. граница аргументов закреплена: `revert`, `flush table`, `del` должны
+#     заканчиваться пробелом или концом строки, иначе «revert-not-real»
+#     и «delete-not-real» выглядят как применимая политика.
+NETGUARD_SUDO_PATTERNS=(
+    "resolvectl[[:space:]]+revert([[:space:]]|\$)"
+    "ip[[:space:]]+route[[:space:]]+flush[[:space:]]+table([[:space:]]|\$)"
+    "ip([[:space:]]+-[^[:space:]]+)*[[:space:]]+rule[[:space:]]+del([[:space:]]|\$)"
+)
 preflight_network_guard() {
     module_enabled MODULE_NETWORK_GUARD || return 0
     local cmd ok=1 listing
@@ -250,55 +290,103 @@ preflight_network_guard() {
     [ "$ok" -eq 1 ] || {
         echo "   Починка: поставь недостающее ПО или выключи MODULE_NETWORK_GUARD." >&2
         return 1; }
-    listing="$(sudo -n -l 2>/dev/null || true)"
-    for cmd in "${NETGUARD_SUDO_REQUIRED[@]}"; do
-        printf '%s\n' "$listing" | grep -qF "$cmd" || {
-            echo "❌ Нет неинтерактивного sudo для '$cmd' — откат молча не сработает." >&2
+    if ! listing="$(sudo -n -l 2>/dev/null)"; then
+        echo "❌ Неинтерактивный sudo недоступен (sudo -n -l завершился с ошибкой)." >&2
+        echo "   Откат guard'а в cron выполнялся бы с запросом пароля в никуда." >&2
+        echo "   Альтернатива: MODULE_NETWORK_GUARD=OFF." >&2
+        return 1
+    fi
+    for cmd in "${NETGUARD_SUDO_PATTERNS[@]}"; do
+        printf '%s\n' "$listing" | grep -Eq "NOPASSWD:.*${cmd}" || {
+            echo "❌ Нет NOPASSWD-политики под границу аргументов: ${cmd%%(*}" >&2
             ok=0; }
     done
     if [ "$ok" -ne 1 ]; then
-        echo "   Нужен NOPASSWD ровно на эти команды:" >&2
+        echo "   Нужен NOPASSWD ровно на эти команды и границы аргументов:" >&2
         echo "     <user> ALL=(root) NOPASSWD: /usr/bin/resolvectl revert *, /usr/sbin/ip route flush table *, /usr/sbin/ip rule del *" >&2
         echo "   Argus не правит sudoers. Альтернатива: MODULE_NETWORK_GUARD=OFF." >&2
         return 1
     fi
-    echo "   сетевой guard: команды и узкое NOPASSWD подтверждены (откат не выполнялся)."
+    echo "   сетевой guard: sudo -n -l успешен, NOPASSWD подтверждён по границам аргументов (откат не выполнялся)."
 }
 
 # H5 — Argus-owned политика ротации файловых логов. Использует уже стоящий на
 # хосте logrotate: второй планировщик или «служба» не появляются.
+#
+# Область действия — ЯВНЫЙ список файлов Argus, а не `logs/*.log`: каталог
+# логов делит Argus с Hermes, и его agent.log/gateway.log — собственность
+# Hermes, которую Argus только читает. Наложение ретенции/copytruncate на них
+# было бы выходом за ownership.
+ARGUS_LOG_FILES=(argus.log auto-remediate.log dashboard-liveness.log \
+                 fallback-tracker-v2.log gateway-liveness.log health-analyzer.log \
+                 health-check-v2.log heartbeat.log integration-discover.log \
+                 integration-discover-cron.log local-services.log network-guard.log \
+                 network-guard-cron.log service-status.log ssl-expiry.log \
+                 ssl-expiry-cron.log watchdog.log watchdog-cron.log \
+                 watchdog-health.log watchdog-health-cron.log)
 LOGROTATE_POLICY_NAME="argus-logrotate.conf"
-install_logrotate_policy() {
-    local policy="$HERMES_DIR/$LOGROTATE_POLICY_NAME" target="/etc/logrotate.d/argus"
+# Каталог планировщика logrotate. Дефолт — контрактный /etc/logrotate.d;
+# переопределяется окружением для интеграционных тестов и нестандартных
+# раскладок хоста (путь, не поведение).
+LOGROTATE_SCHED_DIR="${LOGROTATE_SCHED_DIR:-/etc/logrotate.d}"
+
+# Преflight ДО любых записей: контракт требует остановиться с инструкцией
+# ремонта, если существующий механизм хоста не может активировать политику.
+# Раньше проверка была в install_logrotate_policy — после записи юнитов.
+preflight_logrotate() {
     if ! command -v logrotate >/dev/null 2>&1; then
         echo "❌ logrotate не найден — файловые логи Argus росли бы без границы." >&2
         echo "   Починка: sudo apt-get install -y logrotate" >&2
         return 1
     fi
+    if [ -d "$LOGROTATE_SCHED_DIR" ] && [ -w "$LOGROTATE_SCHED_DIR" ]; then
+        return 0
+    fi
+    # Незаписываемый каталог — нормальная ситуация для обычного пользователя.
+    # Достаточно неинтерактивного sudo для install: проверяется безобидным
+    # `--help`, который ничего не пишет.
+    if sudo -n install --help >/dev/null 2>&1; then
+        echo "   logrotate: $LOGROTATE_SCHED_DIR не записываем — активация через sudo install"
+        return 0
+    fi
+    echo "❌ $LOGROTATE_SCHED_DIR недоступна для записи и неинтерактивного sudo" >&2
+    echo "   для install нет — политика не будет активирована в планировщике хоста." >&2
+    echo "   Починка (одна из):" >&2
+    echo "     sudo install -d -o $(id -un) -g $(id -gn) $LOGROTATE_SCHED_DIR" >&2
+    echo "     выполнить deploy от root" >&2
+    echo "   Argus не повышает привилегии сам и не правит sudoers." >&2
+    return 1
+}
+
+install_logrotate_policy() {
+    local policy="$HERMES_DIR/$LOGROTATE_POLICY_NAME" target="$LOGROTATE_SCHED_DIR/argus"
     mkdir -p "$HERMES_DIR/logs"
-    # su нужен, чтобы logrotate не пропускал логи из-за «bad ownership».
-    # Имя группы резолвится не везде — тогда директива просто не добавляется,
-    # и политика остаётся валидной.
-    local su_line="" grp
-    if grp=$(id -gn 2>/dev/null); then su_line="    su $(id -un) $grp"; fi
-    # daily + size: срабатывает то, что наступит раньше (size имеет приоритет,
-    # поэтому идёт после daily). copytruncate — логи дописываются работающим
-    # процессом, переименование их не освободит.
+    local f body=""
+    for f in "${ARGUS_LOG_FILES[@]}"; do
+        body+="$HERMES_DIR/logs/$f"$'\n'
+    done
+    # daily + maxsize: maxsize не отменяет периодическую ротацию, а лишь
+    # срабатывает раньше при переполнении (size после daily отменил бы daily).
+    # copytruncate — логи дописываются работающим процессом, переименование их
+    # не освободит.
     cat > "$policy" <<EOF
 # hermes-argus — ротация ТОЛЬКО файловых логов Argus (RR1b).
-# Создаётся deploy.sh; systemd-журналы, логи Hermes и чужие /var/log не входят.
-$HERMES_DIR/logs/*.log {
+# Создаётся deploy.sh; systemd-журналы, логи Hermes (agent.log, gateway.log)
+# и чужие /var/log не входят. Перечень — явный, не глоб-маска.
+$body{
     daily
     rotate 7
-    size 50M
+    maxsize 50M
     compress
     delaycompress
     copytruncate
     missingok
     notifempty
-$su_line
-}
 EOF
+    local grp su_line=""
+    if grp=$(id -gn 2>/dev/null); then su_line="    su $(id -un) $grp"; fi
+    printf '%s\n' "$su_line" >> "$policy"
+    printf '}\n' >> "$policy"
     chmod 0644 "$policy"
     local err
     if ! err=$(logrotate --debug --state /dev/null "$policy" 2>&1); then
@@ -306,13 +394,18 @@ EOF
         return 1
     fi
     DEPLOYED_PATHS+=("$policy")
-    if [ -d /etc/logrotate.d ] && [ -w /etc/logrotate.d ]; then
-        cp "$policy" "$target" && echo "   политика ротации установлена: $target"
-    else
-        echo "   политика ротации готова: $policy (парсер/dry-run пройден)"
-        echo "   Активация в планировщик хоста — вручную:"
-        echo "     sudo install -m 644 $policy $target"
+    if [ -w "$LOGROTATE_SCHED_DIR" ]; then
+        if ! cp "$policy" "$target"; then
+            echo "❌ Не удалось активировать политику: $target" >&2
+            return 1
+        fi
+    elif ! sudo -n install -m 0644 "$policy" "$target" 2>/dev/null; then
+        echo "❌ Не удалось активировать политику: $target" >&2
+        echo "   Преflight допускал sudo install, но фактическая активация не удалась." >&2
+        return 1
     fi
+    chmod 0644 "$target" 2>/dev/null || true
+    echo "   политика ротации установлена и активирована: $target"
 }
 
 echo ""
@@ -321,6 +414,7 @@ preflight_target || exit 1
 preflight_hermes || exit 1
 preflight_user_manager || exit 1
 preflight_network_guard || exit 1
+preflight_logrotate || exit 1
 
 # ── Манифесты модулей (ЯВНЫЕ списки — в целевых каталогах лежит и чужая
 #    инфраструктура, wildcard-раскладка по каталогу запрещена) ──────────────
@@ -958,9 +1052,4 @@ echo "   4. Включи вотчер конфига: systemctl --user enable --
 fi
 echo "   5. Тестовый прогон: $HOME_DIR/scripts/hermes-watchdog.sh"
 echo "   6. Политика ротации логов: $HERMES_DIR/$LOGROTATE_POLICY_NAME"
-if [ -w /etc/logrotate.d ] 2>/dev/null; then
-    echo "      (уже установлена в /etc/logrotate.d/argus)"
-else
-    echo "      Активация в планировщик хоста вручную:"
-    echo "      sudo install -m 644 $HERMES_DIR/$LOGROTATE_POLICY_NAME /etc/logrotate.d/argus"
-fi
+echo "      (активирована в $LOGROTATE_SCHED_DIR/argus)"
