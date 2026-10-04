@@ -57,10 +57,42 @@ fi
 cd "$REPO_DIR"
 
 # ── 3. Config ───────────────────────────────────────────────────────────────
+# H1 (RR1b, host-readiness): конфиг несёт секреты (WATCHDOG_BOT_TOKEN). .gitignore
+# удерживает его только от Git — права доступа он не проверяет. Создаём файл под
+# umask 077 (сразу 0600), существующий — проверяем ДО чтения. Проверка
+# намеренно продублирована из deploy.sh: общий файл-хелпер означал бы новый
+# production-файл и новый вход, а правило здесь и там должно быть одно и то же.
+assert_private_config() {
+    local cfg="$1" owner mode
+    if [ ! -f "$cfg" ]; then
+        echo "❌ Конфиг $cfg не является обычным файлом (или отсутствует)." >&2
+        echo "   Ожидается: $cfg — файл, созданный тобой." >&2
+        return 1
+    fi
+    if ! owner=$(stat -c '%U' "$cfg" 2>/dev/null); then
+        echo "❌ Не удалось определить владельца $cfg (нет stat?)." >&2
+        return 1
+    fi
+    if [ "$owner" != "$(id -un)" ]; then
+        echo "❌ Владелец $cfg — '$owner', а установка идёт от '$(id -un)'." >&2
+        echo "   Починка: chown $(id -un) $cfg" >&2
+        return 1
+    fi
+    mode=$(stat -c '%a' "$cfg" 2>/dev/null || echo "")
+    # group/other-биты = доступ посторонним к секретам в файле.
+    if [ -n "$mode" ] && [ $(( 0$mode & 077 )) -ne 0 ]; then
+        echo "❌ $cfg доступен группе/остальным (режим $mode)." >&2
+        echo "   Починка: chmod 600 $cfg" >&2
+        return 1
+    fi
+    return 0
+}
+
 if [ ! -f config.env ]; then
-    cp config/config.env.template config.env
+    ( umask 077; cp config/config.env.template config.env )
     echo ""
-    echo "✏️  Создан config.env из шаблона. Минимум для старта:"
+    echo "✏️  Создан config.env из шаблона (режим 0600, секреты не читают другие)."
+    echo "   Минимум для старта:"
     echo "      WATCHDOG_BOT_TOKEN  — токен бота мониторинга (@BotFather)"
     echo "      WATCHDOG_CHAT_ID    — твой Telegram ID (алерты и команды)"
     echo "   Опционально сейчас: HERMES_HOST (если netdata/dashboard биндятся на"
@@ -73,6 +105,9 @@ if [ ! -f config.env ]; then
             ${EDITOR:-nano} config.env
         fi
     fi
+elif ! assert_private_config config.env; then
+    echo "   Установка остановлена: конфиг с секретами доступен посторонним."
+    exit 1
 fi
 
 if grep -qE '^WATCHDOG_BOT_TOKEN=""' config.env; then

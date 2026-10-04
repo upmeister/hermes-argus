@@ -53,7 +53,8 @@ maintainer read an incomplete project state.
 | [DEBT-018](#debt-018) | Public GitHub workflow differs from production | Needs decision | Choose public timing/dedup/recovery/pin behavior. |
 | [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Open | Maintainer selects a stale-evidence policy before RR3. |
 | [DEBT-020](#debt-020) | Discord deepcheck calls a TG_BOT-owned executable | Open | Maintainer decides payload ownership vs. unsupported-module reporting. |
-| [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Selected in RR1b host readiness | Enforce owner-only config handling and read back the installer gate. |
+| [DEBT-010](#debt-010) | Host lifecycle/privilege assumptions unadmitted | Resolved in RR1b source | Deploy and read back; production still needs its own preflight verification. |
+| [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Resolved in RR1b source | Deploy and read back the installer config gate. |
 
 ## Open finding cards
 
@@ -289,13 +290,24 @@ maintainer read an incomplete project state.
 - **Closure evidence:** Every selected host prerequisite has tested availability/error behavior and a production read-back.
 - **Release disposition:** Public installer prerequisite.
 
-- **Status:** Selected in RR1b host-readiness contract; implementation pending.
+- **Status:** RESOLVED by the RR1b host-readiness contract (source; not deployed).
 - **Source:** production audit D5 and ownership map.
 - **Evidence:** production separately supplies logrotate, linger and passwordless
-  sudo. CORE assumes dashboard availability and includes a DNS/routing guard
-  reflecting personal network policy; deploy does not establish these owners.
-- **Follow-up:** implement the bounded preflight, explicit network-guard
-  applicability and Argus-owned log rotation in the selected contract.
+  sudo. CORE assumed dashboard availability and included a DNS/routing guard
+  reflecting personal network policy; deploy established none of these owners.
+- **Resolution:** `deploy.sh` now runs a fail-closed host preflight before it
+  writes anything — reachable user-manager before user units, honest `Linger`
+  reporting (never enabling it), Hermes home/executable for modules that read
+  Hermes-owned paths, validated `HERMES_HOST`/`HERMES_PORT` taken from the raw
+  config rather than after default substitution, and one Argus-owned logrotate
+  policy validated by a `logrotate --debug` dry-run. The network guard moved
+  behind `MODULE_NETWORK_GUARD` (OFF by default) with a narrow NOPASSWD
+  applicability check that executes no rollback.
+- **Boundary honored:** no linger auto-enable, no sudoers change, no route/DNS
+  mutation, no dashboard start, no Hermes install, no new scheduler.
+- **Re-entry trigger:** a new host prerequisite, a new optional module needing
+  Hermes-owned paths, or an operator decision to migrate existing production to
+  the explicit network-guard flag.
 - **Trigger:** RR1b; no public clean-install readiness claim before disposition.
 - **Scope guard:** no global sudo grants, host-network redesign or application
   backup installation by default.
@@ -493,13 +505,18 @@ maintainer read an incomplete project state.
 - **Closure evidence:** fresh creation is owner-only; unsafe mode/owner fixtures fail before sourcing; a secret canary is absent from output, argv and receipts.
 - **Release disposition:** Public installer prerequisite.
 
-- **Status:** Selected; implementation pending.
+- **Status:** RESOLVED by the RR1b host-readiness contract (source; not deployed).
 - **Source:** production dependency audit D5 and installer review.
-- **Evidence:** .gitignore prevents tracking but install.sh currently copies the
-  template without an explicit mode/owner gate, and deploy.sh sources a supplied
-  config file.
-- **Boundary:** no credential-store redesign and no ownership change for
-  Hermes .env.
+- **Evidence:** .gitignore prevents tracking but install.sh copied the template
+  without an explicit mode/owner gate, and deploy.sh sourced a supplied config
+  file.
+- **Resolution:** `install.sh` creates `config.env` under `umask 077` and checks
+  an existing one; `deploy.sh` applies the same check before sourcing. A
+  group/other-readable or foreign-owned file stops the run naming only the
+  violated property and a repair command — configuration values are never
+  echoed, and the H1 probe asserts a secret canary is absent from output.
+- **Boundary honored:** no credential-store redesign and no ownership change for
+  Hermes `.env`.
 
 ## Resolved source changes with pending deployment
 

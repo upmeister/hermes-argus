@@ -200,11 +200,12 @@ The maintainer-selected sequence is:
    collector with honest failure semantics, shared bot handler payload owned
    independently of TG_BOT with an interpreter import check, and a
    module-neutral installer post-deploy gate. It is not deployed yet.
-3. **RR1b host readiness — current contract.** The selected follow-up covers
-   private deploy-time config, Hermes/user-manager preflight, dashboard target
-   applicability, explicit network-guard selection and bounded Argus log
+3. **RR1b host readiness — implemented, awaiting review.** The follow-up slice
+   covers private deploy-time config, Hermes/user-manager preflight, dashboard
+   target applicability, explicit network-guard selection and bounded Argus log
    rotation
-   (handoffs/rr1b-host-readiness-contract.md). Hermes L3
+   ([contract](handoffs/rr1b-host-readiness-contract.md)); implementation branch
+   `feat/rr1b-host-readiness` from baseline `7245cf9`. Not deployed. Hermes L3
    job/model/destination setup remains the separate DEBT-009 track.
 4. **RR1c — versioned installation/update — planned.** Explicit stable/edge
    selection and a bounded update path.
@@ -316,7 +317,7 @@ RR0a/RR0b: closed (PR #51 / PR #63)
 RR0c: closed (PR #65); maintainer reports deployment
 RR1: current distribution gate; RR1a closed (PR #68)
 RR1b module/runtime truth: merged PR #71; deployment pending
-RR1b host readiness: current selected contract; builder ready
+RR1b host readiness: implemented (baseline 7245cf9); review pending; not deployed
 distribution contract: incomplete
 public RC: gated by RR1/RR2/RR3
 ```

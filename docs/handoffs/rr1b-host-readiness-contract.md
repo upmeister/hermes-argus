@@ -1,6 +1,6 @@
 # RR1b contract — installer preflight, private config and host applicability
 
-Status: **SELECTED / BUILDER READY**
+Status: **IMPLEMENTED / AWAITING REVIEWER VERDICT**
 
 This is the second focused RR1b slice. The preceding module/runtime truth
 slice is merged as PR #71 and remains not deployed. This contract covers the
@@ -10,6 +10,10 @@ of B1–B4.
 Implementation baseline: `4b74471389eaa8d6b0d4bd4f748a2c5a13524f4d` (`main`,
 PR #71 merged). The builder must refresh `origin/main` and record the exact
 baseline before coding.
+
+Actual baseline used: `7245cf98076e7b643c835ad1fd0205198a0d586b` (`main` with
+PR #71 merged plus the two documentation commits that followed it), branch
+`feat/rr1b-host-readiness`. Not deployed.
 
 Focused reviewer: **Codex**.
 

@@ -21,9 +21,9 @@ Current selected task:
 
 - **RR1b host readiness** — private config, Hermes/user-manager preflight,
   network-guard applicability and bounded log rotation; reviewer Codex.
-  Builder implementation is authorized from
-  4b74471389eaa8d6b0d4bd4f748a2c5a13524f4d under
-  docs/handoffs/rr1b-host-readiness-contract.md.
+  Implemented on `feat/rr1b-host-readiness` from baseline `7245cf9`
+  ([contract](rr1b-host-readiness-contract.md)); the implementation PR awaits
+  the reviewer verdict and maintainer merge. Not deployed.
 
 RR1a is merged, not deployed. Subsequent RR1 subdivisions and native Cronping
 Telegram setup through its provider bot are

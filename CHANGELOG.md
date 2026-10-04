@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The bootstrap now refuses to complete on a host it cannot honestly support
+  (RR1b, host-readiness). `deploy.sh` runs a fail-closed preflight before it
+  writes anything, and reports each outcome as an actionable stop rather than a
+  successful install: the deploy-time `config.env` must be a regular file owned
+  by the installing user with no group/other permissions (`install.sh` creates
+  it owner-only and checks an existing one — values are never echoed); modules
+  that install systemd *user* units require a reachable user manager, and reboot
+  persistence is claimed only when `Linger` is actually `yes` (linger is never
+  enabled automatically — the manual command is printed); modules that consume
+  Hermes-owned paths require a real `~/.hermes/hermes-agent` with an executable
+  Hermes and interpreter, and an explicitly empty `HERMES_HOST` or a
+  non-integer/out-of-range `HERMES_PORT` is an error rather than a silent
+  fallback to the historical default. Argus still never installs, starts or
+  reconfigures Hermes.
+
+- One Argus-owned log-rotation policy for Argus file logs (RR1b,
+  host-readiness): daily, seven archived rotations, 50M threshold, `compress`,
+  `delaycompress` and append-safe `copytruncate`, generated at
+  `~/.hermes/argus-logrotate.conf` and validated with a `logrotate --debug`
+  dry-run. It uses the host's existing `logrotate` scheduler — no second
+  scheduler is introduced — and a missing `logrotate` is an actionable install
+  failure rather than unbounded log growth. Scope is Argus file logs only:
+  systemd journal retention, Hermes log ownership and unrelated `/var/log`
+  files stay external.
+
+### Changed
+
+- The network guard is now an explicit opt-in instead of part of CORE (RR1b,
+  host-readiness). `network-guard.sh` encodes the maintainer's route/DNS policy
+  and rolls back with non-interactive `sudo`, so it is not a portable default
+  dependency: it moved behind `MODULE_NETWORK_GUARD`, OFF in the public
+  template and in the deploy defaults. With the flag OFF the guard is neither
+  installed nor scheduled — a previously generated line is recognised as
+  Argus-owned and removed from the crontab rather than adopted into the managed
+  block. With the flag ON the deploy fails closed unless the host has
+  `resolvectl`, `ip` and a narrowly sufficient NOPASSWD policy covering exactly
+  `resolvectl revert`, `ip route flush table` and `ip rule del`; the check runs
+  `sudo -n -l` only and executes no rollback, mutates no route, DNS, interface
+  or sudoers entry, and does not infer applicability from the number of
+  interfaces. Existing production users must set the flag explicitly before a
+  future deployment; this change performs no migration.
+
 ### Fixed
 
 - Gateway liveness detection no longer infers process identity from an `argv`
