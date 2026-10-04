@@ -46,9 +46,9 @@ Hermes or the maintainer's egress stack and does not grant privileges.
 | --- | --- | --- | --- |
 | H1 | `install.sh` copies `config.env`; `.gitignore` only prevents Git tracking | Create/check deploy-time config as a regular file owned by the invoking user with no group/other permissions before sourcing it; reject unsafe files without printing values | A fresh config is created owner-only; a group-readable, world-readable or foreign-owned fixture stops with an actionable error and no secret canary in output/argv |
 | H2 | CORE and optional bot/discovery units use the user systemd manager; bootstrap calls `systemctl --user` unconditionally | Preflight the actual selected user-unit surfaces before writing/enabling them; require a usable user manager and report linger/reboot persistence explicitly; never enable linger automatically | A fixture with no user bus fails before the unit gate; a fixture with `Linger=no` cannot report reboot-persistent readiness; a usable manager reaches the existing unit path |
-| H3 | Hermes executable/home and dashboard target are assumed by deployed templates and liveness scripts | For modules that consume Hermes-owned paths, verify the configured home, executable/interpreter capability and configured host/port shape; do not install, start or reconfigure Hermes | Missing Hermes executable or malformed target fails preflight with the selected module named; a stopped dashboard remains a runtime observation, not a bootstrap false success |
+| H3 | Hermes executable/home and dashboard target are assumed by deployed templates and liveness scripts | For modules that consume Hermes-owned paths, verify the configured home, executable/interpreter capability and a non-empty host plus integer port 1–65535; do not install, start or reconfigure Hermes | Missing Hermes executable or malformed target fails preflight with the selected module named; a stopped dashboard remains a runtime observation, not a bootstrap false success |
 | H4 | `network-guard.sh` encodes the maintainer's interface/routing policy and uses non-interactive sudo for rollback | Make the existing guard an explicit `MODULE_NETWORK_GUARD` opt-in, OFF in the public template/defaults. When ON, preflight its command and narrowly required non-interactive privilege applicability; when OFF, do not schedule or freshly install it | CORE+INTEGRATIONS with the default config has no network-guard cron line; ON without the required host policy fails closed; ON with a fixture policy schedules exactly one guard job |
-| H5 | Argus cron jobs append to `~/.hermes/logs`; production rotation is external and absent from manifests | Install one Argus-owned logrotate policy for Argus file logs, with bounded retention and no claim over systemd journal policy; verify the policy can be parsed by the host scheduler | A clean install has the policy and a successful dry-run for the configured Hermes home; missing/unusable logrotate is an actionable install failure; no secret values enter the policy or receipt |
+| H5 | Argus cron jobs append to `~/.hermes/logs`; production rotation is external and absent from manifests | Install one Argus-owned logrotate policy for Argus file logs: daily, 7 archived rotations, rotate at 50M, compress with delayed compression, and append-safe `copytruncate`; make no claim over systemd journal policy | A clean install has the policy and a successful dry-run for the configured Hermes home; missing/unusable logrotate is an actionable install failure; no secret values enter the policy or receipt |
 
 Every acceptance rule above is about installation truth. Runtime health checks
 remain responsible for reporting a stopped dashboard or a later network
@@ -94,9 +94,10 @@ unit, validate the resolved home and the executable/interpreter path that the
 installed surface will use. The check may report the discovered Hermes version,
 but it does not select a release channel or enforce the RR1c version policy.
 
-Validate `HERMES_HOST` and `HERMES_PORT` as the liveness target used by the
-deployed templates. A live HTTP request is not required for installation and a
-stopped dashboard is not repaired here. Argus may install its declared
+Validate `HERMES_HOST` as non-empty and `HERMES_PORT` as an integer from 1
+through 65535, and use those values as the liveness target in the deployed
+templates. A live HTTP request is not required for installation and a stopped
+dashboard is not repaired here. Argus may install its declared
 fallback/drop-in templates, but must not install Hermes, resolve Hermes
 credentials, start or rewrite a Hermes-owned base service, or silently replace
 the configured target with the historical default port.
@@ -111,9 +112,12 @@ the guard is deployed and scheduled only when this flag is ON.
 
 When the flag is ON, fail closed unless the host has the commands used by the
 guard and a narrowly sufficient non-interactive privilege policy for its
-rollback operations. The preflight must not mutate routes, DNS, interfaces or
-sudoers. It must not grant global sudo, install the smart-proxy/tunnel stack or
-infer applicability from the presence of multiple interfaces. Existing
+rollback operations: `resolvectl revert`, `ip route flush table` and
+`ip rule del`, with the exact argument boundary checked without executing a
+rollback.
+The preflight must not mutate routes, DNS, interfaces or sudoers. It must not
+grant global sudo, install the smart-proxy/tunnel stack or infer applicability
+from the presence of multiple interfaces. Existing
 production users who rely on the guard must set the flag explicitly before a
 future deployment; this contract does not perform that migration.
 
@@ -127,10 +131,10 @@ flag and the resulting schedule separately from CORE.
 Use the distribution's existing `logrotate` mechanism rather than adding a
 second scheduler or a long-running rotation service. Install one clearly
 Argus-owned policy for the configured `$HERMES_DIR/logs/*.log` files. The
-policy must use explicit bounded retention, compression and append-safe
-rotation (`copytruncate` or an equivalent proven for these cron writers), and
-must tolerate absent/empty files. The chosen retention and size bounds must be
-written in the contract receipt and public deployment checklist.
+policy must use the fixed bounds of daily rotation, seven archived copies, a
+50M size threshold, `compress`, `delaycompress` and `copytruncate`, and must
+tolerate absent/empty files. The receipt and public deployment checklist must
+repeat these bounds.
 
 The policy covers Argus file logs only. systemd journal retention, Hermes log
 ownership and unrelated `/var/log` files remain external. If installing the

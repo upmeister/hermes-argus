@@ -84,8 +84,9 @@ production host:
    the host-specific non-interactive privilege applicability without changing
    routes, DNS or sudoers during read-back.
 4. **File-log rotation.** Confirm the Argus-owned logrotate policy names only
-   the configured ~/.hermes/logs/*.log surface, has the declared retention and
-   size bounds, and passes a scheduler dry-run. systemd journal policy remains
+   the configured ~/.hermes/logs/*.log surface, uses daily rotation, 7
+   archived copies, a 50M threshold, compression with delayed compression and
+   copytruncate, and passes a scheduler dry-run. systemd journal policy remains
    external.
 5. **No production-side effects beyond the authorized deploy.** Do not enable
    linger, alter sudoers, change network policy or rotate live logs as part of
