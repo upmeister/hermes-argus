@@ -55,7 +55,7 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> RR0b dead/duplicate runtime removal             DONE / PR #63
  -> RR0c public defaults/naming migration            DONE / PR #65
  -> RR1a managed cron ownership                     DONE / PR #68
- -> RR1b dependency/preflight/config and module payloads
+ -> RR1b dependency/preflight/config and module payloads  (CURRENT CONTRACT)
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (English + Russian)
@@ -196,6 +196,9 @@ The maintainer-selected sequence is:
    dependencies, Analyzer collector and shared bot payloads, optional Netdata
    and GitHub reporting, safe private config, user-manager/privilege/network
    applicability, log rotation and truthful L3 setup instructions.
+   A first bounded candidate is prepared in
+   [the RR1b module-runtime truth contract](handoffs/rr1b-module-runtime-truth-contract.md),
+   and is now selected for the next builder handoff.
 3. **RR1c — versioned installation/update — planned.** Explicit stable/edge
    selection and a bounded update path.
 4. **RR1d — uninstall/resource migration — planned.** Remove only Argus-owned
@@ -206,6 +209,32 @@ heartbeat policy and the Hermes L3 job have independent setup owners. The
 current public baseline must not silently require the maintainer's complete
 host stack. These later choices need focused contracts; RR1a installs none of
 that infrastructure.
+
+RR1a is merged but **not deployed**, per the maintainer. Its production rollout
+is independent of selecting the next builder task.
+
+Accepted clarification: **Netdata remains an optional external enhancement**
+for Analyzer trends, not the source of native watchdog resource metrics.
+[Monitoring-source map](monitoring-sources.md). The remaining mandatory
+quick-check/UI assumptions are [DEBT-007](BACKLOG.md#debt-007).
+
+### Revision under discussion — RR1b selected; heartbeat remains separate
+
+The maintainer requested a separate Cronping -> bot Argus delivery cycle and
+public heartbeat setup documentation. The existing RR1b umbrella should be
+split before implementation: runtime dependency truth/payloads, installer
+preflight/config, and host lifecycle/setup each need bounded acceptance. RR1b
+module-runtime truth is selected in its own contract; the other subdivisions
+remain unselected.
+Heartbeat placement/selection/delivery is a parallel planning track; its
+receiver must remain available when the monitored host fails.
+
+The [heartbeat/RR1 discussion report](research/2026-10-03-heartbeat-delivery-roadmap.md)
+records accepted preferences, source evidence, the proposed sequence and open
+decisions. Bot Argus is preferred; the hosting and delivery-error policy still
+need decisions. RR1c/RR1d remain versioned lifecycle and limited uninstall;
+RR2/RR3 remain localization and release acceptance. This section is a proposal,
+not admission for a new notification subsystem or a combined installer refactor.
 
 ## RR2 — runtime localization
 

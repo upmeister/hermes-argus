@@ -197,7 +197,12 @@ a week after PR #49 had already merged.
 
 Non-blocking findings from a builder or reviewer go into
 [`docs/BACKLOG.md`](docs/BACKLOG.md) in the same handoff or review update,
-with their source, reason for deferral, and re-entry trigger.
+using its human-readable format: impact, status, source, next action/owner,
+closure evidence and release disposition. Link the specific card when an ID
+appears in a receipt; an ID alone is not a finding description. Keep the vault
+project backlog index synchronized for the maintainer. Distinguish merged
+resolution from deployment verification; GitHub Issues may be linked separately
+and must not be confused with local `DEBT-*` identifiers.
 
 ## Invariants
 
@@ -264,7 +269,7 @@ R1c DONE
  -> RR0b DONE / PR #63
  -> RR0c DONE / PR #65
  -> RR1a managed cron ownership                 DONE / PR #68
- -> RR1b dependency/preflight/config and reproducible module payloads
+ -> RR1b dependency/preflight/config and reproducible module payloads  (CURRENT CONTRACT)
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (en + ru)
@@ -278,9 +283,19 @@ release-readiness task, not permission to duplicate documentation.
 RR1 planning must read
 `docs/research/2026-10-03-production-deployment-dependencies.md`. Production
 contains external Netdata, egress, log rotation and Hermes L3 setup that Argus
-does not currently provision. RR1a is merged; no further RR1 slice is
-admitted until the maintainer selects a bounded contract for it (RR1b
-dependency/preflight/config and module payloads is next).
+does not currently provision. RR1a is merged; RR1b is the selected next
+bounded contract. No implementation or deployment is authorized by this
+documentation update.
+
+The selected contract is docs/handoffs/rr1b-module-runtime-truth-contract.md.
+Documentation-surface sync status is recorded in docs/VAULT-SYNC.md.
+
+Netdata is an optional external enhancement; watchdog OS metrics do not depend
+on its trends. Remaining mandatory quick-check/UI assumptions are backlog
+work, not an implicit permission to install Netdata. Before selecting further
+RR1/heartbeat contracts, read
+`docs/research/2026-10-03-heartbeat-delivery-roadmap.md`; its proposed subdivisions
+and receiver placement require discussion. RR1a is not deployed yet.
 
 ## References
 
@@ -289,6 +304,7 @@ dependency/preflight/config and module payloads is next).
 - `docs/handoffs/README.md` — active implementation authority.
 - `docs/BACKLOG.md` — deferred findings and maintenance queue.
 - `docs/DEPLOY_CHECKLIST.md` — production deployment procedure.
+- `docs/VAULT-SYNC.md` — documentation-surface ownership and sync status.
 - `docs/adr/0001-integration-evidence-policy.md` — evidence/verdict policy.
 - `docs/adr/0002-hermes-discovery-sync-boundary.md` — historical bridge record.
 - `CHANGELOG.md` — Keep a Changelog user-facing history.

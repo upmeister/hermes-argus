@@ -2,6 +2,47 @@
 
 Status: **RESEARCH COMPLETE / RR1 PLANNING INPUT**
 
+## Follow-up after RR1a — current installer planning input
+
+The original production snapshot below is retained with its recorded baseline.
+RR1a is now merged as [PR #68](https://github.com/upmeister/hermes-argus/pull/68),
+but **not deployed**, per the maintainer. Its managed-cron/count/restore source
+changes resolve D4 in the repository; runtime read-back remains an operator
+task. Do not describe either the new cron or its removal of old recovery as
+verified on production yet.
+
+The maintainer accepted Netdata as an **optional extension**. The
+[monitoring-source map](../monitoring-sources.md) shows that watchdog metrics
+come from the OS and Netdata's actual data consumer is Analyzer's trend block.
+Removing unintended quick-check/UI requirements is still source work.
+
+The later heartbeat-backends audit reports separation of the dedicated
+heartbeat and infrastructure clones. That supersedes the earlier legacy Git
+directory observation below; other config-reader fallbacks are not thereby
+verified. [Heartbeat review](2026-10-03-heartbeat-delivery-roadmap.md) preserves
+that audit's facts separately from open receiver/config decisions.
+
+This report is the consolidated input for a **later installer contract**.
+It does not admit all these changes into one implementation task:
+
+| Installer prerequisite / outcome | Remaining work | Tracking |
+| --- | --- | --- |
+| Optional Netdata/GitHub | Resolve absent/configured/broken reporting before adding package offers | [DEBT-007](../BACKLOG.md#debt-007) |
+| Analyzer collector / standalone Discord | Supply correct files and actual-interpreter imports | [DEBT-008](../BACKLOG.md#debt-008) |
+| Full L3 setup | Generic operator-created Hermes job/model/destination recipe | [DEBT-009](../BACKLOG.md#debt-009) |
+| Host lifecycle and elevated actions | Dashboard applicability, linger, sudo, network policy and bounded rotation | [DEBT-010](../BACKLOG.md#debt-010) |
+| Provider setup claims | Correct unimplemented provisioning/native-alert statements | [DEBT-012](../BACKLOG.md#debt-012) |
+| Configured Telegram transport | Apply runtime proxy in every existing affected sender | [DEBT-013](../BACKLOG.md#debt-013) |
+| External heartbeat secret channel | Keep ping tokens out of child argv | [DEBT-014](../BACKLOG.md#debt-014) |
+| Explicit heartbeat backend/delivery setup | Later heartbeat cycle with public guide and independent receiver | [DEBT-016](../BACKLOG.md#debt-016), [DEBT-017](../BACKLOG.md#debt-017) |
+| Public GitHub behavior | Reconcile actual shipped workflow and claimed alert behavior | [DEBT-018](../BACKLOG.md#debt-018) |
+| Installer itself | Module-specific OS/interpreter/Hermes preflight, private config, module-neutral post-deploy gates | RR1b contract to be selected |
+
+Netdata may be offered/documented without making it a baseline dependency.
+No replacement time-series stack or personal proxy infrastructure is required
+by this decision. The current installer still needs versioned-update and
+bounded-uninstall work under RR1c/RR1d after payload/ownership are settled.
+
 ## Evidence and limits
 
 Read-only inspection of the maintainer's production deployment on 2026-10-03
@@ -220,7 +261,8 @@ RR2: runtime i18n
 RR3: clean-install/upgrade/uninstall acceptance
 ```
 
-Only RR1a is the current builder contract. RR1b items are admission findings
-and planning requirements, not approval for a broad dependency installer or
-automatic Netdata/network/L3 provisioning. Non-blocking findings and release
-prerequisites are indexed in [the backlog](../BACKLOG.md).
+This sequence records the audit's original planning result. RR1a is now
+complete in source, not deployed. No next builder contract is selected;
+RR1b subdivision and the separate heartbeat cycle are
+[discussion input](2026-10-03-heartbeat-delivery-roadmap.md). Findings and
+release prerequisites are indexed in [the backlog](../BACKLOG.md).
