@@ -36,7 +36,7 @@ It does not admit all these changes into one implementation task:
 | External heartbeat secret channel | Keep ping tokens out of child argv | [DEBT-014](../BACKLOG.md#debt-014) |
 | Explicit heartbeat backend/delivery setup | Later heartbeat cycle with native provider-bot setup guide | [DEBT-016](../BACKLOG.md#debt-016), [DEBT-017](../BACKLOG.md#debt-017) |
 | Public GitHub behavior | Reconcile actual shipped workflow and claimed alert behavior | [DEBT-018](../BACKLOG.md#debt-018) |
-| Installer itself | Module-specific OS/interpreter/Hermes preflight, private config, module-neutral post-deploy gates | Frozen RR1b module-runtime contract in progress; broader installer task later |
+| Installer itself | Module-specific OS/interpreter/Hermes preflight, private config, module-neutral post-deploy gates | RR1b module/runtime truth merged in PR #71; host-readiness contract selected |
 
 Netdata may be offered/documented without making it a baseline dependency.
 No replacement time-series stack or personal proxy infrastructure is required
@@ -262,7 +262,8 @@ RR3: clean-install/upgrade/uninstall acceptance
 ```
 
 This sequence records the audit's original planning result. RR1a is now
-complete in source, not deployed. RR1b module-runtime implementation is in
-progress; the broader subdivision and separate heartbeat setup cycle are
-[discussion input](2026-10-03-heartbeat-delivery-roadmap.md). Findings and
-release prerequisites are indexed in [the backlog](../BACKLOG.md).
+complete in source, not deployed. RR1b module/runtime truth is merged as PR #71
+and the selected host-readiness subdivision now covers private config,
+user-manager/privilege/network applicability and bounded log rotation. Hermes
+L3 setup and the separate heartbeat cycle remain independent discussion/input
+tracks. Findings and release prerequisites are indexed in the backlog.

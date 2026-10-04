@@ -129,20 +129,21 @@ Cronping receiver contract must validate its own provider assumptions.
 ## Proposed next work, for discussion
 
 Keep RR1a complete and keep its deployment as a separate operator task.
-RR1b module-runtime truth is selected and implementation is in progress under
-its frozen B1–B4 contract. The wider RR1b umbrella still needs focused slices. Suggested
-focused slices, with final IDs/order chosen when contracts are accepted:
+RR1b module/runtime truth is merged as PR #71 under its frozen B1–B4
+contract and remains not deployed. The selected host-readiness contract covers
+private config, user-manager/privilege/network applicability and bounded log
+rotation. Hermes L3 setup and heartbeat delivery remain separate focused slices.
 
-1. **Runtime dependency truth:** optional Netdata/GitHub expectations, actual
-   Analyzer collector, independent Discord payload/imports, consistent loading
-   of the configured delivery route. Split further if owners/acceptance do not
-   fit one local patch ([DEBT-007/008/013](../BACKLOG.md)).
-2. **Installer preflight/config:** module-specific commands and interpreter
-   imports, Hermes home/version/capabilities, module-neutral gates, private
-   config, sudo contract. Use the dependency report as an explicit checklist.
-3. **Host lifecycle/setup:** user manager/linger, bounded log rotation,
-   dashboard expectation and network-guard applicability, plus operator-owned
-   L3 setup. Do not make the personal egress stack a public prerequisite.
+1. **Runtime dependency truth:** optional Netdata/GitHub expectations,
+   the Analyzer collector and independent Discord payload/imports are merged
+   in PR #71; configured delivery and later heartbeat work remain separate.
+2. **Host readiness (selected next):** user manager/linger, private config,
+   Hermes/dashboard applicability, bounded log rotation and explicit
+   network-guard privilege policy. The selected contract is
+   ../handoffs/rr1b-host-readiness-contract.md.
+3. **Hermes L3 setup:** keep the operator-created job/model/destination recipe
+   separate under DEBT-009. Do not make the personal egress stack a public
+   prerequisite.
 4. **Heartbeat cycle in parallel:** use native Cronping Telegram delivery and
    supply public setup/verification documentation. Existing integration IDs
    may be linked by a later bounded Management API task; user bot activation

@@ -19,9 +19,11 @@ current selected-task pointer.
 
 Current selected task:
 
-- **RR1b** — module dependency truth and payload completeness; reviewer Codex.
-  Builder implementation is in progress on `feat/rr1b-module-runtime-truth`
-  (baseline `9f64fa4`, PR #71); review, merge and deploy remain pending.
+- **RR1b host readiness** — private config, Hermes/user-manager preflight,
+  network-guard applicability and bounded log rotation; reviewer Codex.
+  Builder implementation is authorized from
+  4b74471389eaa8d6b0d4bd4f748a2c5a13524f4d under
+  docs/handoffs/rr1b-host-readiness-contract.md.
 
 RR1a is merged, not deployed. Subsequent RR1 subdivisions and native Cronping
 Telegram setup through its provider bot are
@@ -43,6 +45,7 @@ Completed:
 - RR0b dead/duplicate runtime removal — **DONE / PR #63**
 - RR0c public defaults/naming migration — **DONE / PR #65**
 - RR1a managed cron ownership — **DONE / PR #68**
+- RR1b module dependency truth and payload completeness — **DONE / PR #71; not deployed**
 - MCP disabled-server reporting — **DONE / PR #59**
 - canonical gateway matcher maintenance fix — **DONE / PR #60**
 
@@ -61,8 +64,8 @@ MCP disabled-server merged = 3551b08 (PR #59, 2026-10-02)
 gateway matcher merged = b39b256 (PR #60, 2026-10-02)
 RR0b merged = 72a801f (PR #63, 2026-10-02; implementation 4fa5473, remediation 78fea55)
 RR0c merged = 2588581 (PR #65, 2026-10-02; implementation e271317, remediation 0823885)
-RR1b merged = (pending; implementation branch `feat/rr1b-module-runtime-truth`
-from baseline 9f64fa4)
+RR1b module/runtime truth merged = 4b74471389eaa8d6b0d4bd4f748a2c5a13524f4d
+(PR #71; implementation head plus bounded remediations; not deployed)
 RR1a merged = 9aaf0a5 (PR #68, 2026-10-03; implementation e14df0f, remediations 88c8237 / 8679158)
 ```
 
@@ -83,7 +86,8 @@ R1c DONE
  -> RR0b DONE / PR #63
  -> RR0c DONE / PR #65
  -> RR1a managed cron ownership                 DONE / PR #68
- -> RR1b dependency/preflight/config and module payloads  (CURRENT CONTRACT)
+ -> RR1b module/runtime truth                    DONE / PR #71
+ -> RR1b host readiness                          (CURRENT CONTRACT)
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n: en + ru
@@ -119,10 +123,15 @@ dependency-on-Hermes list is `docs/research/hermes-argus-seams.md`.
 
 Current:
 
-- rr1b-module-runtime-truth-contract.md — implemented, awaiting merge;
-  production risk high; maintainer merge after reviewer PASS.
+- rr1b-host-readiness-contract.md — selected / builder ready; production risk
+  high; maintainer merge after reviewer PASS.
 
-RR1b/c/d require later focused contracts. Planning input:
+Completed:
+
+- rr1b-module-runtime-truth-contract.md — B1–B4 merged as PR #71; deployment
+  remains pending.
+
+RR1c/d require later focused contracts. Planning input:
 [production deployment dependencies](../research/2026-10-03-production-deployment-dependencies.md).
 
 Completed:

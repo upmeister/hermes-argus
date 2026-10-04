@@ -69,6 +69,28 @@ production host:
    missing-import warning. If it reports that the import check itself could not
    run, the deploy fails and the module must not be started.
 
+## RR1b host-readiness read-back (after the host-readiness deploy)
+
+1. **Private config.** Confirm the deploy-time config is a regular file owned
+   by the installation user with no group/other permissions. The installer
+   must reject an unsafe fixture before sourcing it and must not print its
+   values.
+2. **Hermes and user manager.** Read back the resolved Hermes home, executable
+   and configured dashboard target. Confirm the user manager is usable and
+   record linger as yes, no or unknown; do not claim reboot persistence when it
+   is not yes.
+3. **Network guard.** Record MODULE_NETWORK_GUARD separately from CORE. When
+   OFF, confirm no managed network-guard cron entry was added. When ON, record
+   the host-specific non-interactive privilege applicability without changing
+   routes, DNS or sudoers during read-back.
+4. **File-log rotation.** Confirm the Argus-owned logrotate policy names only
+   the configured ~/.hermes/logs/*.log surface, has the declared retention and
+   size bounds, and passes a scheduler dry-run. systemd journal policy remains
+   external.
+5. **No production-side effects beyond the authorized deploy.** Do not enable
+   linger, alter sudoers, change network policy or rotate live logs as part of
+   this read-back unless the maintainer separately authorizes it.
+
 ## RR1a cron read-back (after the first RR1a deploy)
 
 1. Confirm the managed block is present exactly once:

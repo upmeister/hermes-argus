@@ -55,7 +55,8 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> RR0b dead/duplicate runtime removal             DONE / PR #63
  -> RR0c public defaults/naming migration            DONE / PR #65
  -> RR1a managed cron ownership                     DONE / PR #68
- -> RR1b dependency/preflight/config and module payloads  (IN PROGRESS)
+ -> RR1b module/runtime truth                         DONE / PR #71
+ -> RR1b host readiness                                CURRENT CONTRACT
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (English + Russian)
@@ -192,19 +193,22 @@ The maintainer-selected sequence is:
    variables, adoption of previously generated lines, and retirement of
    the whole-user count heuristic and backup restore.
    [Builder contract](handoffs/rr1a-managed-cron-contract.md).
-2. **RR1b — dependencies/preflight/config — first slice implemented.** The
-   bounded module-runtime truth contract
-   ([contract](handoffs/rr1b-module-runtime-truth-contract.md)) is implemented
-   and awaiting merge: expectation-aware optional Netdata/GitHub reporting,
-   one canonical Analyzer collector with honest failure semantics, shared bot
-   handler payload owned independently of `TG_BOT` with an interpreter import
-   check, and a module-neutral installer post-deploy gate. Remaining RR1b
-   umbrella items — safe private config, user-manager/privilege/network
-   applicability, log rotation and truthful L3 setup instructions — are **not**
-   covered by this slice and still need their own contract.
-3. **RR1c — versioned installation/update — planned.** Explicit stable/edge
+2. **RR1b — dependency/preflight/config — first slice DONE / PR #71.** The
+   module-runtime truth contract
+   (handoffs/rr1b-module-runtime-truth-contract.md) merged
+   expectation-aware optional Netdata/GitHub reporting, one canonical Analyzer
+   collector with honest failure semantics, shared bot handler payload owned
+   independently of TG_BOT with an interpreter import check, and a
+   module-neutral installer post-deploy gate. It is not deployed yet.
+3. **RR1b host readiness — current contract.** The selected follow-up covers
+   private deploy-time config, Hermes/user-manager preflight, dashboard target
+   applicability, explicit network-guard selection and bounded Argus log
+   rotation
+   (handoffs/rr1b-host-readiness-contract.md). Hermes L3
+   job/model/destination setup remains the separate DEBT-009 track.
+4. **RR1c — versioned installation/update — planned.** Explicit stable/edge
    selection and a bounded update path.
-4. **RR1d — uninstall/resource migration — planned.** Remove only Argus-owned
+5. **RR1d — uninstall/resource migration — planned.** Remove only Argus-owned
    resources, preserve external services and finish any supported naming handoff.
 
 Netdata, operator proxy infrastructure, Telegram/Discord accounts, external
@@ -224,11 +228,9 @@ quick-check/UI assumptions are [DEBT-007](BACKLOG.md#debt-007).
 ### Revision under discussion — RR1b selected; heartbeat remains separate
 
 The maintainer selected native Cronping Telegram delivery through the provider bot and
-public heartbeat setup documentation. The existing RR1b umbrella should be
-split before implementation: runtime dependency truth/payloads, installer
-preflight/config, and host lifecycle/setup each need bounded acceptance. RR1b
-module-runtime truth is selected in its own contract; the other subdivisions
-remain unselected.
+public heartbeat setup documentation. RR1b is now split into bounded slices:
+module/runtime truth is merged as PR #71, and host readiness is the current
+selected contract. Hermes L3 setup remains separate under DEBT-009.
 Heartbeat setup/delivery and backend selection are a separate track. There is
 no Argus webhook or external-VPS prerequisite.
 
@@ -313,7 +315,8 @@ R2c.1: closed (PR #49) and confirmed against stable v0.21.5
 RR0a/RR0b: closed (PR #51 / PR #63)
 RR0c: closed (PR #65); maintainer reports deployment
 RR1: current distribution gate; RR1a closed (PR #68)
-RR1b: selected frozen contract; builder implementation in progress
+RR1b module/runtime truth: merged PR #71; deployment pending
+RR1b host readiness: current selected contract; builder ready
 distribution contract: incomplete
 public RC: gated by RR1/RR2/RR3
 ```

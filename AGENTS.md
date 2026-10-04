@@ -269,7 +269,8 @@ R1c DONE
  -> RR0b DONE / PR #63
  -> RR0c DONE / PR #65
  -> RR1a managed cron ownership                 DONE / PR #68
- -> RR1b dependency/preflight/config and reproducible module payloads  (IN PROGRESS)
+ -> RR1b module/runtime truth                         DONE / PR #71
+ -> RR1b host readiness                                CURRENT CONTRACT
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (en + ru)
@@ -283,11 +284,12 @@ release-readiness task, not permission to duplicate documentation.
 RR1 planning must read
 `docs/research/2026-10-03-production-deployment-dependencies.md`. Production
 contains external Netdata, egress, log rotation and Hermes L3 setup that Argus
-does not currently provision. RR1a is merged; RR1b is the selected next
-bounded contract. No implementation or deployment is authorized by this
-documentation update.
+does not currently provision. RR1a is merged; RR1b B1–B4 are merged as PR #71 and remain not deployed.
+The selected next implementation is the host-readiness contract below.
+Assignment of that docs contract authorizes the builder task branch/PR; it does
+not authorize deployment.
 
-The selected contract is docs/handoffs/rr1b-module-runtime-truth-contract.md.
+The selected contract is docs/handoffs/rr1b-host-readiness-contract.md.
 Documentation-surface sync status is recorded in docs/VAULT-SYNC.md.
 
 Netdata is an optional external enhancement; watchdog OS metrics do not depend
