@@ -1,6 +1,6 @@
 # Heartbeat delivery and RR1 review — 2026-10-03
 
-Status: **DISCUSSION INPUT / NO IMPLEMENTATION CONTRACT SELECTED**
+Status: **DISCUSSION INPUT / HEARTBEAT CONTRACT NOT SELECTED**
 
 ## Decisions and provenance
 

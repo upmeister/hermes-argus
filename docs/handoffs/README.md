@@ -19,15 +19,8 @@ current selected-task pointer.
 
 Current selected task:
 
-- **None selected.** RR0a/RR0b/RR0c and RR1a are complete; RR1b
-  (dependency/preflight/config and module payloads) is the next slice and
-  requires its own maintainer-selected contract. Planning input:
-  `docs/research/2026-10-03-production-deployment-dependencies.md`.
-
-Prepared candidate (not selected):
-
-- `rr1b-module-runtime-truth-contract.md` — optional dependency truth and
-  payload completeness; reviewer Codex; maintainer selection still required.
+- **RR1b** — module dependency truth and payload completeness; reviewer Codex.
+  The contract is selected and ready for builder handoff.
 
 RR1a is merged, not deployed. Subsequent RR1 subdivisions and the requested
 Cronping -> bot Argus heartbeat cycle are
@@ -87,7 +80,7 @@ R1c DONE
  -> RR0b DONE / PR #63
  -> RR0c DONE / PR #65
  -> RR1a managed cron ownership                 DONE / PR #68
- -> RR1b dependency/preflight/config and module payloads  (candidate prepared)
+ -> RR1b dependency/preflight/config and module payloads  (CURRENT CONTRACT)
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n: en + ru
@@ -123,11 +116,7 @@ dependency-on-Hermes list is `docs/research/hermes-argus-seams.md`.
 
 Current:
 
-- None selected. RR1b is the next slice and needs its own contract.
-
-Prepared candidate:
-
-- `rr1b-module-runtime-truth-contract.md` — not selected; production risk high;
+- rr1b-module-runtime-truth-contract.md — selected; production risk high;
   maintainer merge after reviewer PASS.
 
 RR1b/c/d require later focused contracts. Planning input:

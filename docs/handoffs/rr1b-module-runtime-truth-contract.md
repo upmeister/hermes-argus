@@ -1,9 +1,10 @@
 # RR1b contract — module dependency truth and payload completeness
 
-Status: **PROPOSED / NOT SELECTED**
+Status: **SELECTED / READY FOR BUILDER**
 
-This is the next candidate after RR1a. It is prepared for maintainer selection;
-it does not authorize implementation, merge or deployment.
+This is the selected next task after RR1a. The documentation PR containing this
+contract may merge; implementation still requires a builder task branch/PR and
+separate maintainer merge authority.
 
 ## Authority and delivery
 

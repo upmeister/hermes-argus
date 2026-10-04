@@ -55,7 +55,7 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> RR0b dead/duplicate runtime removal             DONE / PR #63
  -> RR0c public defaults/naming migration            DONE / PR #65
  -> RR1a managed cron ownership                     DONE / PR #68
- -> RR1b dependency/preflight/config and module payloads  (candidate prepared)
+ -> RR1b dependency/preflight/config and module payloads  (CURRENT CONTRACT)
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (English + Russian)
@@ -198,7 +198,7 @@ The maintainer-selected sequence is:
    applicability, log rotation and truthful L3 setup instructions.
    A first bounded candidate is prepared in
    [the RR1b module-runtime truth contract](handoffs/rr1b-module-runtime-truth-contract.md),
-   but it is not selected yet.
+   and is now selected for the next builder handoff.
 3. **RR1c — versioned installation/update — planned.** Explicit stable/edge
    selection and a bounded update path.
 4. **RR1d — uninstall/resource migration — planned.** Remove only Argus-owned
@@ -218,12 +218,14 @@ for Analyzer trends, not the source of native watchdog resource metrics.
 [Monitoring-source map](monitoring-sources.md). The remaining mandatory
 quick-check/UI assumptions are [DEBT-007](BACKLOG.md#debt-007).
 
-### Revision under discussion — no new contract selected
+### Revision under discussion — RR1b selected; heartbeat remains separate
 
 The maintainer requested a separate Cronping -> bot Argus delivery cycle and
 public heartbeat setup documentation. The existing RR1b umbrella should be
 split before implementation: runtime dependency truth/payloads, installer
-preflight/config, and host lifecycle/setup each need bounded acceptance.
+preflight/config, and host lifecycle/setup each need bounded acceptance. RR1b
+module-runtime truth is selected in its own contract; the other subdivisions
+remain unselected.
 Heartbeat placement/selection/delivery is a parallel planning track; its
 receiver must remain available when the monitored host fails.
 
