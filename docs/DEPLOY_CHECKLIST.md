@@ -54,9 +54,15 @@ production host:
    exists and was refreshed by this deploy, and that deploy reported the
    `discord-venv` import check. If it warns about missing imports, install them
    into the venv the unit runs and re-check.
-5. **Core-off installs (only if `MODULE_CORE=OFF`).** The installer must print
-   that the CORE syntax check was skipped, and must reach the completion text.
-   It must not print a raw `No such file or directory` from `bash -n`.
+5. **Core-off installs (only if `MODULE_CORE=OFF`).** The installer must reach
+   its completion text and print the artifact list it checked; that list must
+   contain the enabled modules' artifacts and must not contain CORE's watchdog.
+   A raw `No such file or directory` from `bash -n` indicates a gate that never
+   ran correctly.
+6. **Discord interpreter check (only if `MODULE_DISCORD_BOT=ON`).** Deploy must
+   print either `✅ discord-venv импортирует discord + yaml` or a named
+   missing-import warning. If it reports that the import check itself could not
+   run, the deploy fails and the module must not be started.
 
 ## RR1a cron read-back (after the first RR1a deploy)
 

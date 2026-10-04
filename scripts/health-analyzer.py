@@ -52,6 +52,10 @@ def collect_metrics():
     """
     if not METRICS_SCRIPT.is_file():
         return "", f"коллектор не установлен по каноническому пути: {METRICS_SCRIPT}"
+    if not os.access(METRICS_SCRIPT, os.X_OK):
+        # Запуск через `bash` обошёл бы бит исполнения: коллектор без права
+        # исполнения — это ненастроенный сборочный путь, а не «сработавший bash».
+        return "", f"коллектор не исполняемый: {METRICS_SCRIPT}"
     try:
         result = subprocess.run(
             ["bash", str(METRICS_SCRIPT)],

@@ -40,9 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assuming CORE (RR1b). `install.sh` used to run a CORE-only syntax check on
   `hermes-watchdog.sh` unconditionally, so a clean `MODULE_CORE=OFF` install
   probed a file the module never installs — printing no result and leaking a
-  raw `No such file or directory` from bash. The gate now says which modules it
-  checked, skips the CORE artifact when CORE is disabled, and still fails loudly
-  when CORE is enabled but its artifact is missing.
+  raw `No such file or directory` from bash. The gate now reads each module
+  flag exactly the way `deploy.sh` does (the same `config.env`, shell semantics
+  and defaults, so a commented `MODULE_CORE="OFF"  # …` template line is read
+  correctly), verifies that each *enabled* module's own artifact was deployed,
+  propagates syntax failures instead of letting `bash -n … && echo` swallow
+  them, and reports which artifacts it checked. `deploy.sh` likewise no longer
+  silently skips a manifest source that is missing from the repository: a
+  module enabled without its payload is a failed deploy, not a successful one.
 
 ### Changed
 

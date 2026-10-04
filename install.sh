@@ -103,15 +103,36 @@ fi
 echo ""
 echo "🚦 Post-deploy gates:"
 
-# B4 (RR1b): гейт следует ВЫБРАННЫМ модулям, а не только CORE. Значение флага
-# читается из того же config.env, который уже отработал в deploy.sh, поэтому
-# источник истины один; сам config.env не source'ится — его секреты не должны
-# попадать в окружение bootstrap'а.
-module_flag() {   # module_flag MODULE_CORE -> ON|OFF (пусто = дефолт deploy.sh)
-    local key="$1" val
-    val=$(sed -n "s/^[[:space:]]*${key}=\(.*\)\$/\1/p" config.env 2>/dev/null | tail -1)
-    val=$(printf '%s' "$val" | tr -d '"'"'"'[:space:]')
-    printf '%s' "${val:-ON}"
+# B4 (RR1b): гейт следует ВЫБРАННЫМ модулям, а не только CORE.
+#
+# Значение модуля читается РОВНО так, как его читает deploy.sh — источником
+# конфигурации в ПОД-шелле. Собственный разбор строки здесь недопустим: в
+# штатном шаблоне `MODULE_CORE="OFF"   # комментарий` — это корректная строка
+# с комментарием, и наивный парсер склеивал его со значением
+# (`OFF#watchdog`), из-за чего CORE=OFF-установка требовала несуществующий
+# watchdog. Секреты config.env при этом не попадают в окружение bootstrap'а:
+# под-шелл с источником сразу завершается.
+module_flag() {   # module_flag MODULE_CORE -> ON|OFF, как увидит deploy.sh
+    ( set +e; set -a; . ./config.env >/dev/null 2>&1; set +a; printf '%s' "${!1:-ON}" )
+}
+
+module_on() { [ "$(module_flag "$1")" = "ON" ]; }
+
+# Артефакт, который включённый модуль обязан оставить после deploy. Имена — те
+# же, что в манифестах deploy.sh; это проверка «поставили то, что просили», а не
+# новый реестр зависимостей (deploy_scripts сам падает на отсутствующем
+# источнике манифеста).
+module_artifact() {
+    case "$1" in
+        MODULE_CORE)            echo "$HOME/scripts/hermes-watchdog.sh" ;;
+        MODULE_INTEGRATIONS)    echo "$HOME/scripts/integration-discover-wrapper.sh" ;;
+        MODULE_ANALYZER)        echo "$HOME/.hermes/scripts/health-analyzer.py" ;;
+        MODULE_HEARTBEAT)       echo "$HOME/scripts/heartbeat.sh" ;;
+        MODULE_TG_BOT)          echo "$HOME/.hermes/scripts/monitoring-bot-poller.py" ;;
+        MODULE_DISCORD_BOT)     echo "$HOME/scripts/discord-bot.py" ;;
+        MODULE_LOCAL_SERVICES)  echo "$HOME/.hermes/scripts/service-status-snapshot.py" ;;
+        *) echo "" ;;
+    esac
 }
 
 echo -n "   маркеры: "
@@ -120,17 +141,40 @@ if grep -rn '@[A-Z_]*@' "$HOME/scripts/" "$HOME/.hermes/scripts/" 2>/dev/null | 
 fi
 echo "чисто"
 
-if [ "$(module_flag MODULE_CORE)" != "OFF" ]; then
-    # Включённый CORE: артефакт обязателен — его отсутствие это сбой deploy,
-    # а не «модуль выключен».
-    if [ ! -f "$HOME/scripts/hermes-watchdog.sh" ]; then
-        echo "   синтаксис CORE: ❌ MODULE_CORE включён, но $HOME/scripts/hermes-watchdog.sh нет"
+CHECKED=""
+for MODULE in MODULE_CORE MODULE_INTEGRATIONS MODULE_ANALYZER MODULE_HEARTBEAT \
+             MODULE_TG_BOT MODULE_DISCORD_BOT MODULE_LOCAL_SERVICES; do
+    module_on "$MODULE" || continue
+    ARTIFACT="$(module_artifact "$MODULE")"
+    [ -n "$ARTIFACT" ] || continue
+    # Включённый модуль без своего артефакта — сбой развёртки, а не «модуль выключен».
+    if [ ! -f "$ARTIFACT" ]; then
+        echo "   ❌ $MODULE включён, но не развёрнут: $ARTIFACT"
         exit 1
     fi
-    echo -n "   синтаксис CORE: "
-    bash -n "$HOME/scripts/hermes-watchdog.sh" && echo "ok"
+    # Ошибка синтаксиса обязана ронять установку. В `bash -n ... && echo` левая
+    # часть не прерывает `set -e`, и битый скрипт проходил гейт насквозь.
+    case "$ARTIFACT" in
+        *.sh)
+            if ! bash -n "$ARTIFACT"; then
+                echo "   ❌ синтаксис $ARTIFACT не прошёл проверку"
+                exit 1
+            fi
+            ;;
+        *.py)
+            if ! python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' "$ARTIFACT"; then
+                echo "   ❌ синтаксис $ARTIFACT не прошёл проверку"
+                exit 1
+            fi
+            ;;
+    esac
+    CHECKED="$CHECKED ${ARTIFACT##*/}"
+done
+
+if [ -n "$CHECKED" ]; then
+    echo "   артефакты модулей:$CHECKED — ok"
 else
-    echo "   синтаксис CORE: модуль выключен — проверка не требуется"
+    echo "   артефакты модулей: включённых модулей нет — проверка не требуется"
 fi
 
 echo ""

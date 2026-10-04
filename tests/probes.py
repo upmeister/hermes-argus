@@ -6004,57 +6004,68 @@ def probe_rr1b_analyzer_collector_ownership(tmp: Path):
     check("rr1b_analyzer_collector_ownership", not problems, f"problems={problems}")
 
 
+def _rr1b_run_analyzer(tmp: Path, tag: str, script: str | None,
+                       prior_state: str | None, executable: bool = True
+                       ) -> tuple[subprocess.CompletedProcess, Path]:
+    """Прогон health-analyzer.py --update в изолированном HERMES_HOME.
+    script=None — коллектора нет; executable=False — есть, но без бита
+    исполнения; prior_state — заранее записанное health-state.json."""
+    home = tmp / f"rr1b-an-home-{tag}"
+    logs = home / ".hermes" / "logs"
+    scripts = home / ".hermes" / "scripts"
+    logs.mkdir(parents=True, exist_ok=True)
+    scripts.mkdir(parents=True, exist_ok=True)
+    # Соседние модули копируются из кандидата — импорты health-analyzer'а
+    # берутся из его же каталога.
+    for name in ("health-analyzer.py", "health_decay.py",
+                 "health_patterns.py", "health_netdata.py"):
+        shutil.copy2(REPO / "scripts" / name, scripts / name)
+    if script is not None:
+        collector = write(scripts / "collect-metrics.sh", script)
+        collector.chmod(0o755 if executable else 0o644)
+    if prior_state is not None:
+        write(logs / "health-state.json", prior_state)
+    env = _probe_subprocess_env(home, {
+        "HERMES_HOME": str(home / ".hermes"),
+        "USERPROFILE": str(home),
+        "PYTHONIOENCODING": "utf-8",
+        # UTF-8-режим повторяет поведение Linux-CI: коллектор печатает
+        # кириллицу, и без него windows-локаль cp1251 роняет декодирование.
+        "PYTHONUTF8": "1",
+    })
+    result = subprocess.run(
+        [sys.executable, str(scripts / "health-analyzer.py"), "--update"],
+        cwd=REPO, env=env, capture_output=True, text=True, timeout=120)
+    return result, logs / "health-state.json"
+
+
+_RR1B_COLLECTOR_CASES = {
+    "missing": None,
+    "nonzero": "printf 'partial\\n'\nexit 3\n",
+    "empty": "exit 0\n",
+    "ok": _ANALYZER_OK_SCRIPT,
+}
+
+
 def probe_rr1b_analyzer_collector_failure(tmp: Path):
     """RR1b B2 §6.3: сбой коллектора ≠ чистое сканирование. Прежде
     collect_metrics() не смотрела на код возврата, а отсутствующий файл давал
     пустой stdout без исключения (bash → 127, stderr проглатывался): пустой
     вывод уходил в find_issues() как «проблем нет» и записывался в
-    health-state.json. Теперь ошибка сбора явна, а состояние не обновляется."""
-    scripts_for = {
-        "missing": None,
-        "nonzero": "printf 'partial\\n'\nexit 3\n",
-        "empty": "exit 0\n",
-        "ok": _ANALYZER_OK_SCRIPT,
-    }
-    results = {}
-    for tag, script in scripts_for.items():
-        home = tmp / f"rr1b-an-home-{tag}"
-        logs = home / ".hermes" / "logs"
-        scripts = home / ".hermes" / "scripts"
-        logs.mkdir(parents=True, exist_ok=True)
-        scripts.mkdir(parents=True, exist_ok=True)
-        # Соседние модули копируются из кандидата — импорты health-analyzer'а
-        # берутся из его же каталога.
-        for name in ("health-analyzer.py", "health_decay.py",
-                     "health_patterns.py", "health_netdata.py"):
-            shutil.copy2(REPO / "scripts" / name, scripts / name)
-        if script is not None:
-            write(scripts / "collect-metrics.sh", script)
-        env = _probe_subprocess_env(home, {
-            "HERMES_HOME": str(home / ".hermes"),
-            "USERPROFILE": str(home),
-            "PYTHONIOENCODING": "utf-8",
-            # UTF-8-режим повторяет поведение Linux-CI: коллектор печатает
-            # кириллицу, и без него windows-локаль cp1251 роняет декодирование.
-            "PYTHONUTF8": "1",
-        })
-        results[tag] = (
-            subprocess.run(
-                [sys.executable, str(scripts / "health-analyzer.py"), "--update"],
-                cwd=REPO, env=env, capture_output=True, text=True, timeout=120),
-            logs / "health-state.json",
-        )
+    health-state.json. При отказе состояние не создаётся вовсе."""
+    results = {tag: _rr1b_run_analyzer(tmp, f"fresh-{tag}", script, None)
+               for tag, script in _RR1B_COLLECTOR_CASES.items()}
 
-    def failed(tag: str) -> bool:
+    def rejected(tag: str) -> bool:
         r, state = results[tag]
         return (r.returncode == 2
                 and "ANALYZER_COLLECTOR_FAILED" in r.stderr
                 and "МЕТРИКИ НЕ СОБРАНЫ" in r.stdout
                 and not state.exists())
 
-    missing_ok = failed("missing")
-    nonzero_ok = failed("nonzero")
-    empty_ok = failed("empty")
+    missing_ok = rejected("missing")
+    nonzero_ok = rejected("nonzero")
+    empty_ok = rejected("empty")
     r_ok, state_ok = results["ok"]
     ok_ok = (r_ok.returncode == 0 and state_ok.exists()
              and "STATE_UPDATED" in r_ok.stderr)
@@ -6063,29 +6074,73 @@ def probe_rr1b_analyzer_collector_failure(tmp: Path):
           f"missing={missing_ok}(rc={results['missing'][0].returncode}) "
           f"nonzero={nonzero_ok}(rc={results['nonzero'][0].returncode}) "
           f"empty={empty_ok}(rc={results['empty'][0].returncode}) "
-          f"ok={ok_ok}(rc={r_ok.returncode}) err={results['empty'][0].stderr[-140:]!r}")
+          f"ok={ok_ok}(rc={r_ok.returncode})")
+
+
+def probe_rr1b_analyzer_collector_not_executable(tmp: Path):
+    """RR1b B2 §6.3: неисполняемый коллектор и побайтовое сохранение
+    состояния. Запуск через `bash` обходит бит исполнения, поэтому проверка
+    обязана быть до сбора; отказ не должен двигать last_check (ревью F4)."""
+    prior = ('{"version": 1, "last_check": "2026-01-01T00:00:00+00:00",'
+             ' "check_count": 7, "issues": {}}\n')
+    results = {tag: _rr1b_run_analyzer(tmp, f"prior-{tag}", script, prior)
+               for tag, script in _RR1B_COLLECTOR_CASES.items() if tag != "ok"}
+    if os.name != "nt":
+        results["not-exec"] = _rr1b_run_analyzer(
+            tmp, "prior-not-exec", _ANALYZER_OK_SCRIPT, prior, executable=False)
+        not_exec_note = ""
+    else:
+        not_exec_note = "os.access(X_OK) не моделируется на Windows — проверит CI"
+
+    def preserved(tag: str) -> bool:
+        r, state = results[tag]
+        return (r.returncode == 2
+                and "ANALYZER_COLLECTOR_FAILED" in r.stderr
+                and state.exists()
+                and state.read_text(encoding="utf-8") == prior)
+
+    missing_ok = preserved("missing")
+    nonzero_ok = preserved("nonzero")
+    empty_ok = preserved("empty")
+    not_exec_ok = ("not-exec" not in results
+                   or (preserved("not-exec")
+                       and "не исполняемый" in results["not-exec"][0].stderr))
+    check("rr1b_analyzer_collector_not_executable",
+          missing_ok and nonzero_ok and empty_ok and not_exec_ok,
+          f"missing={missing_ok} nonzero={nonzero_ok} empty={empty_ok} "
+          f"not_exec={not_exec_ok} {not_exec_note} "
+          f"err={results.get('not-exec', results['missing'])[0].stderr[-140:]!r}")
 
 
 def probe_rr1b_discord_only_payload(tmp: Path):
     """RR1b B3 §6.4: Discord-only развёртка не зависит от TG_BOT и не от
     старой установленной копии. discord-bot.py делает `import webhook`; файл
     ставил только TG_BOT, поэтому чистая DISCORD_BOT=ON установка падала на
-    ImportError (или, хуже, цепляла чужую копию). Проверка импортов идёт ТЕМ ЖЕ
-    интерпретатором, что запускает юнит."""
-    home = tmp / "rr1b-deploy-home-discord"   # тот же HOME, что у _rr1b_deploy
-    call_log = tmp / "rr1b-discord-venv-calls.log"
-    # Готовый venv-интерпретатор: ветка создания не нужна, а проверка импортов
-    # должна пройти именно через него (как в discord-bot.service).
-    venv_bin = home / ".hermes" / "discord-venv" / "bin"
-    venv_bin.mkdir(parents=True, exist_ok=True)
-    _write_argv_shim(venv_bin, "python",
-                     f'printf \'%s\\n\' "$*" >> "{call_log.as_posix()}"\n'
-                     f'exec "{_rr1b_sh_exec(sys.executable)}" "$@"\n')
-    result, home = _rr1b_deploy(tmp, "discord", _rr1b_modules(discord=True))
-    handler = home / "scripts" / "webhook.py"
-    tg_copy = home / ".hermes" / "scripts" / "webhook.py"
-    deployed_ok = (result.returncode == 0 and handler.is_file()
-                   and not tg_copy.exists()
+    ImportError (или, хуже, цепляла чужую копию).
+
+    Проверка преrequisтов должна быть НАСТОЯЩИМ импортом под интерпретатором
+    юнита: find_spec доказывал лишь находимость пакета, а невозможность
+    выполнить саму проверку не должна превращаться в «зелёный» вывод (ревью F3).
+    """
+    real_py = _rr1b_sh_exec(sys.executable)
+
+    def deploy_discord(tag: str, venv_body: str) -> tuple[subprocess.CompletedProcess, Path, str]:
+        home = tmp / f"rr1b-deploy-home-{tag}"
+        call_log = tmp / f"rr1b-discord-{tag}-calls.log"
+        venv_bin = home / ".hermes" / "discord-venv" / "bin"
+        venv_bin.mkdir(parents=True, exist_ok=True)
+        _write_argv_shim(venv_bin, "python", venv_body(call_log))
+        result, home = _rr1b_deploy(tmp, tag, _rr1b_modules(discord=True))
+        calls = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
+        return result, home, calls
+
+    # 1. Интерпретатор рабочий, но discord не установлен → предупреждение.
+    res_ok, home_ok, calls_ok = deploy_discord(
+        "discord", lambda log: f'printf \'%s\\n\' "$*" >> "{log.as_posix()}"\n'
+                               f'exec "{real_py}" "$@"\n')
+    handler = home_ok / "scripts" / "webhook.py"
+    deployed_ok = (res_ok.returncode == 0 and handler.is_file()
+                   and not (home_ok / ".hermes" / "scripts" / "webhook.py").exists()
                    and "@HERMES_BIN@" not in handler.read_text(encoding="utf-8"))
     # Реальный импорт общей библиотеки тем же поиском, что делает discord-bot:
     # sys.path[0] = каталог самого скрипта.
@@ -6093,31 +6148,50 @@ def probe_rr1b_discord_only_payload(tmp: Path):
         [sys.executable, "-c",
          "import sys; sys.path.insert(0, %r); import webhook; "
          "print(sorted(n for n in vars(webhook) if n.startswith('handle_')))"
-         % str(home / "scripts")],
+         % str(home_ok / "scripts")],
         cwd=REPO, capture_output=True, text=True, timeout=60)
-    import_ok = (imported.returncode == 0 and "handle_watchdog_status" in imported.stdout)
-    # Проверка импортов выполнена интерпретатором юнита и покрывает ровно те
-    # импорты, которые реально нужны обработчикам (discord + yaml на реестр).
-    calls = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
+    import_ok = imported.returncode == 0 and "handle_watchdog_status" in imported.stdout
+    missing_ok = (res_ok.returncode == 0 and "не импортирует" in res_ok.stdout
+                  and "✅ discord-venv" not in res_ok.stdout
+                  and "discord" in calls_ok)
+
+    # 2. Проверка не выполнилась (битый интерпретатор) → провал преrequisта,
+    #    а НЕ «зелёный» вывод.
+    res_bad, _, calls_bad = deploy_discord(
+        "discord-bad", lambda log: f'printf \'%s\\n\' "$*" >> "{log.as_posix()}"\n'
+                                  'exit 7\n')
+    failed_check_ok = (res_bad.returncode != 0
+                       and "✅ discord-venv" not in res_bad.stdout
+                       and "Проверка импортов" in res_bad.stdout
+                       and calls_bad.startswith("-c"))
+
     deploy_text = (REPO / "deploy.sh").read_text(encoding="utf-8")
     webhook_src = (REPO / "scripts" / "webhook.py").read_text(encoding="utf-8")
     discord_src = (REPO / "scripts" / "discord-bot.py").read_text(encoding="utf-8")
-    checked_ok = ("find_spec" in calls and '"discord"' in calls and '"yaml"' in calls
-                  # интерпретатор проверки — ровно тот, что в юните
-                  and '"$HERMES_DIR/discord-venv/bin/python" -c' in deploy_text
-                  and "PyYAML" in deploy_text
-                  and "import yaml" in webhook_src
-                  and "import discord" in discord_src)
+    # Проверка не «размыта» подавлением ошибки и покрывает реальные импорты.
+    contract_ok = ('"$HERMES_DIR/discord-venv/bin/python" -c' in deploy_text
+                   and "__import__" in deploy_text
+                   and 'for name in ("discord", "yaml")' in deploy_text
+                   # исполняемый код больше не использует обнаружение пакета
+                   and "u.find_spec" not in deploy_text
+                   and "importlib.util" not in deploy_text
+                   and "PyYAML" in deploy_text
+                   and "import yaml" in webhook_src
+                   and "import discord" in discord_src)
     check("rr1b_discord_only_payload",
-          deployed_ok and import_ok and checked_ok,
-          f"deployed={deployed_ok}(rc={result.returncode}) import={import_ok} "
-          f"checked={checked_ok} calls={calls[:120]!r} err={imported.stderr[-160:]!r}")
+          deployed_ok and import_ok and missing_ok and failed_check_ok and contract_ok,
+          f"deployed={deployed_ok} import={import_ok} missing={missing_ok} "
+          f"failed_check={failed_check_ok}(rc={res_bad.returncode}) "
+          f"contract={contract_ok} ok_out={res_ok.stdout[-200:]!r}")
 
 
 def _rr1b_install_fixture(tmp: Path, tag: str, config_body: str,
-                          skip_deploy: str) -> tuple[subprocess.CompletedProcess, Path]:
+                          deploy_mode: str = "real") -> tuple[subprocess.CompletedProcess, Path]:
     """Полный прогон install.sh под shims (dpkg/git/systemctl/crontab/flock/bash).
-    deploy внутри — настоящий, из локальной копии дерева кандидата."""
+    deploy внутри — настоящий, из локальной копии дерева кандидата.
+
+    deploy_mode: real | skip (deploy не отрабатывает — артефактов нет) |
+    broken-watchdog (deploy кладёт CORE-артефакт с ошибкой синтаксиса)."""
     home = tmp / f"rr1b-install-home-{tag}"
     fixture = home / "hermes-argus"
     shutil.copytree(REPO, fixture,
@@ -6144,8 +6218,14 @@ def _rr1b_install_fixture(tmp: Path, tag: str, config_body: str,
                      '  *) exit 0 ;;\n'
                      'esac\n')
     _write_argv_shim(shim, "bash",
-                     'if [ "${1:-}" = "deploy.sh" ] && [ "${RR1B_SKIP_DEPLOY:-0}" = "1" ]; then\n'
-                     '  exit 0\n'
+                     'if [ "${1:-}" = "deploy.sh" ]; then\n'
+                     '  case "${RR1B_DEPLOY_MODE:-real}" in\n'
+                     '    skip) exit 0 ;;\n'
+                     '    broken-watchdog)\n'
+                     '      mkdir -p "$HOME/scripts"\n'
+                     '      printf \'if then\\n\' > "$HOME/scripts/hermes-watchdog.sh"\n'
+                     '      exit 0 ;;\n'
+                     '  esac\n'
                      'fi\n'
                      f'exec "{_rr1b_real("bash")}" "$@"\n')
     env = _probe_subprocess_env(home, {
@@ -6154,7 +6234,7 @@ def _rr1b_install_fixture(tmp: Path, tag: str, config_body: str,
         "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
         "CRONTAB_FIXTURE": (tmp / f"rr1b-install-cron-{tag}.txt").as_posix(),
         "CRON_FILE": str(tmp / f"rr1b-install-proposal-{tag}.txt"),
-        "RR1B_SKIP_DEPLOY": skip_deploy,
+        "RR1B_DEPLOY_MODE": deploy_mode,
     })
     result = subprocess.run(["bash", str(fixture / "install.sh")],
                             cwd=fixture, env=env, capture_output=True,
@@ -6162,30 +6242,70 @@ def _rr1b_install_fixture(tmp: Path, tag: str, config_body: str,
     return result, home
 
 
+# Конфиг в СИНТАКСИСЕ ШАБЛОНА: значение в кавычках + комментарий. Наивный
+# парсер строки склеивал комментарий со значением (`OFF#watchdog`), и CORE=OFF
+# установка требовала несуществующий watchdog (ревью F1).
+_RR1B_TEMPLATE_CFG = (
+    'MODULE_CORE="OFF"            # watchdog, liveness, auto-remediate\n'
+    'MODULE_INTEGRATIONS="ON"    # integration-discover и каскад-трекер\n'
+    'MODULE_TG_BOT="OFF"         # интерактивный Telegram-бот\n'
+    'MODULE_ANALYZER="OFF"       # L3 health-analyzer\n'
+    'MODULE_HEARTBEAT="OFF"      # внешний dead man\'s switch\n'
+    'MODULE_GH_HEARTBEAT="OFF"   # GitHub Heartbeat\n'
+    'MODULE_DISCORD_BOT="OFF"    # Discord control plane\n'
+    'MODULE_LOCAL_SERVICES="OFF" # локальная топология\n'
+    f"WATCHDOG_BOT_TOKEN={RR1B_TOKEN}\nWATCHDOG_CHAT_ID={RR1B_CHAT}\n"
+)
+
+
 def probe_rr1b_install_module_neutral_gate(tmp: Path):
-    """RR1b B4 §6.5: post-deploy гейт install.sh следует выбранным модулям.
-    Прежде он безусловно требовал CORE-артефакт, поэтому CORE=OFF ронял чистую
-    установку на файле, который модуль не ставил. Включённый CORE со
-    сломанным/пропавшим артефактом — по-прежнему loud fail."""
-    off_cfg = (_rr1b_modules(core=False, integrations=True)
-               + f"WATCHDOG_BOT_TOKEN={RR1B_TOKEN}\nWATCHDOG_CHAT_ID={RR1B_CHAT}\n")
-    res_off, home_off = _rr1b_install_fixture(tmp, "core-off", off_cfg, "0")
+    """RR1b B4 §6.5: post-deploy гейт следует выбранным модулям.
+
+    Четыре случая, каждый из которых ловил свою ошибку (ревью F1/F2):
+    шаблонный комментированный CORE=OFF доходит до финала и НЕ упоминает
+    watchdog; отсутствующий артефакт ВКЛЮЧЁННОГО модуля (в т.ч. при CORE=OFF)
+    роняет установку; ошибка синтаксиса в развёрнутом артефакте роняет её, а
+    не проходит гейт насквозь.
+    """
+    res_off, home_off = _rr1b_install_fixture(tmp, "template-off",
+                                              _RR1B_TEMPLATE_CFG, "real")
     watchdog_absent = not (home_off / "scripts" / "hermes-watchdog.sh").exists()
     integrations_present = (home_off / "scripts" / "integration-discover-wrapper.sh").is_file()
+    # Секция гейта — отдельно от потока вывода deploy, который install.sh
+    # транслирует и где имя watchdog может встретиться по другим причинам.
+    gate = res_off.stdout[res_off.stdout.find("Post-deploy gates:"):]
     off_ok = (res_off.returncode == 0 and watchdog_absent
-              and "модуль выключен" in res_off.stdout
+              and integrations_present
               and "Готово" in res_off.stdout
-              and integrations_present)
-    # Включённый CORE, но артефакта нет (deploy не отработал) — гейт обязан ругаться.
+              # Гейт проверил ровно включённый модуль и не искал CORE-артефакт.
+              and "integration-discover-wrapper.sh" in gate
+              and "hermes-watchdog.sh" not in gate)
+
+    # Включённый CORE, артефакта нет (deploy не отработал) — loud fail.
     on_cfg = (_rr1b_modules(core=True, integrations=False)
               + f"WATCHDOG_BOT_TOKEN={RR1B_TOKEN}\nWATCHDOG_CHAT_ID={RR1B_CHAT}\n")
-    res_on, _ = _rr1b_install_fixture(tmp, "core-on-missing", on_cfg, "1")
-    on_ok = (res_on.returncode != 0
-             and "hermes-watchdog.sh" in (res_on.stdout + res_on.stderr))
-    check("rr1b_install_module_neutral_gate", off_ok and on_ok,
-          f"off={off_ok}(rc={res_off.returncode}) on={on_ok}(rc={res_on.returncode}) "
-          f"watchdog_absent={watchdog_absent} integrations={integrations_present} "
-          f"off_out={res_off.stdout[-200:]!r}")
+    res_missing, _ = _rr1b_install_fixture(tmp, "core-on-missing", on_cfg, "skip")
+    missing_ok = (res_missing.returncode != 0
+                  and "hermes-watchdog.sh" in (res_missing.stdout + res_missing.stderr))
+
+    # CORE=OFF, но включён INTEGRATIONS и его артефакта нет — тоже loud fail.
+    res_int, _ = _rr1b_install_fixture(tmp, "int-missing", _RR1B_TEMPLATE_CFG, "skip")
+    int_ok = (res_int.returncode != 0
+              and "MODULE_INTEGRATIONS" in (res_int.stdout + res_int.stderr))
+
+    # Развёрнутый артефакт с ошибкой синтаксиса — loud fail, а не тихий проход.
+    res_bad, _ = _rr1b_install_fixture(
+        tmp, "bad-syntax", _rr1b_modules(core=True, integrations=False)
+        + f"WATCHDOG_BOT_TOKEN={RR1B_TOKEN}\nWATCHDOG_CHAT_ID={RR1B_CHAT}\n",
+        "broken-watchdog")
+    bad_ok = res_bad.returncode != 0
+
+    check("rr1b_install_module_neutral_gate",
+          off_ok and missing_ok and int_ok and bad_ok,
+          f"off={off_ok}(rc={res_off.returncode}) missing={missing_ok}"
+          f"(rc={res_missing.returncode}) integrations={int_ok}(rc={res_int.returncode}) "
+          f"bad_syntax={bad_ok}(rc={res_bad.returncode}) "
+          f"off_out={res_off.stdout[-260:]!r}")
 
 
 def main() -> int:
@@ -6350,6 +6470,7 @@ def main() -> int:
     probe_rr1b_watchdog_netdata_expectation(wh, tmp)
     probe_rr1b_analyzer_collector_ownership(tmp)
     probe_rr1b_analyzer_collector_failure(tmp)
+    probe_rr1b_analyzer_collector_not_executable(tmp)
     probe_rr1b_discord_only_payload(tmp)
     probe_rr1b_install_module_neutral_gate(tmp)
     # R1c: Authorization headers out of child argv (shell + ai-deep-check)

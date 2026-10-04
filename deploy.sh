@@ -349,9 +349,15 @@ deploy_scripts() {
     local dest_dir="$1"; shift
     local script
     for script in "$@"; do
-        if [ -f "$SCRIPTS_DIR/$script" ]; then
-            deploy_template "$SCRIPTS_DIR/$script" "$dest_dir/$script" "$script"
+        # B4 (RR1b): манифест — это обещание развернуть артефакт. Отсутствие
+        # источника в манифесте означает, что включённый модуль останется без
+        # своего файла; молчаливый skip давал «успешный» deploy без payload и
+        # ронял гейт bootstrap'а уже после того, как отчёт об успехе напечатан.
+        if [ ! -f "$SCRIPTS_DIR/$script" ]; then
+            echo "   ❌ Манифест требует $script, но его нет в $SCRIPTS_DIR" >&2
+            return 1
         fi
+        deploy_template "$SCRIPTS_DIR/$script" "$dest_dir/$script" "$script"
     done
 }
 
@@ -464,16 +470,30 @@ if module_enabled MODULE_DISCORD_BOT; then
         fi
     fi
     # Импорты проверяются ТЕМ ЖЕ интерпретатором, что запускает юнит
-    # (modules/systemd/discord-bot.service: discord-venv/bin/python). Модуль без
-    # этой проверки выглядит развёрнутым, а падает на первом же /settings.
-    DISCORD_MISSING=$("$HERMES_DIR/discord-venv/bin/python" -c \
-        'import importlib.util as u; print(",".join(m for m in ("discord", "yaml") if u.find_spec(m) is None))' \
-        2>/dev/null || true)
-    if [ -n "$DISCORD_MISSING" ]; then
-        echo "   ⚠️  discord-venv не импортирует: $DISCORD_MISSING — юнит не стартует."
-        echo "      Фикс: $HERMES_DIR/discord-venv/bin/pip install discord.py PyYAML"
+    # (modules/systemd/discord-bot.service: discord-venv/bin/python), и РЕАЛЬНЫМИ
+    # импортами: find_spec доказывал бы лишь находимость пакета, а то, что он
+    # импортируется, — нет. Невозможность выполнить саму проверку (битый
+    # интерпретатор) — провал преrequisта, а НЕ «зелёный» вывод.
+    if DISCORD_IMPORT_OUT=$("$HERMES_DIR/discord-venv/bin/python" -c '
+import sys
+missing = []
+for name in ("discord", "yaml"):
+    try:
+        __import__(name)
+    except Exception:
+        missing.append(name)
+print(",".join(missing))
+' 2>&1); then
+        if [ -n "$DISCORD_IMPORT_OUT" ]; then
+            echo "   ⚠️  discord-venv не импортирует: $DISCORD_IMPORT_OUT — юнит не стартует."
+            echo "      Фикс: $HERMES_DIR/discord-venv/bin/pip install discord.py PyYAML"
+        else
+            echo "   ✅ discord-venv импортирует discord + yaml"
+        fi
     else
-        echo "   ✅ discord-venv импортирует discord + yaml"
+        echo "   ❌ Проверка импортов discord-venv не выполнилась (код $?):"
+        echo "      $DISCORD_IMPORT_OUT"
+        exit 1
     fi
     echo "   ℹ️  Старт: systemctl --user enable --now discord-bot.service (согласованно)"
 fi

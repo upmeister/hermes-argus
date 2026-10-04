@@ -51,6 +51,8 @@ maintainer read an incomplete project state.
 | [DEBT-016](#debt-016) | Heartbeat selection follows credentials | Needs decision | Choose explicit backend selection and compatibility migration. |
 | [DEBT-017](#debt-017) | Cronping Telegram delivery/setup incomplete | Needs hosting decision | Plan external webhook delivery through bot Argus and public setup guide. |
 | [DEBT-018](#debt-018) | Public GitHub workflow differs from production | Needs decision | Choose public timing/dedup/recovery/pin behavior. |
+| [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Open | Maintainer selects a stale-evidence policy before RR3. |
+| [DEBT-020](#debt-020) | Discord `!deepcheck` needs a TG_BOT-owned payload | Open | Maintainer decides payload ownership vs. unsupported-module reporting. |
 
 ## Open finding cards
 
@@ -434,6 +436,52 @@ maintainer read an incomplete project state.
   with dedup/pinning in a separate production workflow.
 - **Boundary:** choose public behavior explicitly; do not copy private
   workflow/config or claim those features are already shipped.
+
+<a id="debt-019"></a>
+
+### DEBT-019 — Analyzer UI marks old state healthy without a freshness decision
+
+- **Operator impact:** after collection failures, `/watchdog` can keep a green
+  Analyzer line indefinitely while showing an old last-check timestamp.
+- **Next action / responsible roles:** maintainer selects the desired stale
+  evidence policy; architect scopes a bounded UI/consumer follow-up; builder
+  only after selection.
+- **Closure evidence:** an old valid Analyzer state renders neutral/stale
+  instead of healthy per the selected policy; a fresh success stays healthy and
+  malformed/absent state stays visible.
+- **Release disposition:** does not block RR1b; decide before RR3.
+
+- **Status:** open, outside RR1b.
+- **Source:** RR1b focused review at `4dfc6ed`;
+  `scripts/webhook.py` renders a check mark whenever the stored JSON is
+  readable, without checking age.
+- **Evidence:** RR1b deliberately preserves `health-state.json` on a failed
+  collection, which makes the consumer's missing freshness decision visible.
+  The timestamp itself is shown, so this is not hidden data.
+- **Boundary:** do not add failed-attempt state and do not change what the
+  Analyzer writes; this is a consumer acceptance decision.
+
+<a id="debt-020"></a>
+
+### DEBT-020 — Discord deepcheck calls a TG_BOT-owned executable
+
+- **Operator impact:** on a fresh Discord-only deployment, `!deepcheck` has its
+  shared handler but fails because `~/scripts/ai-deep-check.py` is absent.
+- **Next action / responsible roles:** maintainer decides whether the Discord
+  command should own that payload or report the unsupported module
+  combination; architect scopes; builder after selection.
+- **Closure evidence:** the chosen Discord-only deepcheck behavior is verified
+  in a fresh isolated deployment, without old files or live API calls.
+- **Release disposition:** not a RR1b blocker under the selected B3 payload and
+  import boundary; review command completeness before RR3.
+
+- **Status:** open, outside RR1b.
+- **Source:** RR1b focused review at `4dfc6ed`; `scripts/discord-bot.py` binds
+  `handle_deep_check`, `scripts/webhook.py` starts `~/scripts/ai-deep-check.py`,
+  and `deploy.sh` supplies that script only through `TG_BOT_HOME_SCRIPTS`.
+- **Evidence:** an isolated Discord-only deploy confirms the file is absent.
+- **Boundary:** RR1b fixed ownership of the shared handler library
+  (`webhook.py`) and its interpreter, not the deepcheck payload decision.
 
 ## Resolved source changes with pending deployment
 
