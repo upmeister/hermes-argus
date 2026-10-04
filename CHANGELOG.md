@@ -64,13 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has no default: without an explicit `GITHUB_REPO` the backend stays
   disabled. Discovery units for new installs use the canonical Argus-owned
   names (`hermes-argus-config.path`, `hermes-argus-discover.service`); a live
-  legacy `hermes-vps-kit-*` watcher is never touched or auto-migrated — the
-  deploy prints an operator-controlled handoff and the installer guarantees a
-  single active producer. Existing maintainer production keeps its behavior
-  by setting `TELEGRAM_PROXY`/`GITHUB_REPO` explicitly once (see
+  legacy `hermes-vps-kit-*` watcher is never touched or auto-migrated —
+  the deploy prints an operator-controlled handoff and the installer
+  guarantees a single active producer. Existing maintainer production keeps
+  its behavior by setting `TELEGRAM_PROXY`/`GITHUB_REPO` explicitly once (see
   `docs/DEPLOY_CHECKLIST.md`).
 
-### Changed
+- RR1b B1–B4 is merged as PR #71. The module/runtime truth slice is not
+  deployed yet; the next host-readiness contract covers private config,
+  user-manager and Hermes preflight, network-guard applicability and bounded
+  Argus log rotation.
 
 - Optional monitoring surfaces are now expected conditionally, so a default
   install no longer reports failures for components it never promised to

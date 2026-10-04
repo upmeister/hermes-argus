@@ -1,16 +1,15 @@
 # RR1b contract — module dependency truth and payload completeness
 
-Status: **IN PROGRESS / BUILDER IMPLEMENTING**
+Status: **DONE / MERGED PR #71 / NOT DEPLOYED**
 
-Maintainer confirmed work in progress on 2026-10-04. Acceptance scope is frozen;
-no implementation review PASS, merge or deployment is implied by this status.
+B1–B4 were implemented, focused-reviewed and merged into main as PR #71. The
+source fix is complete; production deployment and read-back remain separate
+maintainer actions.
 
-Implementation branch: `feat/rr1b-module-runtime-truth` (baseline `9f64fa4`),
-PR #71. Not deployed.
-
-This is the selected next task after RR1a. The documentation PR containing this
-contract may merge; implementation still requires a builder task branch/PR and
-separate maintainer merge authority.
+Implementation head: 4dfc6ed plus the bounded review remediations, merged as
+4b74471389eaa8d6b0d4bd4f748a2c5a13524f4d. The next focused RR1b work is
+governed by the host-readiness contract:
+docs/handoffs/rr1b-host-readiness-contract.md.
 
 ## Authority and delivery
 

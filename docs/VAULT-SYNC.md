@@ -27,9 +27,10 @@ Argus tree cannot prove that vault sync is broken.
 A separate real regression was present: desktop backup `2d76b33` reverted the
 Argus project card, release roadmap and heartbeat audit to older versions.
 Server-side updates were recovered from pre-regression vault commit `4e835c3`
-into the actual local vault. Current decisions were reapplied: RR1a merged but
-not deployed; RR1b implementation in progress; optional Netdata; native Cronping
-Telegram delivery without an Argus webhook or an external-VPS prerequisite.
+into the actual local vault. Current decisions were reapplied: RR1a merged but not deployed; RR1b
+module/runtime truth merged as PR #71 but not deployed; RR1b host readiness is
+the selected next contract; optional Netdata; native Cronping Telegram delivery
+without an Argus webhook or an external-VPS prerequisite.
 
 SYNC-001 records the repair/restoration receipt rather than an ongoing blocker.
 The recovery was published as vault commit `bbc7571`; the server received it by
