@@ -20,7 +20,8 @@ current selected-task pointer.
 Current selected task:
 
 - **RR1b** — module dependency truth and payload completeness; reviewer Codex.
-  The contract is selected and ready for builder handoff.
+  Implemented on `feat/rr1b-module-runtime-truth` from baseline `9f64fa4`; the
+  implementation PR awaits reviewer verdict and maintainer merge. Not deployed.
 
 RR1a is merged, not deployed. Subsequent RR1 subdivisions and the requested
 Cronping -> bot Argus heartbeat cycle are
@@ -60,6 +61,8 @@ MCP disabled-server merged = 3551b08 (PR #59, 2026-10-02)
 gateway matcher merged = b39b256 (PR #60, 2026-10-02)
 RR0b merged = 72a801f (PR #63, 2026-10-02; implementation 4fa5473, remediation 78fea55)
 RR0c merged = 2588581 (PR #65, 2026-10-02; implementation e271317, remediation 0823885)
+RR1b merged = (pending; implementation branch `feat/rr1b-module-runtime-truth`
+from baseline 9f64fa4)
 RR1a merged = 9aaf0a5 (PR #68, 2026-10-03; implementation e14df0f, remediations 88c8237 / 8679158)
 ```
 
@@ -116,8 +119,8 @@ dependency-on-Hermes list is `docs/research/hermes-argus-seams.md`.
 
 Current:
 
-- rr1b-module-runtime-truth-contract.md — selected; production risk high;
-  maintainer merge after reviewer PASS.
+- rr1b-module-runtime-truth-contract.md — implemented, awaiting merge;
+  production risk high; maintainer merge after reviewer PASS.
 
 RR1b/c/d require later focused contracts. Planning input:
 [production deployment dependencies](../research/2026-10-03-production-deployment-dependencies.md).

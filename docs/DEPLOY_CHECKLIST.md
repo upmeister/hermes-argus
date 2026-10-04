@@ -28,6 +28,36 @@ Analyzer state freshness is not proof that a Hermes L3 analysis job is installed
 Record log rotation and network-guard privileges/applicability separately.
 These prerequisites are not automatic installer behavior yet.
 
+## RR1b module/runtime truth read-back (after the first RR1b deploy)
+
+RR1b changes which files an enabled module owns and what the quick check
+considers a failure. These are the observable consequences to read back on the
+production host:
+
+1. **Netdata / GitHub expectation.** If this host runs a Netdata agent, the
+   quick check and `/watchdog` must still report it when the API stops
+   answering. If a surface is genuinely not configured, it must be silent
+   rather than reporting a failure. Verify both directions — a check that only
+   ever passes is as wrong as one that only ever fails.
+2. **Analyzer collector.** With `MODULE_ANALYZER=ON`, confirm
+   `~/.hermes/scripts/collect-metrics.sh` exists and that
+   `python3 ~/.hermes/scripts/health-analyzer.py --update` exits `0`. Then
+   confirm the failure path is honest: temporarily make the collector
+   non-executable (or point it at a non-zero exit) and verify the run exits
+   non-zero with `ANALYZER_COLLECTOR_FAILED` and that `health-state.json`
+   `last_check` does **not** advance. Restore afterwards.
+3. **Legacy collector copy.** RR1b stops deploying `~/scripts/collect-metrics.sh`.
+   An existing copy is left in place but is no longer owned by Argus and no
+   longer read by the Analyzer; it may be removed by the operator once the
+   canonical copy is confirmed working.
+4. **Discord (only if `MODULE_DISCORD_BOT=ON`).** Confirm `~/scripts/webhook.py`
+   exists and was refreshed by this deploy, and that deploy reported the
+   `discord-venv` import check. If it warns about missing imports, install them
+   into the venv the unit runs and re-check.
+5. **Core-off installs (only if `MODULE_CORE=OFF`).** The installer must print
+   that the CORE syntax check was skipped, and must reach the completion text.
+   It must not print a raw `No such file or directory` from `bash -n`.
+
 ## RR1a cron read-back (after the first RR1a deploy)
 
 1. Confirm the managed block is present exactly once:

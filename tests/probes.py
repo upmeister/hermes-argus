@@ -5791,6 +5791,403 @@ def probe_ls_deploy_on_off_cron(tmp: Path):
           f"rc={failed.returncode} tab={fail_tab!r}")
 
 
+# ── Пробы: RR1b module dependency truth и payload completeness ──────────────
+
+RR1B_TOKEN = "DUMMY_RR1B_TOKEN"
+RR1B_CHAT = "DUMMY_RR1B_CHAT"
+
+_ANALYZER_OK_SCRIPT = (
+    "#!/bin/bash\n"
+    "echo '=== СИСТЕМНЫЙ ОТЧЁТ 2026-10-04 12:00:00 UTC ==='\n"
+    "echo ''\n"
+    "echo '── ПАМЯТЬ ──'\n"
+    "echo 'Mem: total used'\n"
+    "echo '── OOM KILLER ──'\n"
+    "echo 'Нет событий OOM'\n"
+)
+
+
+def _rr1b_real(name: str) -> str:
+    """Абсолютный путь к утилите ПОСЛЕ bash-резолвинга. Годится ТОЛЬКО для
+    тела sh-шима, который исполняет сам MSYS-bash: прямой вызов из
+    Windows-python с таким путём падает в CreateProcess."""
+    r = subprocess.run(["bash", "-c", f"command -v {name}"],
+                       capture_output=True, text=True, timeout=30)
+    return (r.stdout or "").strip().split("\n")[0] if r.stdout else ""
+
+
+def _rr1b_sh_exec(target: str) -> str:
+    """Путь, пригодный для `exec` внутри sh-шима: Windows-путь, переписанный
+    прямыми слэшами (MSYS-bash понимает оба вида)."""
+    return target.replace("\\", "/")
+
+
+def _rr1b_curl_shim(shim_dir: Path) -> None:
+    """curl shim: код ответа на каждую поверхность задаётся env'ом
+    (RR1B_CODE_GH/TG/ND). URL GitHub и Telegram приходят в stdin (`curl -K -`),
+    поэтому решение принимается по stdin+argv. Сети нет."""
+    body = (
+        'STD=$(cat 2>/dev/null)\n'
+        'BOTH="$STD $*"\n'
+        'case "$BOTH" in\n'
+        '  *githubstatus*) printf \'{"status": {"description": "Operational"}}\\n\'; exit 0 ;;\n'
+        '  *api.github.com*) printf \'%s\\n\' "${RR1B_CODE_GH:-200}"; exit 0 ;;\n'
+        '  *api.telegram.org*)\n'
+        '    case "$*" in\n'
+        '      *"-o /dev/null"*) printf \'%s\\n\' "${RR1B_CODE_TG:-200}" ;;\n'
+        '      *) printf \'{"ok": true}\\n%s\\n\' "${RR1B_CODE_TG:-200}" ;;\n'
+        '    esac; exit 0 ;;\n'
+        '  *api/v1/info*) printf \'%s\\n\' "${RR1B_CODE_ND:-200}"; exit 0 ;;\n'
+        'esac\n'
+        'case "$*" in\n'
+        '  *-w*) printf \'%s\\n\' "${RR1B_CODE_ND:-200}" ;;\n'
+        '  *) printf \'{}\\n\' ;;\n'
+        'esac\n'
+        'exit 0\n'
+    )
+    _write_argv_shim(shim_dir, "curl", body)
+
+
+def _rr1b_systemctl_shim(shim_dir: Path) -> None:
+    """systemctl shim: RR1B_NETDATA=1 → юнит netdata.service СИСТЕМЕ известен
+    (опциональная поверхность установлена). Остальные юниты отсутствуют."""
+    body = (
+        'case "$*" in\n'
+        '  *"LoadState netdata.service"*) [ "${RR1B_NETDATA:-0}" = "1" ] && printf \'loaded\\n\' || printf \'not-found\\n\'; exit 0 ;;\n'
+        'esac\n'
+        'printf \'not-found\\n\'\n'
+        'exit 0\n'
+    )
+    _write_argv_shim(shim_dir, "systemctl", body)
+
+
+def _rr1b_quick(tmp: Path, tag: str, *, github_token: str = "", netdata: str = "0",
+                code_gh: str = "200", code_nd: str = "200") -> subprocess.CompletedProcess:
+    home = tmp / f"rr1b-quick-home-{tag}"
+    write(home / ".hermes" / ".env",
+          f"GITHUB_TOKEN={github_token}\n" if github_token else "")
+    shim = tmp / f"rr1b-quick-shim-{tag}"
+    shim.mkdir(parents=True, exist_ok=True)
+    _rr1b_curl_shim(shim)
+    _rr1b_systemctl_shim(shim)
+    env = _probe_subprocess_env(home, {
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "RR1B_NETDATA": netdata,
+        "RR1B_CODE_GH": code_gh,
+        "RR1B_CODE_ND": code_nd,
+        "RR1B_CODE_TG": "200",
+    })
+    return subprocess.run(
+        ["bash", str(REPO / "scripts" / "health-check-integrations.sh"), "--quick"],
+        cwd=REPO, env=env, input="", capture_output=True, text=True, timeout=120)
+
+
+def probe_rr1b_quick_optional_expectations(tmp: Path):
+    """RR1b B1 §6.1: quick-чек по опциональным поверхностям. Нет агента Netdata
+    и нет GitHub-токена = НЕТ ложной проблемы; настроенная и сломанная — видна;
+    настроенная и здоровая — здорова.
+
+    Прежде обе проверки шли безусловно: пустой токен давал 401, отсутствующий
+    Netdata — 000, поэтому чистая CORE+INTEGRATIONS без этих расширений
+    рапортовала инцидент, которого нет. Нейтраль в quick-режиме МОЛЧИТ: любая
+    строка при ненулевом коде hermes-watchdog.sh становится отдельным инцидентом.
+    """
+    absent = _rr1b_quick(tmp, "absent", code_gh="401", code_nd="000")
+    gh_broken = _rr1b_quick(tmp, "gh-broken", github_token=RR1B_TOKEN, code_gh="401")
+    nd_broken = _rr1b_quick(tmp, "nd-broken", netdata="1", code_nd="000")
+    healthy = _rr1b_quick(tmp, "healthy", github_token=RR1B_TOKEN, netdata="1")
+    absent_ok = (absent.returncode == 0
+                 and "🔑 GitHub token" not in absent.stdout
+                 and "📊 Netdata API" not in absent.stdout)
+    gh_ok = gh_broken.returncode == 1 and "🔑 GitHub token" in gh_broken.stdout
+    nd_ok = nd_broken.returncode == 1 and "📊 Netdata API" in nd_broken.stdout
+    healthy_ok = (healthy.returncode == 0
+                  and "🔑 GitHub token" not in healthy.stdout
+                  and "📊 Netdata API" not in healthy.stdout)
+    check("rr1b_quick_optional_expectations",
+          absent_ok and gh_ok and nd_ok and healthy_ok,
+          f"absent={absent_ok}(rc={absent.returncode}) gh={gh_ok}(rc={gh_broken.returncode}) "
+          f"nd={nd_ok}(rc={nd_broken.returncode}) healthy={healthy_ok}(rc={healthy.returncode}) "
+          f"absent_out={absent.stdout[-140:]!r}")
+
+
+def probe_rr1b_watchdog_netdata_expectation(wh, tmp: Path):
+    """RR1b B1 §6.2: панель статуса. Предикат `hermes_installed` был истинен на
+    любом хосте с Hermes, поэтому Netdata без агента давал ❌. Ожидание теперь
+    выводится из установленного агента: юнита нет — ⚪ нейтрально; юнит есть, а
+    API не отвечает — ❌ видна."""
+    home = tmp / "rr1b-wh-home"
+    (home / ".hermes" / "hermes-agent").mkdir(parents=True, exist_ok=True)
+    (home / ".hermes" / "scripts").mkdir(parents=True, exist_ok=True)
+
+    def status_at(nd_unit: str, nd_code: str) -> str:
+        def expanduser(path: str) -> str:
+            return str(home / path[2:]) if path.startswith("~/") else path
+
+        def fake_run(args, capture_output=False, text=False, timeout=None, **kwargs):
+            argv = [str(a) for a in args]
+            if argv[0] == "systemctl":
+                stdout = (f"{nd_unit}\n" if "netdata.service" in argv
+                          else ("not-found\n" if "show" in argv else "inactive\n"))
+            elif argv[0] == "crontab":
+                stdout = ""
+            else:
+                stdout = f"{nd_code}\n"
+            return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+        with override_attr(wh.os.path, "expanduser", expanduser), \
+                override_attr(wh.subprocess, "run", fake_run), \
+                override_attr(wh._time, "time", lambda: 20_000):
+            return wh.handle_watchdog_status()
+
+    absent = status_at("not-found", "000")
+    broken = status_at("loaded", "000")
+    healthy = status_at("loaded", "200")
+    absent_ok = "⚪ Netdata API" in absent and "❌ Netdata API" not in absent
+    broken_ok = "❌ Netdata API" in broken and "не отвечает" in broken
+    healthy_ok = "✅ Netdata API" in healthy
+    check("rr1b_watchdog_netdata_expectation",
+          absent_ok and broken_ok and healthy_ok,
+          f"absent={absent_ok} broken={broken_ok} healthy={healthy_ok} "
+          f"absent_lines={[l for l in absent.split(chr(10)) if 'Netdata' in l]}")
+
+
+def _rr1b_modules(core=False, integrations=False, analyzer=False,
+                  tg_bot=False, discord=False) -> str:
+    flags = {"MODULE_CORE": core, "MODULE_INTEGRATIONS": integrations,
+             "MODULE_ANALYZER": analyzer, "MODULE_TG_BOT": tg_bot,
+             "MODULE_DISCORD_BOT": discord, "MODULE_HEARTBEAT": False,
+             "MODULE_GH_HEARTBEAT": False, "MODULE_LOCAL_SERVICES": False}
+    return "".join(f"{k}={'ON' if v else 'OFF'}\n" for k, v in flags.items())
+
+
+def _rr1b_deploy(tmp: Path, tag: str, modules: str, extra_env: dict | None = None):
+    home = tmp / f"rr1b-deploy-home-{tag}"
+    shim = _rr1a_cron_shims(tmp, f"rr1b-{tag}")
+    config = write(tmp / f"rr1b-{tag}-config.env", modules)
+    env = _probe_subprocess_env(home, {
+        "HOME": home.as_posix(),
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "CRONTAB_FIXTURE": (tmp / f"rr1b-{tag}-cron.txt").as_posix(),
+        "CRON_FILE": (tmp / f"rr1b-{tag}-proposal.txt").as_posix(),
+        **(extra_env or {}),
+    })
+    result = subprocess.run(
+        ["bash", (REPO / "deploy.sh").as_posix(), config.as_posix()],
+        cwd=REPO.as_posix(), env=env, capture_output=True, text=True, timeout=180)
+    return result, home
+
+
+def probe_rr1b_analyzer_collector_ownership(tmp: Path):
+    """RR1b B2 §6.3: у коллектора ОДИН владелец и канонический путь. Манифест
+    ставил collect-metrics.sh в ~/scripts (CORE), а единственный потребитель
+    health-analyzer.py читал ~/.hermes/scripts/ — ANALYZER-фикстура запускалась
+    без своего коллектора и опиралась на старый файл чужого модуля."""
+    cases = []
+    # ANALYZER-only: коллектор обязан приехать вместе с потребителем.
+    _, home_a = _rr1b_deploy(tmp, "an-only", _rr1b_modules(analyzer=True))
+    cases.append(("analyzer-only", True,
+                  (home_a / ".hermes" / "scripts" / "collect-metrics.sh").is_file(),
+                  (home_a / "scripts" / "collect-metrics.sh").is_file()))
+    # CORE+ANALYZER: канонический путь один, второй копии нет.
+    _, home_b = _rr1b_deploy(tmp, "core-an", _rr1b_modules(core=True, analyzer=True))
+    cases.append(("core+analyzer", True,
+                  (home_b / ".hermes" / "scripts" / "collect-metrics.sh").is_file(),
+                  (home_b / "scripts" / "collect-metrics.sh").is_file()))
+    # ANALYZER=OFF: коллектор не ставится вовсе.
+    _, home_c = _rr1b_deploy(tmp, "an-off", _rr1b_modules(core=True))
+    cases.append(("analyzer-off", False,
+                  (home_c / ".hermes" / "scripts" / "collect-metrics.sh").is_file(),
+                  (home_c / "scripts" / "collect-metrics.sh").is_file()))
+    problems = [f"{n}: canonical={c} (want {want}) legacy_home={l}"
+                for n, want, c, l in cases if c is not want or l is not False]
+    check("rr1b_analyzer_collector_ownership", not problems, f"problems={problems}")
+
+
+def probe_rr1b_analyzer_collector_failure(tmp: Path):
+    """RR1b B2 §6.3: сбой коллектора ≠ чистое сканирование. Прежде
+    collect_metrics() не смотрела на код возврата, а отсутствующий файл давал
+    пустой stdout без исключения (bash → 127, stderr проглатывался): пустой
+    вывод уходил в find_issues() как «проблем нет» и записывался в
+    health-state.json. Теперь ошибка сбора явна, а состояние не обновляется."""
+    scripts_for = {
+        "missing": None,
+        "nonzero": "printf 'partial\\n'\nexit 3\n",
+        "empty": "exit 0\n",
+        "ok": _ANALYZER_OK_SCRIPT,
+    }
+    results = {}
+    for tag, script in scripts_for.items():
+        home = tmp / f"rr1b-an-home-{tag}"
+        logs = home / ".hermes" / "logs"
+        scripts = home / ".hermes" / "scripts"
+        logs.mkdir(parents=True, exist_ok=True)
+        scripts.mkdir(parents=True, exist_ok=True)
+        # Соседние модули копируются из кандидата — импорты health-analyzer'а
+        # берутся из его же каталога.
+        for name in ("health-analyzer.py", "health_decay.py",
+                     "health_patterns.py", "health_netdata.py"):
+            shutil.copy2(REPO / "scripts" / name, scripts / name)
+        if script is not None:
+            write(scripts / "collect-metrics.sh", script)
+        env = _probe_subprocess_env(home, {
+            "HERMES_HOME": str(home / ".hermes"),
+            "USERPROFILE": str(home),
+            "PYTHONIOENCODING": "utf-8",
+            # UTF-8-режим повторяет поведение Linux-CI: коллектор печатает
+            # кириллицу, и без него windows-локаль cp1251 роняет декодирование.
+            "PYTHONUTF8": "1",
+        })
+        results[tag] = (
+            subprocess.run(
+                [sys.executable, str(scripts / "health-analyzer.py"), "--update"],
+                cwd=REPO, env=env, capture_output=True, text=True, timeout=120),
+            logs / "health-state.json",
+        )
+
+    def failed(tag: str) -> bool:
+        r, state = results[tag]
+        return (r.returncode == 2
+                and "ANALYZER_COLLECTOR_FAILED" in r.stderr
+                and "МЕТРИКИ НЕ СОБРАНЫ" in r.stdout
+                and not state.exists())
+
+    missing_ok = failed("missing")
+    nonzero_ok = failed("nonzero")
+    empty_ok = failed("empty")
+    r_ok, state_ok = results["ok"]
+    ok_ok = (r_ok.returncode == 0 and state_ok.exists()
+             and "STATE_UPDATED" in r_ok.stderr)
+    check("rr1b_analyzer_collector_failure",
+          missing_ok and nonzero_ok and empty_ok and ok_ok,
+          f"missing={missing_ok}(rc={results['missing'][0].returncode}) "
+          f"nonzero={nonzero_ok}(rc={results['nonzero'][0].returncode}) "
+          f"empty={empty_ok}(rc={results['empty'][0].returncode}) "
+          f"ok={ok_ok}(rc={r_ok.returncode}) err={results['empty'][0].stderr[-140:]!r}")
+
+
+def probe_rr1b_discord_only_payload(tmp: Path):
+    """RR1b B3 §6.4: Discord-only развёртка не зависит от TG_BOT и не от
+    старой установленной копии. discord-bot.py делает `import webhook`; файл
+    ставил только TG_BOT, поэтому чистая DISCORD_BOT=ON установка падала на
+    ImportError (или, хуже, цепляла чужую копию). Проверка импортов идёт ТЕМ ЖЕ
+    интерпретатором, что запускает юнит."""
+    home = tmp / "rr1b-deploy-home-discord"   # тот же HOME, что у _rr1b_deploy
+    call_log = tmp / "rr1b-discord-venv-calls.log"
+    # Готовый venv-интерпретатор: ветка создания не нужна, а проверка импортов
+    # должна пройти именно через него (как в discord-bot.service).
+    venv_bin = home / ".hermes" / "discord-venv" / "bin"
+    venv_bin.mkdir(parents=True, exist_ok=True)
+    _write_argv_shim(venv_bin, "python",
+                     f'printf \'%s\\n\' "$*" >> "{call_log.as_posix()}"\n'
+                     f'exec "{_rr1b_sh_exec(sys.executable)}" "$@"\n')
+    result, home = _rr1b_deploy(tmp, "discord", _rr1b_modules(discord=True))
+    handler = home / "scripts" / "webhook.py"
+    tg_copy = home / ".hermes" / "scripts" / "webhook.py"
+    deployed_ok = (result.returncode == 0 and handler.is_file()
+                   and not tg_copy.exists()
+                   and "@HERMES_BIN@" not in handler.read_text(encoding="utf-8"))
+    # Реальный импорт общей библиотеки тем же поиском, что делает discord-bot:
+    # sys.path[0] = каталог самого скрипта.
+    imported = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, %r); import webhook; "
+         "print(sorted(n for n in vars(webhook) if n.startswith('handle_')))"
+         % str(home / "scripts")],
+        cwd=REPO, capture_output=True, text=True, timeout=60)
+    import_ok = (imported.returncode == 0 and "handle_watchdog_status" in imported.stdout)
+    # Проверка импортов выполнена интерпретатором юнита и покрывает ровно те
+    # импорты, которые реально нужны обработчикам (discord + yaml на реестр).
+    calls = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
+    deploy_text = (REPO / "deploy.sh").read_text(encoding="utf-8")
+    webhook_src = (REPO / "scripts" / "webhook.py").read_text(encoding="utf-8")
+    discord_src = (REPO / "scripts" / "discord-bot.py").read_text(encoding="utf-8")
+    checked_ok = ("find_spec" in calls and '"discord"' in calls and '"yaml"' in calls
+                  # интерпретатор проверки — ровно тот, что в юните
+                  and '"$HERMES_DIR/discord-venv/bin/python" -c' in deploy_text
+                  and "PyYAML" in deploy_text
+                  and "import yaml" in webhook_src
+                  and "import discord" in discord_src)
+    check("rr1b_discord_only_payload",
+          deployed_ok and import_ok and checked_ok,
+          f"deployed={deployed_ok}(rc={result.returncode}) import={import_ok} "
+          f"checked={checked_ok} calls={calls[:120]!r} err={imported.stderr[-160:]!r}")
+
+
+def _rr1b_install_fixture(tmp: Path, tag: str, config_body: str,
+                          skip_deploy: str) -> tuple[subprocess.CompletedProcess, Path]:
+    """Полный прогон install.sh под shims (dpkg/git/systemctl/crontab/flock/bash).
+    deploy внутри — настоящий, из локальной копии дерева кандидата."""
+    home = tmp / f"rr1b-install-home-{tag}"
+    fixture = home / "hermes-argus"
+    shutil.copytree(REPO, fixture,
+                    ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
+    (fixture / ".git").mkdir()
+    write(fixture / "config.env", config_body)
+    shim = tmp / f"rr1b-install-shim-{tag}"
+    shim.mkdir(parents=True, exist_ok=True)
+    _write_argv_shim(shim, "dpkg", "exit 0\n")
+    _write_argv_shim(shim, "git", "exit 0\n")
+    _write_argv_shim(shim, "crontab",
+                     'case "$1" in\n'
+                     '  -l) printf "" ;;\n'
+                     '  -)  cat > /dev/null;;\n'
+                     '  *) exit 1;;\n'
+                     'esac\n')
+    _write_argv_shim(shim, "flock", "exit 0\n")
+    _write_argv_shim(shim, "systemctl",
+                     '[ "$1" = "--user" ] && shift\n'
+                     'case "$1" in\n'
+                     '  is-enabled) exit 1 ;;\n'
+                     '  is-active)  exit 3 ;;\n'
+                     '  list-unit-files) printf \'hermes-argus-config.path enabled enabled\\n\'; exit 0 ;;\n'
+                     '  *) exit 0 ;;\n'
+                     'esac\n')
+    _write_argv_shim(shim, "bash",
+                     'if [ "${1:-}" = "deploy.sh" ] && [ "${RR1B_SKIP_DEPLOY:-0}" = "1" ]; then\n'
+                     '  exit 0\n'
+                     'fi\n'
+                     f'exec "{_rr1b_real("bash")}" "$@"\n')
+    env = _probe_subprocess_env(home, {
+        "HOME": home.as_posix(),
+        "USERPROFILE": str(home),
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "CRONTAB_FIXTURE": (tmp / f"rr1b-install-cron-{tag}.txt").as_posix(),
+        "CRON_FILE": str(tmp / f"rr1b-install-proposal-{tag}.txt"),
+        "RR1B_SKIP_DEPLOY": skip_deploy,
+    })
+    result = subprocess.run(["bash", str(fixture / "install.sh")],
+                            cwd=fixture, env=env, capture_output=True,
+                            text=True, timeout=240)
+    return result, home
+
+
+def probe_rr1b_install_module_neutral_gate(tmp: Path):
+    """RR1b B4 §6.5: post-deploy гейт install.sh следует выбранным модулям.
+    Прежде он безусловно требовал CORE-артефакт, поэтому CORE=OFF ронял чистую
+    установку на файле, который модуль не ставил. Включённый CORE со
+    сломанным/пропавшим артефактом — по-прежнему loud fail."""
+    off_cfg = (_rr1b_modules(core=False, integrations=True)
+               + f"WATCHDOG_BOT_TOKEN={RR1B_TOKEN}\nWATCHDOG_CHAT_ID={RR1B_CHAT}\n")
+    res_off, home_off = _rr1b_install_fixture(tmp, "core-off", off_cfg, "0")
+    watchdog_absent = not (home_off / "scripts" / "hermes-watchdog.sh").exists()
+    integrations_present = (home_off / "scripts" / "integration-discover-wrapper.sh").is_file()
+    off_ok = (res_off.returncode == 0 and watchdog_absent
+              and "модуль выключен" in res_off.stdout
+              and "Готово" in res_off.stdout
+              and integrations_present)
+    # Включённый CORE, но артефакта нет (deploy не отработал) — гейт обязан ругаться.
+    on_cfg = (_rr1b_modules(core=True, integrations=False)
+              + f"WATCHDOG_BOT_TOKEN={RR1B_TOKEN}\nWATCHDOG_CHAT_ID={RR1B_CHAT}\n")
+    res_on, _ = _rr1b_install_fixture(tmp, "core-on-missing", on_cfg, "1")
+    on_ok = (res_on.returncode != 0
+             and "hermes-watchdog.sh" in (res_on.stdout + res_on.stderr))
+    check("rr1b_install_module_neutral_gate", off_ok and on_ok,
+          f"off={off_ok}(rc={res_off.returncode}) on={on_ok}(rc={res_on.returncode}) "
+          f"watchdog_absent={watchdog_absent} integrations={integrations_present} "
+          f"off_out={res_off.stdout[-200:]!r}")
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="argus-probes-"))
     hc = load_module("health-check-v2")
@@ -5948,6 +6345,13 @@ def main() -> int:
     probe_rr1a_cron_contention(tmp)
     probe_rr1a_cron_block_shell_safety(tmp)
     probe_rr1a_quick_no_global_cron_count(tmp)
+    # RR1b: module dependency truth и payload completeness
+    probe_rr1b_quick_optional_expectations(tmp)
+    probe_rr1b_watchdog_netdata_expectation(wh, tmp)
+    probe_rr1b_analyzer_collector_ownership(tmp)
+    probe_rr1b_analyzer_collector_failure(tmp)
+    probe_rr1b_discord_only_payload(tmp)
+    probe_rr1b_install_module_neutral_gate(tmp)
     # R1c: Authorization headers out of child argv (shell + ai-deep-check)
     probe_r1c_shell_full_auth_not_in_argv(tmp)
     probe_r1c_quick_github_header_not_in_argv(tmp)

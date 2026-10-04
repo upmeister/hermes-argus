@@ -105,8 +105,10 @@ deploy_template() {
 # hermes-gateway-pids.py — канонический матчер живости gateway, зовётся
 # hermes-watchdog.sh и gateway-liveness.sh; без него оба считают gateway
 # мёртвым (или, наоборот, молча пропускают проверку). Идёт в $HOME_DIR/scripts.
+# B2 (RR1b): collect-metrics.sh уехал в ANALYZER — единственный его потребитель
+# health-analyzer.py; в CORE он жил вторым экземпляром в неканоническом пути.
 CORE_HOME_SCRIPTS=(hermes-watchdog.sh hermes-gateway-pids.py auto-remediate.sh \
-                   check-updates.sh network-guard.sh collect-metrics.sh)
+                   check-updates.sh network-guard.sh)
 CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.sh ssl-expiry-check.sh)
 
 # LOCAL_SERVICES: opt-in сборщик снимка + консьюмер (манифест, гистерезис,
@@ -126,11 +128,18 @@ INTEGRATIONS_HERMES_SCRIPTS=(health-check-integrations.sh)
 # discovery продолжает работать через legacy-юнит и cron-страховку).
 INTEGRATIONS_SYSTEMD=(hermes-argus-config.path hermes-argus-discover.service)
 
-# TG_BOT: интерактивный мониторинг-бот (control plane) — OFF по умолчанию
-# webhook.py разворачивается в ОБЕ копии: poller импортирует её из своего каталога
-# (~/.hermes/scripts), discord-bot — из ~/scripts (урок 2026-09-07: частичный
-# деплой оставлял свежую и старую копии — AttributeError на import).
-TG_BOT_HOME_SCRIPTS=(webhook.py ai-deep-check.py register-commands.sh)
+# SHARED: webhook.py — библиотека handlers'ов, общая для обоих ботов.
+# Владеет ею SHARED, а не TG_BOT (B3, RR1b): discord-bot.py делает `import
+# webhook` и брал файл из ~/scripts, который ставился только TG_BOT, поэтому
+# MODULE_DISCORD_BOT=ON без TG_BOT зависел от старой установленной копии.
+# Два бота — два control plane, но библиотека handlers'ов у них одна.
+SHARED_BOT_HOME_SCRIPTS=(webhook.py)
+
+# TG_BOT: интерактивный мониторинг-бот (control plane) — OFF по умолчанию.
+# webhook.py в $HOME_DIR/scripts ставит SHARED выше; в ~/.hermes/scripts копия
+# остаётся своей (poller импортирует её из своего каталога — урок 2026-09-07:
+# частичный деплой оставлял свежую и старую копии, AttributeError на import).
+TG_BOT_HOME_SCRIPTS=(ai-deep-check.py register-commands.sh)
 TG_BOT_HERMES_SCRIPTS=(monitoring-bot-poller.py webhook.py)
 TG_BOT_SYSTEMD=(monitoring-bot-poller.service)
 
@@ -139,7 +148,10 @@ DISCORD_HOME_SCRIPTS=(discord-bot.py)
 DISCORD_SYSTEMD=(discord-bot.service)
 
 # ANALYZER: L3 health-analyzer экосистема (LLM-анализ логов) — OFF по умолчанию
-ANALYZER_HERMES_SCRIPTS=(health-analyzer.py health_decay.py health_patterns.py health_netdata.py)
+# B2 (RR1b): collect-metrics.sh — канонический путь ~/.hermes/scripts/, ровно
+# тот, который читает health-analyzer.py. Ставит его модуль-потребитель.
+ANALYZER_HERMES_SCRIPTS=(health-analyzer.py health_decay.py health_patterns.py health_netdata.py \
+                         collect-metrics.sh)
 
 # HEARTBEAT: внешний dead man's switch (DMS / GitHub Heartbeat) — OFF по умолчанию
 HEARTBEAT_HOME_SCRIPTS=(heartbeat.sh)
@@ -408,6 +420,15 @@ else
     :
 fi
 
+# Общая библиотека handlers'ов — если включён хотя бы один бот. Ставится
+# СВЕЖИМ из шаблона, поэтому Discord-only установка получает свою копию, а не
+# зависит от остатка чужого модуля (B3, RR1b).
+if module_enabled MODULE_TG_BOT || module_enabled MODULE_DISCORD_BOT; then
+    echo ""
+    echo "📁 [SHARED] библиотека handlers'ов ботов..."
+    deploy_scripts "$HOME_DIR/scripts" "${SHARED_BOT_HOME_SCRIPTS[@]}"
+fi
+
 if module_enabled MODULE_TG_BOT; then
     echo ""
     echo "📁 [TG_BOT] мониторинг-бот (control plane)..."
@@ -427,10 +448,32 @@ if module_enabled MODULE_DISCORD_BOT; then
     fi
     deploy_scripts "$HOME_DIR/scripts" "${DISCORD_HOME_SCRIPTS[@]}"
     deploy_systemd "${DISCORD_SYSTEMD[@]}"
+    # B3 (RR1b): PyYAML нужен изолированному venv, а не системным
+    # site-packages — handle_integrations_all читает реестр именно через yaml.
     if [ ! -x "$HERMES_DIR/discord-venv/bin/python" ]; then
-        echo "   🐍 Создаю venv и ставлю discord.py (одноразово)..."
-        python3 -m venv "$HERMES_DIR/discord-venv" &&
-            "$HERMES_DIR/discord-venv/bin/pip" install -q discord.py
+        echo "   🐍 Создаю venv и ставлю discord.py + PyYAML (одноразово)..."
+        if ! python3 -m venv "$HERMES_DIR/discord-venv"; then
+            echo "   ❌ Не удалось создать $HERMES_DIR/discord-venv."
+            echo "      Частая причина — нет python3-venv: sudo apt-get install -y python3-venv"
+            echo "      (bootstrap install.sh ставит его сам)."
+            exit 1
+        fi
+        if ! "$HERMES_DIR/discord-venv/bin/pip" install -q discord.py PyYAML; then
+            echo "   ❌ Не удалось поставить discord.py/PyYAML в discord-venv."
+            exit 1
+        fi
+    fi
+    # Импорты проверяются ТЕМ ЖЕ интерпретатором, что запускает юнит
+    # (modules/systemd/discord-bot.service: discord-venv/bin/python). Модуль без
+    # этой проверки выглядит развёрнутым, а падает на первом же /settings.
+    DISCORD_MISSING=$("$HERMES_DIR/discord-venv/bin/python" -c \
+        'import importlib.util as u; print(",".join(m for m in ("discord", "yaml") if u.find_spec(m) is None))' \
+        2>/dev/null || true)
+    if [ -n "$DISCORD_MISSING" ]; then
+        echo "   ⚠️  discord-venv не импортирует: $DISCORD_MISSING — юнит не стартует."
+        echo "      Фикс: $HERMES_DIR/discord-venv/bin/pip install discord.py PyYAML"
+    else
+        echo "   ✅ discord-venv импортирует discord + yaml"
     fi
     echo "   ℹ️  Старт: systemctl --user enable --now discord-bot.service (согласованно)"
 fi

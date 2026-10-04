@@ -39,8 +39,8 @@ maintainer read an incomplete project state.
 | [DEBT-004](#debt-004) | Decide whether the old full integration checker can be retired | Owner decision | Retire, migrate or deliberately retain the saved full-mode Hermes job. |
 | [DEBT-005](#debt-005) | Remove old paths after all callers migrate | Partial migration | Confirm config readers and heartbeat-directory migration separately. |
 | [DEBT-006](#debt-006) | Personal bot handle in docstrings | Deferred | Replace provenance handles with generic descriptions if desired. |
-| [DEBT-007](#debt-007) | Optional Netdata/GitHub treated as mandatory | Open | Define absent/configured/broken dependency expectations. |
-| [DEBT-008](#debt-008) | Analyzer/Discord payload and interpreter gaps | Open | Fix collector path and independent Discord payload/imports. |
+| [DEBT-007](#debt-007) | Optional Netdata/GitHub treated as mandatory | Resolved in RR1b source | Deploy and read back; re-entry only for a new optional surface. |
+| [DEBT-008](#debt-008) | Analyzer/Discord payload and interpreter gaps | Resolved in RR1b source | Deploy and read back; re-entry for a new payload/interpreter. |
 | [DEBT-009](#debt-009) | L3 analysis job is external to ANALYZER | Open | Publish a generic Hermes job/model/delivery recipe. |
 | [DEBT-010](#debt-010) | Privileges, lifecycle and log rotation supplied externally | Open | Resolve dashboard, linger, sudo, network policy and rotation. |
 | [DEBT-011](#debt-011) | Global cron restore/count removed | Merged; deploy pending | Deploy RR1a separately and read back preserved operator cron. |
@@ -213,16 +213,21 @@ maintainer read an incomplete project state.
 - **Closure evidence:** Unconfigured is neutral; expected broken components stay visible.
 - **Release disposition:** Clean-install prerequisite.
 
-- **Status:** RR1b clean-install prerequisite
+- **Status:** RESOLVED by RR1b (source; not deployed)
 - **Source:** [production dependency audit](research/2026-10-03-production-deployment-dependencies.md), D1
-- **Evidence:** the quick checker requires Netdata API success and a GitHub
-  token unconditionally; the bot's watchdog view also reports absent Netdata
+- **Evidence:** the quick checker required Netdata API success and a GitHub
+  token unconditionally; the bot's watchdog view also reported absent Netdata
   as failed whenever Hermes exists. Conditional systemd self-health alone
   did not remove these paths.
-- **Follow-up:** define expectation-aware reporting for optional dependencies;
-  preserve failures when a component is explicitly expected/configured.
-- **Trigger:** RR1b dependency contract; required before RR3 default install.
-- **Scope guard:** no mandatory Netdata install or unrelated v2 schema change.
+- **Resolution:** expectation comes from host evidence already available —
+  Netdata is expected when the `netdata.service` unit is installed, GitHub when
+  a token is configured. Absent is neutral, expected-and-broken stays visible,
+  healthy-configured output is unchanged. No new config knob, no mandatory
+  Netdata. Quick-mode neutrality is silent because the watchdog turns every
+  output line into a separate incident.
+- **Re-entry trigger:** a new optional surface needs an expectation predicate,
+  or an operator must declare Netdata expected on a host with no installed unit.
+- **Scope guard honored:** no mandatory Netdata install, no v2 schema change.
 
 <a id="debt-008"></a>
 
@@ -233,17 +238,25 @@ maintainer read an incomplete project state.
 - **Closure evidence:** Independent module fixtures pass; missing collector is not a clean scan.
 - **Release disposition:** Enabled-module prerequisite.
 
-- **Status:** RR1b clean-install prerequisite
+- **Status:** RESOLVED by RR1b (source; not deployed)
 - **Source:** production audit D2/D3; deploy manifests and bot imports
-- **Evidence:** Analyzer expects a collector at a path its manifest does not
-  install; production relies on an older copy. Discord imports `webhook.py`,
-  currently deployed only by TG_BOT, and its isolated venv lacks PyYAML for
-  the registry view. Bootstrap does not include python3-venv.
-- **Follow-up:** make each enabled module supply its actual internal payload
-  and check imports under the interpreter that will run it. Missing/failed
-  collector execution must not look like a clean issue scan.
-- **Trigger:** RR1b optional-module fixture acceptance.
-- **Scope guard:** bounded wiring/dependency changes, no general plugin system.
+- **Evidence:** Analyzer expected a collector at a path its manifest did not
+  install; production relied on an older copy. Discord imports `webhook.py`,
+  currently deployed only by TG_BOT, and its isolated venv lacked PyYAML for
+  the registry view. Bootstrap did not include python3-venv.
+- **Resolution:** `collect-metrics.sh` moved to the `MODULE_ANALYZER` manifest
+  at the canonical `~/.hermes/scripts/` path the consumer reads (the CORE copy
+  under `~/scripts/` is gone — no second competing copy); `health-analyzer.py`
+  treats a missing, non-executable, non-zero or empty collector as explicit
+  failure evidence and refuses the `health-state.json` update. `webhook.py` is
+  owned by a `SHARED` manifest, so Discord-only deploys get a fresh handler
+  library; the venv install adds `PyYAML` and deploy verifies the unit's own
+  interpreter imports what the exercised handlers need; `install.sh`
+  provisions `python3-venv`.
+- **Re-entry trigger:** a new module gains an internal payload or a second
+  isolated interpreter; or a handler starts importing a package the deploy
+  import check does not cover.
+- **Scope guard honored:** bounded wiring/dependency changes, no plugin system.
 
 <a id="debt-009"></a>
 

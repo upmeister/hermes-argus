@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owned state, and existing GitHub-heartbeat installations retain bounded
   legacy-directory compatibility.
 
+- The installer's post-deploy gate follows the selected modules instead of
+  assuming CORE (RR1b). `install.sh` used to run a CORE-only syntax check on
+  `hermes-watchdog.sh` unconditionally, so a clean `MODULE_CORE=OFF` install
+  probed a file the module never installs — printing no result and leaking a
+  raw `No such file or directory` from bash. The gate now says which modules it
+  checked, skips the CORE artifact when CORE is disabled, and still fails loudly
+  when CORE is enabled but its artifact is missing.
+
 ### Changed
 
 - Public installs no longer inherit maintainer-specific defaults (RR0c).
@@ -54,6 +62,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/DEPLOY_CHECKLIST.md`).
 
 ### Changed
+
+- Optional monitoring surfaces are now expected conditionally, so a default
+  install no longer reports failures for components it never promised to
+  install (RR1b). The quick integration check and the bot's watchdog panel
+  treat an absent Netdata agent as neutral and skip the GitHub token check
+  entirely when no token is configured; both keep reporting a failure when the
+  surface *is* expected — a Netdata agent that is installed but not answering,
+  or a GitHub token that stops authenticating. Expectation comes from evidence
+  already on the host (an installed `netdata.service` unit, a configured token)
+  rather than a new configuration knob, and healthy-configured output is
+  unchanged. Quick-mode neutrality is silent on purpose: the watchdog turns any
+  output line into a separate incident, so an informational line would
+  reintroduce the very false report this change removes.
+
+- Enabled modules now receive their own payload and interpreter prerequisites
+  (RR1b). `collect-metrics.sh` belongs to `MODULE_ANALYZER` and is installed at
+  the canonical `~/.hermes/scripts/` path its only consumer reads — previously
+  `MODULE_CORE` deployed a second copy under `~/scripts/` that the Analyzer
+  never used, so a fresh Analyzer install depended on a stale file. A missing,
+  non-executable, non-zero or empty-output collector is now explicit failure
+  evidence: `health-analyzer.py` reports the collection failure, exits non-zero
+  and refuses to update `health-state.json`, so absent data can no longer be
+  recorded as a healthy host. `webhook.py` — the shared handler library — is
+  owned by a dedicated `SHARED` manifest instead of `TG_BOT`, so a Discord-only
+  install (`MODULE_DISCORD_BOT=ON`, `MODULE_TG_BOT=OFF`) gets a fresh copy
+  instead of importing whatever happened to be installed; deploy also installs
+  `PyYAML` into the bot's isolated venv and verifies that the interpreter the
+  Discord unit actually runs can import what the exercised handlers need.
+  `install.sh` additionally provisions `python3-venv`.
 
 - Argus now owns its schedule through a single managed crontab block
   (`# BEGIN HERMES-ARGUS` / `# END HERMES-ARGUS`, RR1a). `deploy.sh`

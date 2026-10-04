@@ -21,8 +21,11 @@ echo "   Host: $(hostname) · user: ${USER:-$(whoami)} · $(lsb_release -ds 2>/d
 # C6 F5 (review 2026-09-11): sudo-гейт ПОСЛЕ dpkg-проверки и только для
 # реально недостающих пакетов; probe — scoped apt-get, не sudo -n true
 # (NOPASSWD-scoped установки проходят честно).
+# B3 (RR1b): python3-venv — преrequisит изолированного интерпретатора бота
+# (discord-bot.service запускается ~/.hermes/discord-venv/bin/python); без
+# него `python3 -m venv` в deploy падает с ensurepip-ошибкой.
 NEED=()
-for pkg in git curl python3 python3-yaml cron; do
+for pkg in git curl python3 python3-yaml python3-venv cron; do
     dpkg -s "$pkg" >/dev/null 2>&1 || NEED+=("$pkg")
 done
 if [ "${#NEED[@]}" -gt 0 ]; then
@@ -99,12 +102,36 @@ fi
 # ── 6. Post-deploy gates ────────────────────────────────────────────────────
 echo ""
 echo "🚦 Post-deploy gates:"
+
+# B4 (RR1b): гейт следует ВЫБРАННЫМ модулям, а не только CORE. Значение флага
+# читается из того же config.env, который уже отработал в deploy.sh, поэтому
+# источник истины один; сам config.env не source'ится — его секреты не должны
+# попадать в окружение bootstrap'а.
+module_flag() {   # module_flag MODULE_CORE -> ON|OFF (пусто = дефолт deploy.sh)
+    local key="$1" val
+    val=$(sed -n "s/^[[:space:]]*${key}=\(.*\)\$/\1/p" config.env 2>/dev/null | tail -1)
+    val=$(printf '%s' "$val" | tr -d '"'"'"'[:space:]')
+    printf '%s' "${val:-ON}"
+}
+
 echo -n "   маркеры: "
 if grep -rn '@[A-Z_]*@' "$HOME/scripts/" "$HOME/.hermes/scripts/" 2>/dev/null | grep -q .; then
     echo "❌ Найдены незаменённые маркеры!"; exit 1
 fi
 echo "чисто"
-bash -n "$HOME/scripts/hermes-watchdog.sh" && echo "   синтаксис: ok"
+
+if [ "$(module_flag MODULE_CORE)" != "OFF" ]; then
+    # Включённый CORE: артефакт обязателен — его отсутствие это сбой deploy,
+    # а не «модуль выключен».
+    if [ ! -f "$HOME/scripts/hermes-watchdog.sh" ]; then
+        echo "   синтаксис CORE: ❌ MODULE_CORE включён, но $HOME/scripts/hermes-watchdog.sh нет"
+        exit 1
+    fi
+    echo -n "   синтаксис CORE: "
+    bash -n "$HOME/scripts/hermes-watchdog.sh" && echo "ok"
+else
+    echo "   синтаксис CORE: модуль выключен — проверка не требуется"
+fi
 
 echo ""
 echo "🏁 Готово. Расписание установлено deploy.sh в managed-блоке"

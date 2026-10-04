@@ -1,6 +1,6 @@
 # RR1b contract — module dependency truth and payload completeness
 
-Status: **SELECTED / READY FOR BUILDER**
+Status: **IMPLEMENTED / AWAITING MAINTAINER MERGE**
 
 This is the selected next task after RR1a. The documentation PR containing this
 contract may merge; implementation still requires a builder task branch/PR and
