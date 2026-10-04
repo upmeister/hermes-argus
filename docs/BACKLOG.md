@@ -25,6 +25,10 @@ The [roadmap](ROADMAP.md) sequences release work; the
 [handoff index](handoffs/README.md) selects implementation authority.
 A backlog entry is not implementation authorization.
 
+Documentation-surface incidents use the `SYNC-*` namespace. They are not
+product DEBT IDs and are tracked here because they can make an agent or
+maintainer read an incomplete project state.
+
 ## All findings at a glance
 
 | ID | Problem | Status | Next action |
@@ -434,3 +438,25 @@ A backlog entry is not implementation authorization.
 
 - **Deployment status:** not deployed, per maintainer. Source closure is
   PR #68; production acceptance requires a separately authorized read-back.
+
+## Documentation operations
+
+<a id="sync-001"></a>
+
+### SYNC-001 — Windows vault stage is missing the Argus project tree
+
+- **Operator impact:** a local maintainer view can appear to have no Argus
+  backlog even though the connected server vault contains it.
+- **Status:** open infrastructure finding.
+- **Source:** 2026-10-04 read-back of the connected Obsidian MCP vault and
+  `C:\Users\covhnw\vault-stage\files`; detailed ownership is in
+  [`docs/VAULT-SYNC.md`](VAULT-SYNC.md).
+- **Next action / responsible role:** sync owner identifies the stage-population
+  process and restores a deterministic project-tree sync; maintainer verifies
+  the three required paths.
+- **Closure evidence:** local stage contains the Argus card, roadmap, backlog
+  index and latest selected/research pointers, with a recorded source revision
+  or sync date.
+- **Release disposition:** documentation operations; does not block runtime
+  code, but agents must not treat the incomplete local stage as a complete
+  mirror.
