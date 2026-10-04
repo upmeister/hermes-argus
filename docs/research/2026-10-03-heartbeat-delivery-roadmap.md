@@ -1,6 +1,6 @@
 # Heartbeat delivery and RR1 review — 2026-10-03
 
-Status: **DISCUSSION INPUT / HEARTBEAT CONTRACT NOT SELECTED**
+Status: **NATIVE DELIVERY DECISION RECORDED / SETUP CONTRACT PENDING**
 
 ## Decisions and provenance
 
@@ -10,7 +10,8 @@ Status: **DISCUSSION INPUT / HEARTBEAT CONTRACT NOT SELECTED**
 | D2 | Latest maintainer message | Netdata stays an optional enhancement | Monitoring-source page, README, installer requirements |
 | D3 | Latest maintainer message | Consolidate installation findings; contract the installer changes later | Existing dependency report is updated, not replaced by a second audit |
 | D4 | Latest maintainer message and clarification | Plan a separate Cronping -> Telegram webhook/delivery cycle and public heartbeat setup docs | Backlog and proposed heartbeat track |
-| D4a | Mid-task maintainer preference | Prefer notifications from bot Argus to avoid a second Telegram sender | Bridge is the preferred path; external hosting and delivery policy remain open |
+| D4a | Earlier preference, superseded 2026-10-04 | Bot Argus was initially preferred | Historical alternative only |
+| D4b | Maintainer correction 2026-10-04 | Use native Cronping Telegram through its bot; no Argus webhook or external VPS | Current delivery decision; public setup guide still needed |
 | D5 | Latest maintainer message | Discuss the revised roadmap before new builder contracts | All new RR1 subdivisions/heartbeat config semantics below are proposals |
 
 Input: the maintainer's vault note
@@ -58,7 +59,13 @@ or advertise production behavior as the new-user default. Contract the
 desired public behavior explicitly and test the shipped template. This is
 [DEBT-018](../BACKLOG.md#debt-018).
 
-## Receiver placement is part of the dead-man requirement
+## Historical bridge alternative — rejected 2026-10-04
+
+The maintainer selected native Cronping Telegram delivery to avoid requiring
+another VPS/receiver from users. The following comparison is retained as
+historical reasoning, not a receiver implementation request.
+
+### Receiver placement considered for the rejected alternative
 
 The intended chain is:
 
@@ -99,11 +106,10 @@ Integration-creation API capability is unverified, rather than proven absent.
 The authenticated account audit must not be repeated just to answer that
 documentation question.
 
-A custom bridge provides control of the Argus sender/format but adds an external
-deployment owner. The maintainer prioritizes bot Argus, making the bridge the
-preferred planning path. Native delivery remains the smaller fallback option
-if the maintainer later accepts a provider bot. The bridge requires no second
-Telegram poller: an external handler can call
+A custom bridge was considered for control of the Argus sender/format, but its
+external deployment requirement led the maintainer to select native Cronping
+Telegram delivery. No Argus receiver is admitted. Technically the rejected
+bridge would need no second Telegram poller: a handler could call
 [`sendMessage`](https://core.telegram.org/bots/api#sendmessage) from bot Argus.
 This is a receiver for Cronping events, not a Telegram `setWebhook` change.
 Keep the existing bot's long polling unchanged; switching its incoming-update
@@ -123,7 +129,8 @@ Cronping receiver contract must validate its own provider assumptions.
 ## Proposed next work, for discussion
 
 Keep RR1a complete and keep its deployment as a separate operator task.
-The existing RR1b umbrella is too broad for one implementation PR. Suggested
+RR1b module-runtime truth is selected and implementation is in progress under
+its frozen B1–B4 contract. The wider RR1b umbrella still needs focused slices. Suggested
 focused slices, with final IDs/order chosen when contracts are accepted:
 
 1. **Runtime dependency truth:** optional Netdata/GitHub expectations, actual
@@ -136,16 +143,18 @@ focused slices, with final IDs/order chosen when contracts are accepted:
 3. **Host lifecycle/setup:** user manager/linger, bounded log rotation,
    dashboard expectation and network-guard applicability, plus operator-owned
    L3 setup. Do not make the personal egress stack a public prerequisite.
-4. **Heartbeat cycle in parallel:** decide backend selection and receiver
-   placement, then contract the selected bridge, secret-safe producer and
-   public setup/verification documentation. Reconcile the shipped GitHub
-   template and production claims as a separate bounded disposition.
+4. **Heartbeat cycle in parallel:** use native Cronping Telegram delivery and
+   supply public setup/verification documentation. Existing integration IDs
+   may be linked by a later bounded Management API task; user bot activation
+   is not assumed automated. No receiver or external VPS is required. Backend
+   selection, secret-safe producer and public GitHub-template parity remain
+   separately contracted follow-ups.
 5. **RR1c/RR1d:** retain versioned installation/update and limited uninstall/
    migration after the actual payload and ownership surfaces are settled.
 
 RR2 runtime localization and RR3 clean-install/release acceptance remain after
 RR1. A usable documented Telegram heartbeat path and the secret-argv debt need
 an explicit disposition before advertising the public release. Native
-Cronping provider delivery remains an alternative to the preferred Argus-bot
-bridge. Hosting and failure policy are discussion choices; requesting a bridge
-cycle is not an authorization to deploy it.
+Cronping native delivery is the accepted path. The earlier Argus-bot bridge
+is rejected; no receiver-hosting decision remains. Documentation and any
+optional Management API assistance still need their own bounded task.
