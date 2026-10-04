@@ -269,7 +269,7 @@ R1c DONE
  -> RR0b DONE / PR #63
  -> RR0c DONE / PR #65
  -> RR1a managed cron ownership                 DONE / PR #68
- -> RR1b dependency/preflight/config and reproducible module payloads  (CURRENT CONTRACT)
+ -> RR1b dependency/preflight/config and reproducible module payloads  (IN PROGRESS)
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (en + ru)
@@ -294,8 +294,9 @@ Netdata is an optional external enhancement; watchdog OS metrics do not depend
 on its trends. Remaining mandatory quick-check/UI assumptions are backlog
 work, not an implicit permission to install Netdata. Before selecting further
 RR1/heartbeat contracts, read
-`docs/research/2026-10-03-heartbeat-delivery-roadmap.md`; its proposed subdivisions
-and receiver placement require discussion. RR1a is not deployed yet.
+`docs/research/2026-10-03-heartbeat-delivery-roadmap.md`. Native Cronping Telegram
+delivery is selected; no Argus webhook/external VPS is required. Later setup/API
+assistance needs a separate contract. RR1a is not deployed yet.
 
 ## References
 

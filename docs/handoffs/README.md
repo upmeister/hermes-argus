@@ -5,7 +5,7 @@ handoffs. **Old handoff presence is not implementation authority.**
 
 Repository `AGENTS.md` scope-control rules apply to every document here.
 
-## Active baseline — updated 2026-10-03
+## Active baseline — updated 2026-10-04
 
 Read in this order:
 
@@ -20,10 +20,10 @@ current selected-task pointer.
 Current selected task:
 
 - **RR1b** — module dependency truth and payload completeness; reviewer Codex.
-  The contract is selected and ready for builder handoff.
+  Builder implementation is in progress; review, merge and deploy remain pending.
 
-RR1a is merged, not deployed. Subsequent RR1 subdivisions and the requested
-Cronping -> bot Argus heartbeat cycle are
+RR1a is merged, not deployed. Subsequent RR1 subdivisions and native Cronping
+Telegram setup through its provider bot are
 [under discussion](../research/2026-10-03-heartbeat-delivery-roadmap.md).
 
 Completed:

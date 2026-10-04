@@ -55,7 +55,7 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> RR0b dead/duplicate runtime removal             DONE / PR #63
  -> RR0c public defaults/naming migration            DONE / PR #65
  -> RR1a managed cron ownership                     DONE / PR #68
- -> RR1b dependency/preflight/config and module payloads  (CURRENT CONTRACT)
+ -> RR1b dependency/preflight/config and module payloads  (IN PROGRESS)
  -> RR1c versioned installation/update
  -> RR1d bounded uninstall/resource migration
  -> RR2 runtime i18n (English + Russian)
@@ -220,19 +220,19 @@ quick-check/UI assumptions are [DEBT-007](BACKLOG.md#debt-007).
 
 ### Revision under discussion — RR1b selected; heartbeat remains separate
 
-The maintainer requested a separate Cronping -> bot Argus delivery cycle and
+The maintainer selected native Cronping Telegram delivery through the provider bot and
 public heartbeat setup documentation. The existing RR1b umbrella should be
 split before implementation: runtime dependency truth/payloads, installer
 preflight/config, and host lifecycle/setup each need bounded acceptance. RR1b
 module-runtime truth is selected in its own contract; the other subdivisions
 remain unselected.
-Heartbeat placement/selection/delivery is a parallel planning track; its
-receiver must remain available when the monitored host fails.
+Heartbeat setup/delivery and backend selection are a separate track. There is
+no Argus webhook or external-VPS prerequisite.
 
 The [heartbeat/RR1 discussion report](research/2026-10-03-heartbeat-delivery-roadmap.md)
 records accepted preferences, source evidence, the proposed sequence and open
-decisions. Bot Argus is preferred; the hosting and delivery-error policy still
-need decisions. RR1c/RR1d remain versioned lifecycle and limited uninstall;
+decisions. Native Cronping Telegram is selected; public setup and delivery
+verification remain pending. RR1c/RR1d remain versioned lifecycle and limited uninstall;
 RR2/RR3 remain localization and release acceptance. This section is a proposal,
 not admission for a new notification subsystem or a combined installer refactor.
 
@@ -310,7 +310,7 @@ R2c.1: closed (PR #49) and confirmed against stable v0.21.5
 RR0a/RR0b: closed (PR #51 / PR #63)
 RR0c: closed (PR #65); maintainer reports deployment
 RR1: current distribution gate; RR1a closed (PR #68)
-RR1b: next slice; contract not yet selected
+RR1b: selected frozen contract; builder implementation in progress
 distribution contract: incomplete
 public RC: gated by RR1/RR2/RR3
 ```

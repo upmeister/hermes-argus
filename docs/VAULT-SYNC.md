@@ -1,54 +1,54 @@
-# Project documentation surfaces and vault sync
+# Vault mirrors and recovered documentation sync
 
-The project deliberately has three documentation surfaces with different
-ownership:
+Argus source/contract authority is its GitHub code repository. The vault is a
+separate Git repository mirrored between the connected server Obsidian vault,
+the actual local Obsidian vault, and its GitHub remote. These three vault copies
+must not be confused with the Argus checkout or a temporary staging folder.
 
-| Surface | Canonical role | Current location/evidence |
+| Surface | Ownership | How it was identified |
 | --- | --- | --- |
-| GitHub repository | Code, contracts, roadmap, backlog and release status | `upmeister/hermes-argus`; repository `main` is authoritative |
-| Server Obsidian vault | Project navigation, decisions and readable receipts | Connected Obsidian MCP vault; note URIs resolve under `/home/ubuntu/obsidian-vault` |
-| Windows vault stage / local Obsidian view | Maintainer's local working mirror | `C:\Users\covhnw\vault-stage\files` is currently a partial stage, not a complete Argus mirror |
+| Argus repository | Code, contracts and release status | GitHub `hermes-argus` and current `origin/main` |
+| Local vault | Human project context; synchronized working copy | Obsidian's registered open-vault path and that directory's Git remote |
+| GitHub vault | Shared versioned vault history | The local/server vault Git remote; separate from the Argus repository |
+| Server vault | MCP-accessible project notes | Connected Obsidian MCP vault and its Git checkout |
 
-The repository is the source of truth. Vault notes mirror project state for
-human navigation; they do not override merged repository documents. A vault
-write through the Obsidian MCP writes the connected server vault. It does not
-automatically create a Windows `vault-stage` file or a repository file.
+An Obsidian MCP write edits the server vault. Its arrival in the other vault
+copies is established by commit/push/pull and read-back, not by a successful
+MCP response alone. Repository backlog `docs/BACKLOG.md` and vault index
+`projects/hermes-argus/docs/BACKLOG.md` are different documents.
 
-## Current Argus sync finding вЂ” 2026-10-04
+## Recovery — 2026-10-04
 
-The server vault contains:
+The maintainer repaired vault synchronization. Inspection found that the prior
+audit had incorrectly treated a temporary `vault-stage` directory as the local
+Obsidian vault. That directory is not an authoritative mirror, and its missing
+Argus tree cannot prove that vault sync is broken.
 
-- `projects/hermes-argus/README.md`;
-- `projects/hermes-argus/docs/BACKLOG.md`;
-- the release roadmap and heartbeat audit.
+A separate real regression was present: desktop backup `2d76b33` reverted the
+Argus project card, release roadmap and heartbeat audit to older versions.
+Server-side updates were recovered from pre-regression vault commit `4e835c3`
+into the actual local vault. Current decisions were reapplied: RR1a merged but
+not deployed; RR1b implementation in progress; optional Netdata; native Cronping
+Telegram delivery without an Argus webhook or an external-VPS prerequisite.
 
-The inspected Windows stage contains other project notes but no
-`projects/hermes-argus/` tree. Therefore the expected three-way propagation is
-**not currently verified**. This is a synchronization/infrastructure finding,
-not evidence that the backlog write failed: the note is readable from the
-connected server vault.
+SYNC-001 records the repair/restoration receipt rather than an ongoing blocker.
+The recovery was published as vault commit `bbc7571`; the server received it by
+fast-forward. Normalized SHA-256 comparisons (LF/CRLF ignored) matched all six
+changed Argus notes between local and server copies; the GitHub vault remote
+contained the same commit. This verifies those restored notes, not every vault
+file or an Argus deployment.
+Use the vault Git history and changed-note parity to establish convergence;
+a successful transport/sync process alone does not prove that the content is
+the newest accepted project state.
 
-Until the sync path is repaired, use these rules:
+## Future status updates
 
-1. Read GitHub `main` for implementation and status truth.
-2. Read the connected server vault for the current readable project index.
-3. Treat the Windows stage as stale/missing when the project tree is absent;
-   do not infer that a note was never written.
-4. Do not manually copy a server note into the repository. The repository
-   backlog remains `docs/BACKLOG.md`; the vault index remains
-   `projects/hermes-argus/docs/BACKLOG.md`.
+1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.
+2. Preserve newer local/server edits and recover regressed content from history.
+3. Commit and push selected note changes through the vault's established flow.
+4. Verify the corresponding GitHub and server versions; compare relevant notes.
+5. Update the Argus backlog/index and project pointers when state changes.
 
-## Required sync repair
-
-The sync owner must identify the process that populates `vault-stage` and make
-it perform a deterministic project-tree check. At minimum, a successful sync
-must prove that these paths exist and have matching current state links:
-
-- project card / README;
-- project roadmap;
-- project backlog index;
-- latest research and selected-contract pointer.
-
-The repair needs its own small operational task. It is outside RR1b and no
-agent should claim three-way synchronization until the local stage contains
-the Argus tree and the check records which source revision/date it mirrors.
+Do not treat temporary staging directories as vaults or close runtime
+deployment gates based on restored documentation. The recovery does not change
+RR1b's frozen implementation contract or perform an Argus deployment.
