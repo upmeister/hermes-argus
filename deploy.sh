@@ -56,6 +56,11 @@ echo ""
 # ── Функция: развернуть bash-шаблон ──────────────────────────────────────
 # Заменяет @МАРКЕРЫ@ на значения из конфига. Новый маркер = новая printf-строка.
 SED_SCRIPT_TMP=""
+# B4 (RR1b): развёрнутые payload'ы. deploy — единственное место, которое знает
+# ВЫБРАННЫЕ модули и фактически куда положила каждый файл, поэтому проверка
+# «поставлено то, что просили» живёт здесь, а не дублируется в bootstrap
+# отдельным списком артефактов и собственной таблицей дефолтов.
+DEPLOYED_PATHS=()
 cleanup_sed_script() { [ -z "$SED_SCRIPT_TMP" ] || rm -f "$SED_SCRIPT_TMP"; }
 trap cleanup_sed_script EXIT
 
@@ -95,6 +100,7 @@ deploy_template() {
     # Делаем исполняемым если исходник был
     [ -x "$src" ] && chmod +x "$dst"
 
+    DEPLOYED_PATHS+=("$dst")
     echo "   ✅ $name → $dst"
 }
 
@@ -105,8 +111,10 @@ deploy_template() {
 # hermes-gateway-pids.py — канонический матчер живости gateway, зовётся
 # hermes-watchdog.sh и gateway-liveness.sh; без него оба считают gateway
 # мёртвым (или, наоборот, молча пропускают проверку). Идёт в $HOME_DIR/scripts.
+# B2 (RR1b): collect-metrics.sh уехал в ANALYZER — единственный его потребитель
+# health-analyzer.py; в CORE он жил вторым экземпляром в неканоническом пути.
 CORE_HOME_SCRIPTS=(hermes-watchdog.sh hermes-gateway-pids.py auto-remediate.sh \
-                   check-updates.sh network-guard.sh collect-metrics.sh)
+                   check-updates.sh network-guard.sh)
 CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.sh ssl-expiry-check.sh)
 
 # LOCAL_SERVICES: opt-in сборщик снимка + консьюмер (манифест, гистерезис,
@@ -126,11 +134,18 @@ INTEGRATIONS_HERMES_SCRIPTS=(health-check-integrations.sh)
 # discovery продолжает работать через legacy-юнит и cron-страховку).
 INTEGRATIONS_SYSTEMD=(hermes-argus-config.path hermes-argus-discover.service)
 
-# TG_BOT: интерактивный мониторинг-бот (control plane) — OFF по умолчанию
-# webhook.py разворачивается в ОБЕ копии: poller импортирует её из своего каталога
-# (~/.hermes/scripts), discord-bot — из ~/scripts (урок 2026-09-07: частичный
-# деплой оставлял свежую и старую копии — AttributeError на import).
-TG_BOT_HOME_SCRIPTS=(webhook.py ai-deep-check.py register-commands.sh)
+# SHARED: webhook.py — библиотека handlers'ов, общая для обоих ботов.
+# Владеет ею SHARED, а не TG_BOT (B3, RR1b): discord-bot.py делает `import
+# webhook` и брал файл из ~/scripts, который ставился только TG_BOT, поэтому
+# MODULE_DISCORD_BOT=ON без TG_BOT зависел от старой установленной копии.
+# Два бота — два control plane, но библиотека handlers'ов у них одна.
+SHARED_BOT_HOME_SCRIPTS=(webhook.py)
+
+# TG_BOT: интерактивный мониторинг-бот (control plane) — OFF по умолчанию.
+# webhook.py в $HOME_DIR/scripts ставит SHARED выше; в ~/.hermes/scripts копия
+# остаётся своей (poller импортирует её из своего каталога — урок 2026-09-07:
+# частичный деплой оставлял свежую и старую копии, AttributeError на import).
+TG_BOT_HOME_SCRIPTS=(ai-deep-check.py register-commands.sh)
 TG_BOT_HERMES_SCRIPTS=(monitoring-bot-poller.py webhook.py)
 TG_BOT_SYSTEMD=(monitoring-bot-poller.service)
 
@@ -139,7 +154,10 @@ DISCORD_HOME_SCRIPTS=(discord-bot.py)
 DISCORD_SYSTEMD=(discord-bot.service)
 
 # ANALYZER: L3 health-analyzer экосистема (LLM-анализ логов) — OFF по умолчанию
-ANALYZER_HERMES_SCRIPTS=(health-analyzer.py health_decay.py health_patterns.py health_netdata.py)
+# B2 (RR1b): collect-metrics.sh — канонический путь ~/.hermes/scripts/, ровно
+# тот, который читает health-analyzer.py. Ставит его модуль-потребитель.
+ANALYZER_HERMES_SCRIPTS=(health-analyzer.py health_decay.py health_patterns.py health_netdata.py \
+                         collect-metrics.sh)
 
 # HEARTBEAT: внешний dead man's switch (DMS / GitHub Heartbeat) — OFF по умолчанию
 HEARTBEAT_HOME_SCRIPTS=(heartbeat.sh)
@@ -337,9 +355,15 @@ deploy_scripts() {
     local dest_dir="$1"; shift
     local script
     for script in "$@"; do
-        if [ -f "$SCRIPTS_DIR/$script" ]; then
-            deploy_template "$SCRIPTS_DIR/$script" "$dest_dir/$script" "$script"
+        # B4 (RR1b): манифест — это обещание развернуть артефакт. Отсутствие
+        # источника в манифесте означает, что включённый модуль останется без
+        # своего файла; молчаливый skip давал «успешный» deploy без payload и
+        # ронял гейт bootstrap'а уже после того, как отчёт об успехе напечатан.
+        if [ ! -f "$SCRIPTS_DIR/$script" ]; then
+            echo "   ❌ Манифест требует $script, но его нет в $SCRIPTS_DIR" >&2
+            return 1
         fi
+        deploy_template "$SCRIPTS_DIR/$script" "$dest_dir/$script" "$script"
     done
 }
 
@@ -365,6 +389,41 @@ deploy_systemd() {
             deploy_template "$unit" "$HOME_DIR/.config/systemd/user/$relpath" "systemd: $relpath"
         fi
     done
+}
+
+# ── Проверка развёрнутого payload (RR1b, B4) ────────────────────────────────
+# Проверяются РОВНО те файлы, которые deploy положил по манифестам включённых
+# модулей: ни чужая инфраструктура в целевых каталогах, ни остатки отключённых
+# модулей сюда не попадают. Проверяется всё, а не один представитель на модуль.
+verify_deployed_payload() {
+    local f bad=0
+    echo ""
+    echo "🔎 Проверка развёрнутого payload..."
+    for f in ${DEPLOYED_PATHS[@]+"${DEPLOYED_PATHS[@]}"}; do
+        if [ ! -f "$f" ]; then
+            echo "   ❌ файл не создан: $f"; bad=1; continue
+        fi
+        if grep -q '@[A-Z_]*@' "$f" 2>/dev/null; then
+            echo "   ❌ незаменённые маркеры: $f"; bad=1
+        fi
+        case "$f" in
+            *.sh)
+                if ! bash -n "$f" 2>/dev/null; then
+                    echo "   ❌ ошибка синтаксиса: $f"; bad=1
+                fi
+                ;;
+            *.py)
+                if ! python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' "$f" 2>/dev/null; then
+                    echo "   ❌ ошибка синтаксиса: $f"; bad=1
+                fi
+                ;;
+        esac
+    done
+    if [ "$bad" -ne 0 ]; then
+        echo "   ❌ payload не прошёл проверку — развёртка считается неуспешной."
+        return 1
+    fi
+    echo "   ✅ payload проверен: ${#DEPLOYED_PATHS[@]} файл(ов), маркеров и синтаксических ошибок нет"
 }
 
 # ── Развёртка по модулям ───────────────────────────────────────────────────
@@ -408,6 +467,15 @@ else
     :
 fi
 
+# Общая библиотека handlers'ов — если включён хотя бы один бот. Ставится
+# СВЕЖИМ из шаблона, поэтому Discord-only установка получает свою копию, а не
+# зависит от остатка чужого модуля (B3, RR1b).
+if module_enabled MODULE_TG_BOT || module_enabled MODULE_DISCORD_BOT; then
+    echo ""
+    echo "📁 [SHARED] библиотека handlers'ов ботов..."
+    deploy_scripts "$HOME_DIR/scripts" "${SHARED_BOT_HOME_SCRIPTS[@]}"
+fi
+
 if module_enabled MODULE_TG_BOT; then
     echo ""
     echo "📁 [TG_BOT] мониторинг-бот (control plane)..."
@@ -427,10 +495,46 @@ if module_enabled MODULE_DISCORD_BOT; then
     fi
     deploy_scripts "$HOME_DIR/scripts" "${DISCORD_HOME_SCRIPTS[@]}"
     deploy_systemd "${DISCORD_SYSTEMD[@]}"
+    # B3 (RR1b): PyYAML нужен изолированному venv, а не системным
+    # site-packages — handle_integrations_all читает реестр именно через yaml.
     if [ ! -x "$HERMES_DIR/discord-venv/bin/python" ]; then
-        echo "   🐍 Создаю venv и ставлю discord.py (одноразово)..."
-        python3 -m venv "$HERMES_DIR/discord-venv" &&
-            "$HERMES_DIR/discord-venv/bin/pip" install -q discord.py
+        echo "   🐍 Создаю venv и ставлю discord.py + PyYAML (одноразово)..."
+        if ! python3 -m venv "$HERMES_DIR/discord-venv"; then
+            echo "   ❌ Не удалось создать $HERMES_DIR/discord-venv."
+            echo "      Частая причина — нет python3-venv: sudo apt-get install -y python3-venv"
+            echo "      (bootstrap install.sh ставит его сам)."
+            exit 1
+        fi
+        if ! "$HERMES_DIR/discord-venv/bin/pip" install -q discord.py PyYAML; then
+            echo "   ❌ Не удалось поставить discord.py/PyYAML в discord-venv."
+            exit 1
+        fi
+    fi
+    # Импорты проверяются ТЕМ ЖЕ интерпретатором, что запускает юнит
+    # (modules/systemd/discord-bot.service: discord-venv/bin/python), и РЕАЛЬНЫМИ
+    # импортами: find_spec доказывал бы лишь находимость пакета, а то, что он
+    # импортируется, — нет. Невозможность выполнить саму проверку (битый
+    # интерпретатор) — провал преrequisта, а НЕ «зелёный» вывод.
+    if DISCORD_IMPORT_OUT=$("$HERMES_DIR/discord-venv/bin/python" -c '
+import sys
+missing = []
+for name in ("discord", "yaml"):
+    try:
+        __import__(name)
+    except Exception:
+        missing.append(name)
+print(",".join(missing))
+' 2>&1); then
+        if [ -n "$DISCORD_IMPORT_OUT" ]; then
+            echo "   ⚠️  discord-venv не импортирует: $DISCORD_IMPORT_OUT — юнит не стартует."
+            echo "      Фикс: $HERMES_DIR/discord-venv/bin/pip install discord.py PyYAML"
+        else
+            echo "   ✅ discord-venv импортирует discord + yaml"
+        fi
+    else
+        echo "   ❌ Проверка импортов discord-venv не выполнилась (код $?):"
+        echo "      $DISCORD_IMPORT_OUT"
+        exit 1
     fi
     echo "   ℹ️  Старт: systemctl --user enable --now discord-bot.service (согласованно)"
 fi
@@ -596,11 +700,13 @@ if module_enabled MODULE_LOCAL_SERVICES; then
 fi
 
 echo ""
+verify_deployed_payload
+
+echo ""
 echo "✅ Развёртка завершена!"
 echo ""
 echo "👉 Что дальше:"
-echo "   1. Проверь, что нет незаменённых маркеров:"
-echo "      grep -rn '@[A-Z_]*@' $HOME_DIR/scripts/ $HERMES_DIR/scripts/ 2>/dev/null || echo 'Чисто!'"
+echo "   1. Маркеры и синтаксис уже проверены выше — повторно грепать не нужно"
 echo "   2. Если включены TG-алерты/бот — проверь токены в config.env"
 echo "   3. Перезагрузи systemd: systemctl --user daemon-reload"
 if module_enabled MODULE_INTEGRATIONS; then

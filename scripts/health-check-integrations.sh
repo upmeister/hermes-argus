@@ -2,7 +2,7 @@
 # health-check-integrations.sh — единый канон интеграционных проверок (2026-08-20).
 #
 # Двухрежимный скрипт (консолидация check-integrations.sh + старый health-check-integrations.sh):
-#   --quick  (default для watchdog L1 и crontab hourly): 4 быстрые проверки ключей/живости.
+#   --quick  (default для watchdog L1 и crontab hourly): быстрые проверки ключей/живости.
 #            Формат вывода = legacy check-integrations.sh (строки "Label: msg" + заголовок
 #            "=== INTEGRATION HEALTH PROBLEMS ==="), потому что hermes-watchdog.sh (L1, 5 мин)
 #            парсит вывод именно так (классы auth/cfg/net по подстрокам).
@@ -121,7 +121,22 @@ check_socks() {   # name port url expected
     return 1
 }
 
-# ── QUICK ЧЕКИ (4 быстрых; формат вывода = legacy check-integrations.sh, парсит watchdog) ──
+# ── B1 (RR1b): ожидание ОПЦИОНАЛЬНЫХ поверхностей ───────────────────────────
+# Netdata и GitHub — расширения, а не базовая зависимость CORE+INTEGRATIONS.
+# «Ожидается» выводится из уже существующих признаков; новых конфиг-ручек нет:
+#   Netdata — агент установлен на этой машине (systemd знает его юнит);
+#   GitHub  — оператор задал токен.
+# Отсутствие = нейтрально и в quick-режиме МОЛЧИТ: любая строка вывода при
+# ненулевом коде hermes-watchdog.sh превращает в отдельный инцидент. Сломанная
+# ожидаемая поверхность остаётся видимой.
+netdata_expected() {
+    command -v systemctl >/dev/null 2>&1 || return 1
+    local load
+    load=$(systemctl show -P LoadState netdata.service 2>/dev/null || true)
+    [[ -n "$load" && "$load" != "not-found" ]]
+}
+
+# ── QUICK ЧЕКИ (формат вывода = legacy check-integrations.sh, парсит watchdog) ──
 run_quick() {
     local PROBLEMS=()
     TG_PROXY="${TELEGRAM_PROXY:-}"
@@ -147,22 +162,25 @@ except Exception:
         [ -n "$out" ] && echo " — $label: $out"
     }
 
-    # 1. GitHub token
+    # 1. GitHub token — только если оператор его задал. Пустой токен = поверхность
+    #    не настроена (нейтрально), а не 401-инцидент.
     local HTTP_CODE hdr
-    # R1c: Authorization не в argv — quoted header в curl config stdin (как в
-    # check_url); без кавычек реальный curl заголовок молча не отправляет.
-    hdr=${GITHUB_TOKEN//\\/\\\\}
-    hdr=${hdr//\"/\\\"}
-    HTTP_CODE=$(printf 'url = https://api.github.com/user\nheader = "Authorization: token %s"\n' \
-        "$hdr" | \
-        curl -s -o /dev/null -w "%{http_code}" --connect-timeout 8 --max-time 12 -K - 2>/dev/null)
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        # R1c: Authorization не в argv — quoted header в curl config stdin (как в
+        # check_url); без кавычек реальный curl заголовок молча не отправляет.
+        hdr=${GITHUB_TOKEN//\\/\\\\}
+        hdr=${hdr//\"/\\\"}
+        HTTP_CODE=$(printf 'url = https://api.github.com/user\nheader = "Authorization: token %s"\n' \
+            "$hdr" | \
+            curl -s -o /dev/null -w "%{http_code}" --connect-timeout 8 --max-time 12 -K - 2>/dev/null)
         HTTP_CODE=${HTTP_CODE:-000}
-    if [ "$HTTP_CODE" != "200" ]; then
-        local MSG="🔑 GitHub token: HTTP $HTTP_CODE (ожидался 200)"
-        if [[ "$HTTP_CODE" == "5"* ]] || [ "$HTTP_CODE" = "000" ]; then
-            MSG+="$(status_hint "GitHub Status" "https://www.githubstatus.com/api/v2/summary.json")"
+        if [ "$HTTP_CODE" != "200" ]; then
+            local MSG="🔑 GitHub token: HTTP $HTTP_CODE (ожидался 200)"
+            if [[ "$HTTP_CODE" == "5"* ]] || [ "$HTTP_CODE" = "000" ]; then
+                MSG+="$(status_hint "GitHub Status" "https://www.githubstatus.com/api/v2/summary.json")"
+            fi
+            PROBLEMS+=("$MSG")
         fi
-        PROBLEMS+=("$MSG")
     fi
 
     # 2. Telegram monitoring bot (getMe через TG_PROXY, ретраи 3×10с, таймаут 25с — РКН-полублок)
@@ -187,10 +205,14 @@ except Exception:
         fi
     fi
 
-    # 3. Netdata API
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 8 \
-        "http://@HERMES_HOST@:@NETDATA_PORT@/api/v1/info" 2>/dev/null); HTTP_CODE=${HTTP_CODE:-000}
-    [ "$HTTP_CODE" != "200" ] && PROBLEMS+=("📊 Netdata API: HTTP $HTTP_CODE (ожидался 200)")
+    # 3. Netdata API — только если агент установлен (см. B1 выше). На машине без
+    #    Netdata его отсутствие — нейтрально, чистая установка CORE+INTEGRATIONS
+    #    не обязана платить за опциональную метрику.
+    if netdata_expected; then
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 8 \
+            "http://@HERMES_HOST@:@NETDATA_PORT@/api/v1/info" 2>/dev/null); HTTP_CODE=${HTTP_CODE:-000}
+        [ "$HTTP_CODE" != "200" ] && PROBLEMS+=("📊 Netdata API: HTTP $HTTP_CODE (ожидался 200)")
+    fi
 
     # RR1a: глобальная эвристика «<7 задач в crontab» снята — расписание
     # принадлежит managed-блоку deploy.sh; unrelated job'ы оператора не

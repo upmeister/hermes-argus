@@ -39,8 +39,8 @@ maintainer read an incomplete project state.
 | [DEBT-004](#debt-004) | Decide whether the old full integration checker can be retired | Owner decision | Retire, migrate or deliberately retain the saved full-mode Hermes job. |
 | [DEBT-005](#debt-005) | Remove old paths after all callers migrate | Partial migration | Confirm config readers and heartbeat-directory migration separately. |
 | [DEBT-006](#debt-006) | Personal bot handle in docstrings | Deferred | Replace provenance handles with generic descriptions if desired. |
-| [DEBT-007](#debt-007) | Optional Netdata/GitHub treated as mandatory | Open | Define absent/configured/broken dependency expectations. |
-| [DEBT-008](#debt-008) | Analyzer/Discord payload and interpreter gaps | Open | Fix collector path and independent Discord payload/imports. |
+| [DEBT-007](#debt-007) | Optional Netdata/GitHub treated as mandatory | Resolved in RR1b source | Deploy and read back; re-entry only for a new optional surface. |
+| [DEBT-008](#debt-008) | Analyzer/Discord payload and interpreter gaps | Resolved in RR1b source | Deploy and read back; re-entry for a new payload/interpreter. |
 | [DEBT-009](#debt-009) | L3 analysis job is external to ANALYZER | Open | Publish a generic Hermes job/model/delivery recipe. |
 | [DEBT-010](#debt-010) | Privileges, lifecycle and log rotation supplied externally | Open | Resolve dashboard, linger, sudo, network policy and rotation. |
 | [DEBT-011](#debt-011) | Global cron restore/count removed | Merged; deploy pending | Deploy RR1a separately and read back preserved operator cron. |
@@ -51,6 +51,8 @@ maintainer read an incomplete project state.
 | [DEBT-016](#debt-016) | Heartbeat selection follows credentials | Needs decision | Choose explicit backend selection and compatibility migration. |
 | [DEBT-017](#debt-017) | Native Cronping Telegram setup | Native route selected; setup pending | Publish provider-bot instructions and verify delivery separately from pings. |
 | [DEBT-018](#debt-018) | Public GitHub workflow differs from production | Needs decision | Choose public timing/dedup/recovery/pin behavior. |
+| [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Open | Maintainer selects a stale-evidence policy before RR3. |
+| [DEBT-020](#debt-020) | Discord `!deepcheck` needs a TG_BOT-owned payload | Open | Maintainer decides payload ownership vs. unsupported-module reporting. |
 
 ## Open finding cards
 
@@ -213,16 +215,21 @@ maintainer read an incomplete project state.
 - **Closure evidence:** Unconfigured is neutral; expected broken components stay visible.
 - **Release disposition:** Clean-install prerequisite.
 
-- **Status:** RR1b clean-install prerequisite
+- **Status:** RESOLVED by RR1b (source; not deployed)
 - **Source:** [production dependency audit](research/2026-10-03-production-deployment-dependencies.md), D1
-- **Evidence:** the quick checker requires Netdata API success and a GitHub
-  token unconditionally; the bot's watchdog view also reports absent Netdata
+- **Evidence:** the quick checker required Netdata API success and a GitHub
+  token unconditionally; the bot's watchdog view also reported absent Netdata
   as failed whenever Hermes exists. Conditional systemd self-health alone
   did not remove these paths.
-- **Follow-up:** define expectation-aware reporting for optional dependencies;
-  preserve failures when a component is explicitly expected/configured.
-- **Trigger:** RR1b dependency contract; required before RR3 default install.
-- **Scope guard:** no mandatory Netdata install or unrelated v2 schema change.
+- **Resolution:** expectation comes from host evidence already available —
+  Netdata is expected when the `netdata.service` unit is installed, GitHub when
+  a token is configured. Absent is neutral, expected-and-broken stays visible,
+  healthy-configured output is unchanged. No new config knob, no mandatory
+  Netdata. Quick-mode neutrality is silent because the watchdog turns every
+  output line into a separate incident.
+- **Re-entry trigger:** a new optional surface needs an expectation predicate,
+  or an operator must declare Netdata expected on a host with no installed unit.
+- **Scope guard honored:** no mandatory Netdata install, no v2 schema change.
 
 <a id="debt-008"></a>
 
@@ -233,17 +240,25 @@ maintainer read an incomplete project state.
 - **Closure evidence:** Independent module fixtures pass; missing collector is not a clean scan.
 - **Release disposition:** Enabled-module prerequisite.
 
-- **Status:** RR1b clean-install prerequisite
+- **Status:** RESOLVED by RR1b (source; not deployed)
 - **Source:** production audit D2/D3; deploy manifests and bot imports
-- **Evidence:** Analyzer expects a collector at a path its manifest does not
-  install; production relies on an older copy. Discord imports `webhook.py`,
-  currently deployed only by TG_BOT, and its isolated venv lacks PyYAML for
-  the registry view. Bootstrap does not include python3-venv.
-- **Follow-up:** make each enabled module supply its actual internal payload
-  and check imports under the interpreter that will run it. Missing/failed
-  collector execution must not look like a clean issue scan.
-- **Trigger:** RR1b optional-module fixture acceptance.
-- **Scope guard:** bounded wiring/dependency changes, no general plugin system.
+- **Evidence:** Analyzer expected a collector at a path its manifest did not
+  install; production relied on an older copy. Discord imports `webhook.py`,
+  currently deployed only by TG_BOT, and its isolated venv lacked PyYAML for
+  the registry view. Bootstrap did not include python3-venv.
+- **Resolution:** `collect-metrics.sh` moved to the `MODULE_ANALYZER` manifest
+  at the canonical `~/.hermes/scripts/` path the consumer reads (the CORE copy
+  under `~/scripts/` is gone — no second competing copy); `health-analyzer.py`
+  treats a missing, non-executable, non-zero or empty collector as explicit
+  failure evidence and refuses the `health-state.json` update. `webhook.py` is
+  owned by a `SHARED` manifest, so Discord-only deploys get a fresh handler
+  library; the venv install adds `PyYAML` and deploy verifies the unit's own
+  interpreter imports what the exercised handlers need; `install.sh`
+  provisions `python3-venv`.
+- **Re-entry trigger:** a new module gains an internal payload or a second
+  isolated interpreter; or a handler starts importing a package the deploy
+  import check does not cover.
+- **Scope guard honored:** bounded wiring/dependency changes, no plugin system.
 
 <a id="debt-009"></a>
 
@@ -421,6 +436,52 @@ maintainer read an incomplete project state.
   with dedup/pinning in a separate production workflow.
 - **Boundary:** choose public behavior explicitly; do not copy private
   workflow/config or claim those features are already shipped.
+
+<a id="debt-019"></a>
+
+### DEBT-019 — Analyzer UI marks old state healthy without a freshness decision
+
+- **Operator impact:** after collection failures, `/watchdog` can keep a green
+  Analyzer line indefinitely while showing an old last-check timestamp.
+- **Next action / responsible roles:** maintainer selects the desired stale
+  evidence policy; architect scopes a bounded UI/consumer follow-up; builder
+  only after selection.
+- **Closure evidence:** an old valid Analyzer state renders neutral/stale
+  instead of healthy per the selected policy; a fresh success stays healthy and
+  malformed/absent state stays visible.
+- **Release disposition:** does not block RR1b; decide before RR3.
+
+- **Status:** open, outside RR1b.
+- **Source:** RR1b focused review at `4dfc6ed`;
+  `scripts/webhook.py` renders a check mark whenever the stored JSON is
+  readable, without checking age.
+- **Evidence:** RR1b deliberately preserves `health-state.json` on a failed
+  collection, which makes the consumer's missing freshness decision visible.
+  The timestamp itself is shown, so this is not hidden data.
+- **Boundary:** do not add failed-attempt state and do not change what the
+  Analyzer writes; this is a consumer acceptance decision.
+
+<a id="debt-020"></a>
+
+### DEBT-020 — Discord deepcheck calls a TG_BOT-owned executable
+
+- **Operator impact:** on a fresh Discord-only deployment, `!deepcheck` has its
+  shared handler but fails because `~/scripts/ai-deep-check.py` is absent.
+- **Next action / responsible roles:** maintainer decides whether the Discord
+  command should own that payload or report the unsupported module
+  combination; architect scopes; builder after selection.
+- **Closure evidence:** the chosen Discord-only deepcheck behavior is verified
+  in a fresh isolated deployment, without old files or live API calls.
+- **Release disposition:** not a RR1b blocker under the selected B3 payload and
+  import boundary; review command completeness before RR3.
+
+- **Status:** open, outside RR1b.
+- **Source:** RR1b focused review at `4dfc6ed`; `scripts/discord-bot.py` binds
+  `handle_deep_check`, `scripts/webhook.py` starts `~/scripts/ai-deep-check.py`,
+  and `deploy.sh` supplies that script only through `TG_BOT_HOME_SCRIPTS`.
+- **Evidence:** an isolated Discord-only deploy confirms the file is absent.
+- **Boundary:** RR1b fixed ownership of the shared handler library
+  (`webhook.py`) and its interpreter, not the deepcheck payload decision.
 
 ## Resolved source changes with pending deployment
 

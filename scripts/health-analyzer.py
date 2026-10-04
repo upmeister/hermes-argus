@@ -41,16 +41,36 @@ state = load_state()
 # ═══════════════════════════════════════════════════════════════════════════
 
 def collect_metrics():
+    """Собирает метрики коллектором.
+
+    Возвращает пару (вывод, ошибка). Ошибка непуста => метрики НЕ собраны.
+    B2 (RR1b): прежний вариант отдавал result.stdout при любом коде возврата,
+    а отсутствующий коллектор давал пустой stdout без исключения (bash
+    завершается 127, stderr проглатывался). Пустой вывод уходил в
+    find_issues() как «проблем нет» и записывался в health-state.json —
+    отсутствие данных выглядело как здоровье хоста.
+    """
+    if not METRICS_SCRIPT.is_file():
+        return "", f"коллектор не установлен по каноническому пути: {METRICS_SCRIPT}"
+    if not os.access(METRICS_SCRIPT, os.X_OK):
+        # Запуск через `bash` обошёл бы бит исполнения: коллектор без права
+        # исполнения — это ненастроенный сборочный путь, а не «сработавший bash».
+        return "", f"коллектор не исполняемый: {METRICS_SCRIPT}"
     try:
         result = subprocess.run(
             ["bash", str(METRICS_SCRIPT)],
             capture_output=True, text=True, timeout=30
         )
-        return result.stdout
     except Exception as e:
-        return f"ОШИБКА сбора метрик: {e}"
+        return "", f"коллектор не выполнился: {e}"
+    if result.returncode != 0:
+        return "", (f"коллектор завершился с кодом {result.returncode}: "
+                    f"{result.stderr.strip()[:200] or '(пустой stderr)'}")
+    if not (result.stdout or "").strip():
+        return "", "коллектор завершился успешно, но не выдал ни одной метрики"
+    return result.stdout, None
 
-metrics_output = collect_metrics()
+metrics_output, COLLECTOR_ERROR = collect_metrics()
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 2b. L1-алерты watchdog (для L3-контекста: health-check должен видеть,
@@ -188,7 +208,11 @@ def output_report():
     print("\n=== WATCHDOG ALERTS (L1, last 24h) ===")
     print(json.dumps(collect_watchdog_alerts(), ensure_ascii=False, indent=2))
     print("\n=== RAW METRICS ===")
-    print(metrics_output)
+    if COLLECTOR_ERROR:
+        # B2 (RR1b): отсутствие данных — это инцидент сбора, а не «чисто».
+        print(f"⚠️  МЕТРИКИ НЕ СОБРАНЫ: {COLLECTOR_ERROR}")
+    else:
+        print(metrics_output)
 
 def _is_daily_due():
     hour = NOW.hour
@@ -234,5 +258,11 @@ def update_state():
 
 if __name__ == "__main__":
     output_report()
+    # B2 (RR1b): состояние обновляется только по реально собранным метрикам.
+    # Иначе сбой коллектора продвинул бы last_check и записал «проблем нет» —
+    # то есть подтвердило бы здоровье хоста данными, которых не существует.
+    if COLLECTOR_ERROR:
+        print(f"ANALYZER_COLLECTOR_FAILED: {COLLECTOR_ERROR}", file=sys.stderr)
+        sys.exit(2)
     if "--no-update" not in sys.argv:
         update_state()

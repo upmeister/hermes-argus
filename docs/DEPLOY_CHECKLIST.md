@@ -28,6 +28,47 @@ Analyzer state freshness is not proof that a Hermes L3 analysis job is installed
 Record log rotation and network-guard privileges/applicability separately.
 These prerequisites are not automatic installer behavior yet.
 
+## RR1b module/runtime truth read-back (after the first RR1b deploy)
+
+RR1b changes which files an enabled module owns and what the quick check
+considers a failure. These are the observable consequences to read back on the
+production host:
+
+1. **Netdata / GitHub expectation.** If this host runs a Netdata agent, the
+   quick check and `/watchdog` must still report it when the API stops
+   answering. If a surface is genuinely not configured, it must be silent
+   rather than reporting a failure. Verify both directions — a check that only
+   ever passes is as wrong as one that only ever fails.
+2. **Analyzer collector.** With `MODULE_ANALYZER=ON`, confirm
+   `~/.hermes/scripts/collect-metrics.sh` exists and that
+   `python3 ~/.hermes/scripts/health-analyzer.py --update` exits `0`. Then
+   confirm the failure path is honest: temporarily make the collector
+   non-executable (or point it at a non-zero exit) and verify the run exits
+   non-zero with `ANALYZER_COLLECTOR_FAILED` and that `health-state.json`
+   `last_check` does **not** advance. Restore afterwards.
+3. **Legacy collector copy.** RR1b stops deploying `~/scripts/collect-metrics.sh`.
+   An existing copy is left in place but is no longer owned by Argus and no
+   longer read by the Analyzer; it may be removed by the operator once the
+   canonical copy is confirmed working.
+4. **Discord (only if `MODULE_DISCORD_BOT=ON`).** Confirm `~/scripts/webhook.py`
+   exists and was refreshed by this deploy, and that deploy reported the
+   `discord-venv` import check. If it warns about missing imports, install them
+   into the venv the unit runs and re-check.
+5. **Core-off installs (only if `MODULE_CORE=OFF`).** `deploy.sh` must print
+   `✅ payload проверен: N файл(ов)` and `install.sh` must reach its completion
+   text with `payload: проверен deploy.sh`. A raw `No such file or directory`
+   from `bash -n` indicates a gate that never ran correctly.
+6. **Deploy fails on a bad payload.** Confirm the deployer's own check is real:
+   a deployed file with a syntax error, or a manifest source missing from the
+   repository, must make `deploy.sh` exit non-zero with `❌ payload не прошёл
+   проверку` / `❌ Манифест требует …`, and `install.sh` must abort with no
+   completion text. This is the property that replaced the installer's own
+   artifact list.
+7. **Discord interpreter check (only if `MODULE_DISCORD_BOT=ON`).** Deploy must
+   print either `✅ discord-venv импортирует discord + yaml` or a named
+   missing-import warning. If it reports that the import check itself could not
+   run, the deploy fails and the module must not be started.
+
 ## RR1a cron read-back (after the first RR1a deploy)
 
 1. Confirm the managed block is present exactly once:

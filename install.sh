@@ -21,8 +21,11 @@ echo "   Host: $(hostname) · user: ${USER:-$(whoami)} · $(lsb_release -ds 2>/d
 # C6 F5 (review 2026-09-11): sudo-гейт ПОСЛЕ dpkg-проверки и только для
 # реально недостающих пакетов; probe — scoped apt-get, не sudo -n true
 # (NOPASSWD-scoped установки проходят честно).
+# B3 (RR1b): python3-venv — преrequisит изолированного интерпретатора бота
+# (discord-bot.service запускается ~/.hermes/discord-venv/bin/python); без
+# него `python3 -m venv` в deploy падает с ensurepip-ошибкой.
 NEED=()
-for pkg in git curl python3 python3-yaml cron; do
+for pkg in git curl python3 python3-yaml python3-venv cron; do
     dpkg -s "$pkg" >/dev/null 2>&1 || NEED+=("$pkg")
 done
 if [ "${#NEED[@]}" -gt 0 ]; then
@@ -80,7 +83,12 @@ fi
 # ── 4. Deploy ───────────────────────────────────────────────────────────────
 echo ""
 echo "🚀 Деплой..."
-bash deploy.sh config.env
+# Вывод сохраняется для fail-closed гейта ниже, но идёт в терминал как раньше.
+# pipefail в шелле уже включён: сбой deploy.sh обрывает установку здесь.
+DEPLOY_LOG="$(mktemp)"
+trap 'rm -f "$DEPLOY_LOG"' EXIT
+bash deploy.sh config.env 2>&1 | tee "$DEPLOY_LOG"
+DEPLOY_OUT="$(cat "$DEPLOY_LOG")"
 
 # ── 5. Watcher ──────────────────────────────────────────────────────────────
 systemctl --user daemon-reload
@@ -99,12 +107,24 @@ fi
 # ── 6. Post-deploy gates ────────────────────────────────────────────────────
 echo ""
 echo "🚦 Post-deploy gates:"
-echo -n "   маркеры: "
-if grep -rn '@[A-Z_]*@' "$HOME/scripts/" "$HOME/.hermes/scripts/" 2>/dev/null | grep -q .; then
-    echo "❌ Найдены незаменённые маркеры!"; exit 1
+
+# B4 (RR1b): проверка payload'а живёт в deploy.sh — там единственном месте,
+# где известны выбранные модули и фактические пути развёрнутых файлов.
+# Bootstrap не дублирует ни список артефактов, ни таблицу дефолтов модулей:
+# предыдущие версии гейта расходились с deploy и по дефолтам (не указанный
+# флаг считался ON, хотя optional-модули по умолчанию OFF), и по охвату
+# (рекурсивный grep целых каталогов цеплял чужую инфраструктуру и остатки
+# отключённых модулей), и проверял один представитель на модуль.
+#
+# Здесь гейт fail-closed: отсутствие подтверждения означает, что проверка не
+# отработала, и молчать об этом нельзя.
+echo -n "   payload: "
+if printf '%s\n' "$DEPLOY_OUT" | grep -q 'payload проверен:'; then
+    echo "проверен deploy.sh (маркеры + синтаксис каждого развёрнутого файла)"
+else
+    echo "❌ deploy.sh не подтвердил проверку развёрнутого payload"
+    exit 1
 fi
-echo "чисто"
-bash -n "$HOME/scripts/hermes-watchdog.sh" && echo "   синтаксис: ok"
 
 echo ""
 echo "🏁 Готово. Расписание установлено deploy.sh в managed-блоке"

@@ -341,6 +341,20 @@ def handle_watchdog_status() -> str:
                               capture_output=True, text=True, timeout=5
                               ).stdout.strip() or "unknown"
 
+    def optional_unit_installed(unit: str) -> bool:
+        """B1 (RR1b): «опциональная поверхность установлена» — её юнит известен
+        СИСТЕМНОМУ менеджеру. Прежний признак `hermes_installed` для этого не
+        годился: он одинаково истинен на хосте с Netdata и без него, поэтому
+        чистая установка CORE+INTEGRATIONS получала ложный ❌. Юнита нет —
+        поверхность не настроена (нейтрально), а не отказ."""
+        try:
+            load = subprocess.run(["systemctl", "show", "-P", "LoadState", unit],
+                                  capture_output=True, text=True, timeout=5
+                                  ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return bool(load) and load != "not-found"
+
     def mark(st: str) -> str:
         if st == "active":
             return _CHECK
@@ -388,7 +402,8 @@ def handle_watchdog_status() -> str:
         else:
             lines.append(f"{mark(st)} Сервис {sname} ({st})")
 
-    # Netdata: HTTP probe, оба адреса (бинд варьируется по установкам)
+    # Netdata: HTTP probe, оба адреса (бинд варьируется по установкам).
+    # B1 (RR1b): ожидаемость — по установленному агенту, не по наличию Hermes.
     nd = "000"
     for host in dict.fromkeys(["@HERMES_HOST@", "127.0.0.1"]):
         nd = subprocess.run(
@@ -398,12 +413,13 @@ def handle_watchdog_status() -> str:
         ).stdout.strip() or "000"
         if nd == "200":
             break
+    netdata_expected = optional_unit_installed("netdata.service")
     if nd == "200":
         lines.append(f"{_CHECK} Netdata API (HTTP {nd})")
-    elif hermes_installed:
-        lines.append(f"{_CROSS} Netdata API (HTTP {nd})")
+    elif netdata_expected:
+        lines.append(f"{_CROSS} Netdata API (HTTP {nd}) — агент установлен, но не отвечает")
     else:
-        lines.append(f"⚪ Netdata API (HTTP {nd}) — не настроен")
+        lines.append(f"⚪ Netdata API — не установлен (опциональная метрика)")
 
     for name in ["gateway-liveness", "dashboard-liveness"]:
         present = name in cron.stdout

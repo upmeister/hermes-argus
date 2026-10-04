@@ -192,13 +192,16 @@ The maintainer-selected sequence is:
    variables, adoption of previously generated lines, and retirement of
    the whole-user count heuristic and backup restore.
    [Builder contract](handoffs/rr1a-managed-cron-contract.md).
-2. **RR1b — dependencies/preflight/config — planned.** Module/interpreter
-   dependencies, Analyzer collector and shared bot payloads, optional Netdata
-   and GitHub reporting, safe private config, user-manager/privilege/network
-   applicability, log rotation and truthful L3 setup instructions.
-   A first bounded candidate is prepared in
-   [the RR1b module-runtime truth contract](handoffs/rr1b-module-runtime-truth-contract.md),
-   and is now selected for the next builder handoff.
+2. **RR1b — dependencies/preflight/config — first slice implemented.** The
+   bounded module-runtime truth contract
+   ([contract](handoffs/rr1b-module-runtime-truth-contract.md)) is implemented
+   and awaiting merge: expectation-aware optional Netdata/GitHub reporting,
+   one canonical Analyzer collector with honest failure semantics, shared bot
+   handler payload owned independently of `TG_BOT` with an interpreter import
+   check, and a module-neutral installer post-deploy gate. Remaining RR1b
+   umbrella items — safe private config, user-manager/privilege/network
+   applicability, log rotation and truthful L3 setup instructions — are **not**
+   covered by this slice and still need their own contract.
 3. **RR1c — versioned installation/update — planned.** Explicit stable/edge
    selection and a bounded update path.
 4. **RR1d — uninstall/resource migration — planned.** Remove only Argus-owned

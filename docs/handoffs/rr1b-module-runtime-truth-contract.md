@@ -5,6 +5,9 @@ Status: **IN PROGRESS / BUILDER IMPLEMENTING**
 Maintainer confirmed work in progress on 2026-10-04. Acceptance scope is frozen;
 no implementation review PASS, merge or deployment is implied by this status.
 
+Implementation branch: `feat/rr1b-module-runtime-truth` (baseline `9f64fa4`),
+PR #71. Not deployed.
+
 This is the selected next task after RR1a. The documentation PR containing this
 contract may merge; implementation still requires a builder task branch/PR and
 separate maintainer merge authority.
