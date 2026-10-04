@@ -1647,18 +1647,24 @@ def _rr1b_host_shims(shim_dir: Path, *, user_bus: bool = True, linger: str = "ye
     sudo -l     — печатает список и НИЧЕГО не выполняет: откат не запускается.
     """
     # stat: -c '%U'/'%a' для config.env, остальное — настоящий stat.
+    # Путь к настоящему stat резолвится ЗДЕСЬ: внутри шима `command -v stat`
+    # нашёл бы сам шим (он стоит первым в PATH) и exec увёл бы его в
+    # бесконечную рекурсию — ровно то, что поймал Linux-CI.
+    real_stat = subprocess.run(["bash", "-c", "command -v stat"],
+                               capture_output=True, text=True, timeout=30
+                               ).stdout.strip().split("\n")[0]
     _write_argv_shim(shim_dir, "stat",
-                     'REAL_STAT=$(command -v stat)\n'
-                     'if [ "$1" = "-c" ]; then\n'
-                     '  case "$3" in\n'
-                     '    *config.env)\n'
-                     '      case "$2" in\n'
-                     '        %U) printf \'%s\\n\' "${RR1B_CONFIG_OWNER:-$(id -un)}"; exit 0 ;;\n'
-                     '        %a) printf \'%s\\n\' "${RR1B_CONFIG_MODE:-600}"; exit 0 ;;\n'
-                     '      esac ;;\n'
-                     '  esac\n'
-                     'fi\n'
-                     'exec "$REAL_STAT" "$@"\n')
+                     'case "$1:$2" in\n'
+                     '  "-c:%U"|"-c:%a")\n'
+                     '    case "$3" in\n'
+                     '      *config.env)\n'
+                     '        case "$2" in\n'
+                     '          %U) printf \'%s\\n\' "${RR1B_CONFIG_OWNER:-$(id -un)}"; exit 0 ;;\n'
+                     '          %a) printf \'%s\\n\' "${RR1B_CONFIG_MODE:-600}"; exit 0 ;;\n'
+                     '        esac ;;\n'
+                     '    esac ;;\n'
+                     'esac\n'
+                     f'exec "{real_stat}" "$@"\n')
     _write_argv_shim(shim_dir, "systemctl",
                      'if [ "$1" = "--user" ]; then\n'
                      '  shift\n'
