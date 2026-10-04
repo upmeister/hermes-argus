@@ -1646,7 +1646,10 @@ def _rr1b_host_shims(shim_dir: Path, *, user_bus: bool = True, linger: str = "ye
     logrotate   — наличие/успех dry-run;
     sudo -l     — печатает список и НИЧЕГО не выполняет: откат не запускается.
     """
-    # stat: -c '%U'/'%a' для config.env, остальное — настоящий stat.
+    # stat: -c '%U'/'%a' для конфига фикстуры, остальное — настоящий stat.
+    # Шим моделирует ПЛАТФОРМУ (на Windows-ФС chmod не работает), а не решает,
+    # какой файл является конфигом — поэтому маска *.env, а не *config.env:
+    # фикстуры называют свои конфиги по-разному (ls-config-ON.env).
     # Путь к настоящему stat резолвится ЗДЕСЬ: внутри шима `command -v stat`
     # нашёл бы сам шим (он стоит первым в PATH) и exec увёл бы его в
     # бесконечную рекурсию — ровно то, что поймал Linux-CI.
@@ -1657,7 +1660,7 @@ def _rr1b_host_shims(shim_dir: Path, *, user_bus: bool = True, linger: str = "ye
                      'case "$1:$2" in\n'
                      '  "-c:%U"|"-c:%a")\n'
                      '    case "$3" in\n'
-                     '      *config.env)\n'
+                     '      *.env)\n'
                      '        case "$2" in\n'
                      '          %U) printf \'%s\\n\' "${RR1B_CONFIG_OWNER:-$(id -un)}"; exit 0 ;;\n'
                      '          %a) printf \'%s\\n\' "${RR1B_CONFIG_MODE:-600}"; exit 0 ;;\n'
@@ -6158,6 +6161,8 @@ def probe_rr1b2_private_config(tmp: Path):
     elif oct(cfg.stat().st_mode)[-3:] != "600":
         problems.append(f"созданный конфиг имеет режим {oct(cfg.stat().st_mode)[-3:]}")
         posix_note = ""
+    else:
+        posix_note = "созданный конфиг 0600"
 
     check("rr1b2_private_config", not problems,
           f"problems={problems} {posix_note if not problems else ''}".strip())
