@@ -9,9 +9,10 @@ it does not authorize implementation, merge or deployment.
 
 Implementation baseline after RR1a and its status sync:
 
-`ed3661f (PR #69 status sync; resolve fresh main before coding)
+```text
+ed3661f (PR #69 status sync; resolve fresh main before coding)
 RR1a implementation = PR #68 / 9aaf0a5
-`
+```
 
 Research authority:
 
