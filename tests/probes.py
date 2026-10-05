@@ -1667,8 +1667,8 @@ def _rr1b_host_shims(shim_dir: Path, *, user_bus: bool = True, linger: str = "ye
                      '    case "$3" in\n'
                      '      *.env)\n'
                      '        case "$2" in\n'
-                     '          %U) printf \'%s\\n\' "${RR1B_CONFIG_OWNER:-$(id -un)}"; exit 0 ;;\n'
-                     '          %a) printf \'%s\\n\' "${RR1B_CONFIG_MODE:-600}"; exit 0 ;;\n'
+                     '          %U) printf \'%s\\n\' "${RR1B_CONFIG_OWNER-$(id -un)}"; exit 0 ;;\n'
+                     '          %a) printf \'%s\\n\' "${RR1B_CONFIG_MODE-600}"; exit 0 ;;\n'
                      '        esac ;;\n'
                      '    esac ;;\n'
                      'esac\n'
@@ -1687,32 +1687,46 @@ def _rr1b_host_shims(shim_dir: Path, *, user_bus: bool = True, linger: str = "ye
     if logrotate:
         _write_argv_shim(shim_dir, "logrotate", 'exit "${RR1B_LOGROTATE_RC:-0}"\n')
     if sudo != "none":
-        # Настоящий неинтерактивный sudo для `-l` завершается УСПЕХОМ, даже когда
-        # политика не подходит: поэтому перечень печатается и код возврата 0, а
-        # решение принимает deploy по содержимому (NOPASSWD/границы аргументов).
-        # "fail" — отдельный случай: `sudo -n -l` сам завершился ошибкой
-        # (неинтерактивного sudo нет вообще), это не «пустой перечень с кодом 0».
-        body = "exit 1\n"
-        if sudo != "fail":
-            listing = {
-                "full": ("Matching Defaults entries for argus on host:\n"
-                         "    (root) NOPASSWD: /usr/bin/resolvectl revert *\n"
-                         "    (root) NOPASSWD: /usr/sbin/ip route flush table *\n"
-                         "    (root) NOPASSWD: /usr/sbin/ip rule del *\n"),
-                "partial": ("    (root) NOPASSWD: /usr/bin/resolvectl revert *\n"),
-                "passwd": ("    (root) PASSWD: /usr/bin/resolvectl revert *\n"
-                           "    (root) PASSWD: /usr/sbin/ip route flush table *\n"
-                           "    (root) PASSWD: /usr/sbin/ip rule del *\n"),
-                "near": ("    (root) NOPASSWD: /usr/bin/resolvectl revert-not-real *\n"
-                         "    (root) NOPASSWD: /usr/sbin/ip route flush table-not-real *\n"
-                         "    (root) NOPASSWD: /usr/sbin/ip rule delete-not-real *\n"),
-            }[sudo]
-            body = ('if [ "$1" = "-n" ] && [ "$2" = "-l" ]; then\n'
-                    "  cat <<'LS'\n" + listing + "LS\n"
-                    "  exit 0\n"
-                    "fi\n"
-                    "exit 1\n")
-        _write_argv_shim(shim_dir, "sudo", body)
+        # Шим эмулирует РЕАЛЬНУЮ семантику `sudo -n -l <команда> <аргументы>`:
+        # перечень показывает, каким правилом была бы исполнена ИМЕННО эта
+        # команда с этими аргументами (смешанные теги в одной строке sudoers
+        # не переносятся на соседние команды), exit 1 = запрещено. `install`
+        # передаётся настоящему install, чтобы путь sudo-активации H5 был
+        # работоспособен. Откат guard'а при этом не исполняется никогда.
+        real_install = subprocess.run(["bash", "-c", "command -v install"],
+                                      capture_output=True, text=True, timeout=30
+                                      ).stdout.strip().splitlines()[0]
+        LS = [
+            'POLICY="' + sudo + '"',
+            'if [ "$1" = "-n" ] && [ "$2" = "-l" ]; then',
+            '  shift 2',
+            '  cmd="$1"; shift',
+            '  args="$*"',
+            '  case "$POLICY" in',
+            '    full)',
+            "      printf '    (root) NOPASSWD: %s %s\n' \"$cmd\" \"$args\"; exit 0 ;;",
+            '    mixed)',
+            '      case "$cmd" in',
+            "        *resolvectl*) printf '    (root) NOPASSWD: %s %s\n' \"$cmd\" \"$args\"; exit 0 ;;",
+            "        *) printf '    (root) %s %s\n' \"$cmd\" \"$args\"; exit 0 ;;",
+            '      esac ;;',
+            '    partial)',
+            '      case "$cmd" in',
+            "        *resolvectl*) printf '    (root) NOPASSWD: %s %s\n' \"$cmd\" \"$args\"; exit 0 ;;",
+            '        *) exit 1 ;;',
+            '      esac ;;',
+            '    passwd)',
+            "      printf '    (root) %s %s\n' \"$cmd\" \"$args\"; exit 0 ;;",
+            '    *) exit 1 ;;',
+            '  esac',
+            'fi',
+            'if [ "$1" = "-n" ] && [ "$2" = "install" ]; then',
+            '  shift 2',
+            '  exec "' + real_install + '" "$@"',
+            'fi',
+            'exit 1',
+        ]
+        _write_argv_shim(shim_dir, "sudo", "\n".join(LS) + "\n")
     if guard_cmds:
         _write_argv_shim(shim_dir, "resolvectl", "exit 0\n")
         _write_argv_shim(shim_dir, "ip", "exit 0\n")
@@ -6385,37 +6399,103 @@ def probe_rr1b2_network_guard(tmp: Path):
             and "MODULE_NETWORK_GUARD=OFF" in r_off.stdout):
         problems.append(f"default: rc={r_off.returncode} guard_cron={'network-guard.sh' in cron_off}")
 
-    # 2. ON, перечень без NOPASSWD (PASSWD-политика просит пароль в cron) → отказ.
-    r_passwd, home_passwd = run("passwd", guard=True, sudo="passwd")
-    cron_passwd = _rr1b_cron_text(tmp, "passwd")
-    if not (r_passwd.returncode != 0
-            and "NOPASSWD" in (r_passwd.stdout + r_passwd.stderr)
-            and "network-guard.sh" not in cron_passwd
-            and not (home_passwd / "scripts" / "network-guard.sh").exists()):
-        problems.append(f"passwd: rc={r_passwd.returncode}")
+    # 2. Негативные политики — каждая должна отказать и НЕ ставить/не планировать
+    #    guard. mixed = одна строка sudoers с разными тегами: NOPASSWD на
+    #    resolvectl, PASSWD на обеих ip-командах. nobody = run-as не root.
+    #    near = правила под другие команды (revert-not-real и т.п.).
+    #    restricted = гранты только под конкретные аргументы, не покрывающие
+    #    рантайм-цели guard'а. fail = сам `sudo -n -l` завершился ошибкой.
+    for tag, policy in (("passwd", "passwd"), ("mixed", "mixed"),
+                        ("nobody", "near"), ("near", "near"),
+                        ("restricted", "near"), ("fail", "fail")):
+        r_bad, home_bad = run(tag, guard=True, sudo=policy)
+        cron_bad = _rr1b_cron_text(tmp, tag)
+        out_bad = r_bad.stdout + r_bad.stderr
+        if not (r_bad.returncode != 0
+                and "network-guard.sh" not in cron_bad
+                and not (home_bad / "scripts" / "network-guard.sh").exists()
+                and "❌" in out_bad):
+            problems.append(f"{tag}: rc={r_bad.returncode} "
+                            f"guard_installed={(home_bad / 'scripts' / 'network-guard.sh').exists()}")
 
-    # 3. ON, границы аргументов не те (revert-not-real и т.п.) → отказ.
-    r_near, _ = run("near", guard=True, sudo="near")
-    if not (r_near.returncode != 0
-            and "NOPASSWD-политики" in (r_near.stdout + r_near.stderr)):
-        problems.append(f"near: rc={r_near.returncode}")
-
-    # 4. ON, `sudo -n -l` сам завершился ошибкой → отказ.
-    r_fail, _ = run("fail", guard=True, sudo="fail")
-    if not (r_fail.returncode != 0
-            and "Неинтерактивный sudo недоступен" in (r_fail.stdout + r_fail.stderr)):
-        problems.append(f"fail: rc={r_fail.returncode}")
-
-    # 5. ON с полной политикой → guard поставлен и запланирован РОВНО один раз.
+    # 3. ON с полной политикой → guard поставлен и запланирован РОВНО один раз.
     r_on, home_on = run("on", guard=True, sudo="full")
     cron_on = _rr1b_cron_text(tmp, "on")
     if not (r_on.returncode == 0
             and (home_on / "scripts" / "network-guard.sh").is_file()
             and cron_on.count("network-guard.sh") == 1
-            and "откат не выполнялся" in r_on.stdout):
+            and "исполнения не было" in r_on.stdout):
         problems.append(f"on: rc={r_on.returncode} count={cron_on.count('network-guard.sh')}")
 
     check("rr1b2_network_guard", not problems, f"problems={problems}")
+
+
+def probe_rr1b2_installer_private_config(tmp: Path):
+    """H1: гейт приватности конфига обязан работать в ОБОИХ входах. Проверка
+    продублирована в install.sh и deploy.sh, и ремедиация починила только deploy:
+    installer продолжал трактовать недоступный режим как «безопасно» и source'ил
+    конфиг с секретами до того, как deploy его отверг."""
+    problems = []
+    # Провал чтения режима при корректном владельце: install.sh обязан отказать.
+    for tag, env_extra in (("mode-fail", {"RR1B_CONFIG_MODE": ""}),
+                           ("mode-644", {"RR1B_CONFIG_MODE": "644"})):
+        res, home = _rr1b_install_fixture(
+            tmp, f"h1-inst-{tag}",
+            _rr1b_modules(core=False, integrations=True)
+            + "WATCHDOG_BOT_TOKEN=" + _RR1B_H_SECRET + "\n",
+            deploy_mode="real",
+            extra_env=env_extra)
+        out = res.stdout + res.stderr
+        if res.returncode == 0:
+            problems.append(f"{tag}: installer вернул 0 (должен отказать)")
+        if "определить режим" not in out and "доступен группе" not in out:
+            problems.append(f"{tag}: отказ без объяснения свойства: {out[-200:]!r}")
+        if _RR1B_H_SECRET in out:
+            problems.append(f"{tag}: canary утёк в вывод installer'а")
+
+    # Контроль: безопасный конфиг installer проходит (deploy в skip-режиме).
+    res_ok, _ = _rr1b_install_fixture(
+        tmp, "h1-inst-ok",
+        _rr1b_modules(core=False, integrations=True)
+        + "WATCHDOG_BOT_TOKEN=" + _RR1B_H_SECRET + "\n",
+        deploy_mode="real", extra_env={"RR1B_CONFIG_MODE": "600"})
+    if res_ok.returncode != 0:
+        problems.append(f"ok-контроль сломан: rc={res_ok.returncode}")
+
+    check("rr1b2_installer_private_config", not problems, f"problems={problems}")
+
+
+def probe_rr1b2_logrotate_preflight_order(tmp: Path):
+    """H5: неисправный logrotate обязан обнаруживаться в преflight, ДО записей.
+    Раньше парсерный прогон жил в install_logrotate_policy и деплой падал уже
+    после записи watchdog'а и dashboard-юнита."""
+    home = tmp / "h5ord-home"
+    shim = tmp / "h5ord-shim"
+    shim.mkdir(parents=True, exist_ok=True)
+    _rr1b_host_shims(shim)
+    _rr1b_fake_hermes(home)
+    config = write(tmp / "h5ord-config.env",
+                   _rr1b_modules(core=True) + "WATCHDOG_BOT_TOKEN=" + _RR1B_H_SECRET + "\n")
+    env = _probe_subprocess_env(home, {
+        "HOME": home.as_posix(),
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "CRONTAB_FIXTURE": (tmp / "h5ord-cron.txt").as_posix(),
+        "CRON_FILE": (tmp / "h5ord-proposal.txt").as_posix(),
+        "RR1B_LOGROTATE_RC": "1",
+    })
+    result = subprocess.run(
+        ["bash", (REPO / "deploy.sh").as_posix(), config.as_posix()],
+        cwd=REPO.as_posix(), env=env, capture_output=True, text=True, timeout=180)
+    ok = (result.returncode != 0
+          and "не проходит парсер logrotate" in (result.stdout + result.stderr)
+          # НИЧЕГО из развёртки не должно было случиться: преflight раньше записей.
+          and not (home / "scripts" / "hermes-watchdog.sh").exists()
+          and not (home / ".config" / "systemd" / "user" / "hermes-dashboard.service").exists()
+          and not (home / ".hermes" / "argus-logrotate.conf").exists())
+    check("rr1b2_logrotate_preflight_order", ok,
+          f"rc={result.returncode} watchdog={(home / 'scripts' / 'hermes-watchdog.sh').exists()} "
+          f"unit={(home / '.config' / 'systemd' / 'user' / 'hermes-dashboard.service').exists()} "
+          f"out={(result.stdout + result.stderr)[-220:]!r}")
 
 
 def probe_rr1b2_logrotate_policy(tmp: Path):
@@ -6737,7 +6817,8 @@ def probe_rr1b_discord_only_payload(tmp: Path):
 
 def _rr1b_install_fixture(tmp: Path, tag: str, config_body: str,
                           deploy_mode: str = "real",
-                          mutate_repo=None, plant=None, skip_config: bool = False
+                          mutate_repo=None, plant=None, skip_config: bool = False,
+                          extra_env: dict | None = None
                           ) -> tuple[subprocess.CompletedProcess, Path]:
     """Полный прогон install.sh под shims (dpkg/git/systemctl/crontab/flock/bash).
     deploy внутри — настоящий, из локальной копии дерева кандидата.
@@ -6804,6 +6885,7 @@ def _rr1b_install_fixture(tmp: Path, tag: str, config_body: str,
         "CRONTAB_FIXTURE": (tmp / f"rr1b-install-cron-{tag}.txt").as_posix(),
         "CRON_FILE": str(tmp / f"rr1b-install-proposal-{tag}.txt"),
         "RR1B_DEPLOY_MODE": deploy_mode,
+        **(extra_env or {}),
     })
     result = subprocess.run(["bash", str(fixture / "install.sh")],
                             cwd=fixture, env=env, capture_output=True,
@@ -7062,6 +7144,8 @@ def main() -> int:
     probe_rr1b2_user_manager(tmp)
     probe_rr1b2_hermes_preflight(tmp)
     probe_rr1b2_network_guard(tmp)
+    probe_rr1b2_installer_private_config(tmp)
+    probe_rr1b2_logrotate_preflight_order(tmp)
     probe_rr1b2_logrotate_policy(tmp)
     # R1c: Authorization headers out of child argv (shell + ai-deep-check)
     probe_r1c_shell_full_auth_not_in_argv(tmp)

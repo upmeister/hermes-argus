@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes anything, and reports each outcome as an actionable stop rather than a
   successful install: the deploy-time `config.env` must be a regular file owned
   by the installing user with no group/other permissions (`install.sh` creates
-  it owner-only and checks an existing one — values are never echoed); modules
+  it owner-only and checks an existing one — values are never echoed, and the
+  same check guards both the installer and the direct deploy path, rejecting a
+  config whose access mode cannot even be determined); modules
   that install systemd *user* units require a reachable user manager, and reboot
   persistence is claimed only when `Linger` is actually `yes` (linger is never
   enabled automatically — the manual command is printed); modules that consume
@@ -28,7 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   host-readiness): `daily` with `rotate 7` and `maxsize 50M`, `compress`,
   `delaycompress` and append-safe `copytruncate`, generated at
   `~/.hermes/argus-logrotate.conf` and validated with a `logrotate --debug`
-  dry-run. `maxsize` — not `size` — is deliberate: `size` after `daily` cancels
+  dry-run during the preflight — before the deploy writes anything, so an
+  unusable `logrotate` stops the install instead of being discovered after the
+  watchdog and dashboard units were already written. `maxsize` — not `size` — is deliberate: `size` after `daily` cancels
   the periodic rotation entirely, which real `logrotate` reports as
   "size overrides previously specified daily". The policy enumerates Argus
   file logs explicitly rather than globbing `logs/*.log`, because that
@@ -50,12 +54,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed nor scheduled — a previously generated line is recognised as
   Argus-owned and removed from the crontab rather than adopted into the managed
   block. With the flag ON the deploy fails closed unless the host has
-  `resolvectl`, `ip` and a passwordless sudo policy that is actually NOPASSWD
-  and matches the exact argument boundaries of `resolvectl revert`,
-  `ip route flush table` and `ip rule del`; `sudo -n -l` must itself succeed
-  (a PASSWD-only listing is a failure, not a confirmation), the check executes
-  no rollback, mutates no route, DNS, interface or sudoers entry, and does not
-  infer applicability from the number of interfaces. Existing production users must set the flag explicitly before a
+  `resolvectl`, `ip` and a passwordless sudo policy that actually covers each
+  rollback command at the arguments the guard would use. The check runs
+  `sudo -n -l <command> <arguments>` — which only *lists* the matching rule and
+  never executes anything — and requires the matched entry to be NOPASSWD and
+  the command to be permitted: a PASSWD-only grant, a mixed-tag sudoers line
+  where only one of the three commands is passwordless, a `(nobody)` run-as, a
+  negated `!command` rule, a grant restricted to specific arguments, or a
+  failing `sudo -n -l` all refuse the install. No route, DNS, interface or
+  sudoers entry is mutated, and applicability is never inferred from the number
+  of interfaces. Existing production users must set the flag explicitly before a
   future deployment; this change performs no migration.
 
 ### Fixed

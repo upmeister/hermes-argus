@@ -265,24 +265,21 @@ preflight_user_manager() {
     esac
 }
 
-# H4 — применимость сетевого guard'а. `sudo -n -l` ТОЛЬКО печатает право: ни
-# один откат при проверке не выполняется.
+# H4 — применимость сетевого guard'а. Ни один откат при проверке не выполняется:
+# `sudo -n -l <команда> <аргументы>` ТОЛЬКО перечисляет, каким правилом была бы
+# исполнена эта команда с этими аргументами, и завершается ошибкой, если она
+# запрещена. Это единственный надёжный способ связать NOPASSWD/run-as/отрицание
+# именно с той командой, которую вызовет guard: разбор текста sudoers регэкспом
+# путает смешанные теги в одной строке, run-as `(nobody)` и правила `!команда`,
+# и ничего не говорит о грантах, ограниченных конкретными аргументами.
 #
-# Доказательство требуем НЕ через подстроку, а по трём независимым признакам:
-#  1. сам список обязан УСПЕШНО завершиться (rc != 0 = неинтерактивного sudo нет);
-#  2. совпавшая строка обязана содержать NOPASSWD (PASSWD-политика просит пароль
-#     в cron, где его ввести некому — откат молча не сработает);
-#  3. граница аргументов закреплена: `revert`, `flush table`, `del` должны
-#     заканчиваться пробелом или концом строки, иначе «revert-not-real»
-#     и «delete-not-real» выглядят как применимая политика.
-NETGUARD_SUDO_PATTERNS=(
-    "resolvectl[[:space:]]+revert([[:space:]]|\$)"
-    "ip[[:space:]]+route[[:space:]]+flush[[:space:]]+table([[:space:]]|\$)"
-    "ip([[:space:]]+-[^[:space:]]+)*[[:space:]]+rule[[:space:]]+del([[:space:]]|\$)"
-)
+# Аргументы зондирующих вызовов нужны только для сопоставления с шаблоном
+# sudoers и НЕ исполняются. Два из них выбраны заведомо не «узкими»: грант под
+# одно конкретное число покрыл бы зонд, но guard снимает правила, обнаруженные
+# в рантайме, поэтому достаточен только грант по маске.
 preflight_network_guard() {
     module_enabled MODULE_NETWORK_GUARD || return 0
-    local cmd ok=1 listing
+    local cmd ok=1
     for cmd in resolvectl ip sudo; do
         command -v "$cmd" >/dev/null 2>&1 || {
             echo "❌ Команда '$cmd' не найдена — guard её использует." >&2; ok=0; }
@@ -290,24 +287,39 @@ preflight_network_guard() {
     [ "$ok" -eq 1 ] || {
         echo "   Починка: поставь недостающее ПО или выключи MODULE_NETWORK_GUARD." >&2
         return 1; }
-    if ! listing="$(sudo -n -l 2>/dev/null)"; then
-        echo "❌ Неинтерактивный sudo недоступен (sudo -n -l завершился с ошибкой)." >&2
-        echo "   Откат guard'а в cron выполнялся бы с запросом пароля в никуда." >&2
+
+    local RESOLVECTL IP primary probe cmd_path args out
+    RESOLVECTL=$(command -v resolvectl)
+    IP=$(command -v ip)
+    primary=$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)
+    [ -n "$primary" ] || primary="lo"
+
+    # (команда|аргументы) в том виде, в каком их зовёт network-guard.sh.
+    # Таблица/преф — максимальные значения домена: грант под одно конкретное
+    # число покрыл бы зонд, но не покрыл бы реальные цели guard'а.
+    for probe in         "$RESOLVECTL|revert $primary"         "$IP|route flush table 4294967295"         "$IP|rule del pref 4294967295"; do
+        cmd_path="${probe%%|*}"
+        args="${probe#*|}"
+        # shellcheck disable=SC2086 — args преднамеренно разбивается на слова
+        if ! out=$(sudo -n -l "$cmd_path" $args 2>&1); then
+            echo "❌ Отказ: guard не сможет исполнить '$(basename "$cmd_path") $args'" >&2
+            echo "   (sudo -n -l: не разрешено, запрещено правилом ! или требует пароль)" >&2
+            ok=0
+        elif ! printf '%s
+' "$out" | grep -q 'NOPASSWD'; then
+            echo "❌ Отказ: '$(basename "$cmd_path") $args' разрешён С паролем (PASSWD)" >&2
+            echo "   в cron вводить пароль некому — откат молча не сработает" >&2
+            ok=0
+        fi
+    done
+    if [ "$ok" -ne 1 ]; then
+        echo "   Нужен NOPASSWD ровно на эти команды и формы аргументов:" >&2
+        echo "     <user> ALL=(root) NOPASSWD: /usr/bin/resolvectl revert *, /usr/sbin/ip route flush table *, /usr/sbin/ip rule del *" >&2
+        echo "   Argus не правит sudoers и не исполняет откат при проверке." >&2
         echo "   Альтернатива: MODULE_NETWORK_GUARD=OFF." >&2
         return 1
     fi
-    for cmd in "${NETGUARD_SUDO_PATTERNS[@]}"; do
-        printf '%s\n' "$listing" | grep -Eq "NOPASSWD:.*${cmd}" || {
-            echo "❌ Нет NOPASSWD-политики под границу аргументов: ${cmd%%(*}" >&2
-            ok=0; }
-    done
-    if [ "$ok" -ne 1 ]; then
-        echo "   Нужен NOPASSWD ровно на эти команды и границы аргументов:" >&2
-        echo "     <user> ALL=(root) NOPASSWD: /usr/bin/resolvectl revert *, /usr/sbin/ip route flush table *, /usr/sbin/ip rule del *" >&2
-        echo "   Argus не правит sudoers. Альтернатива: MODULE_NETWORK_GUARD=OFF." >&2
-        return 1
-    fi
-    echo "   сетевой guard: sudo -n -l успешен, NOPASSWD подтверждён по границам аргументов (откат не выполнялся)."
+    echo "   сетевой guard: sudo -n -l подтвердил NOPASSWD по всем трём откатам (исполнения не было)."
 }
 
 # H5 — Argus-owned политика ротации файловых логов. Использует уже стоящий на
@@ -333,43 +345,21 @@ LOGROTATE_SCHED_DIR="${LOGROTATE_SCHED_DIR:-/etc/logrotate.d}"
 # Преflight ДО любых записей: контракт требует остановиться с инструкцией
 # ремонта, если существующий механизм хоста не может активировать политику.
 # Раньше проверка была в install_logrotate_policy — после записи юнитов.
-preflight_logrotate() {
-    if ! command -v logrotate >/dev/null 2>&1; then
-        echo "❌ logrotate не найден — файловые логи Argus росли бы без границы." >&2
-        echo "   Починка: sudo apt-get install -y logrotate" >&2
-        return 1
-    fi
-    if [ -d "$LOGROTATE_SCHED_DIR" ] && [ -w "$LOGROTATE_SCHED_DIR" ]; then
-        return 0
-    fi
-    # Незаписываемый каталог — нормальная ситуация для обычного пользователя.
-    # Достаточно неинтерактивного sudo для install: проверяется безобидным
-    # `--help`, который ничего не пишет.
-    if sudo -n install --help >/dev/null 2>&1; then
-        echo "   logrotate: $LOGROTATE_SCHED_DIR не записываем — активация через sudo install"
-        return 0
-    fi
-    echo "❌ $LOGROTATE_SCHED_DIR недоступна для записи и неинтерактивного sudo" >&2
-    echo "   для install нет — политика не будет активирована в планировщике хоста." >&2
-    echo "   Починка (одна из):" >&2
-    echo "     sudo install -d -o $(id -un) -g $(id -gn) $LOGROTATE_SCHED_DIR" >&2
-    echo "     выполнить deploy от root" >&2
-    echo "   Argus не повышает привилегии сам и не правит sudoers." >&2
-    return 1
-}
-
-install_logrotate_policy() {
-    local policy="$HERMES_DIR/$LOGROTATE_POLICY_NAME" target="$LOGROTATE_SCHED_DIR/argus"
-    mkdir -p "$HERMES_DIR/logs"
+logrotate_policy_body() {
+    # Содержимое политики печатается в stdout: один источник для преflight-парса
+    # и для финальной записи, иначе проверка и установка могли бы разойтись.
     local f body=""
     for f in "${ARGUS_LOG_FILES[@]}"; do
-        body+="$HERMES_DIR/logs/$f"$'\n'
+        body+="$HERMES_DIR/logs/$f"$'
+'
     done
+    local grp su_line=""
+    if grp=$(id -gn 2>/dev/null); then su_line="    su $(id -un) $grp"; fi
     # daily + maxsize: maxsize не отменяет периодическую ротацию, а лишь
     # срабатывает раньше при переполнении (size после daily отменил бы daily).
     # copytruncate — логи дописываются работающим процессом, переименование их
     # не освободит.
-    cat > "$policy" <<EOF
+    cat <<EOF
 # hermes-argus — ротация ТОЛЬКО файловых логов Argus (RR1b).
 # Создаётся deploy.sh; systemd-журналы, логи Hermes (agent.log, gateway.log)
 # и чужие /var/log не входят. Перечень — явный, не глоб-маска.
@@ -382,17 +372,54 @@ $body{
     copytruncate
     missingok
     notifempty
+$su_line
+}
 EOF
-    local grp su_line=""
-    if grp=$(id -gn 2>/dev/null); then su_line="    su $(id -un) $grp"; fi
-    printf '%s\n' "$su_line" >> "$policy"
-    printf '}\n' >> "$policy"
-    chmod 0644 "$policy"
-    local err
-    if ! err=$(logrotate --debug --state /dev/null "$policy" 2>&1); then
-        echo "❌ Политика не проходит парсер logrotate: $err" >&2
+}
+
+preflight_logrotate() {
+    if ! command -v logrotate >/dev/null 2>&1; then
+        echo "❌ logrotate не найден — файловые логи Argus росли бы без границы." >&2
+        echo "   Починка: sudo apt-get install -y logrotate" >&2
         return 1
     fi
+    if [ -d "$LOGROTATE_SCHED_DIR" ] && [ -w "$LOGROTATE_SCHED_DIR" ]; then
+        :
+    # Незаписываемый каталог — нормальная ситуация для обычного пользователя.
+    # Достаточно неинтерактивного sudo для install: проверяется безобидным
+    # `--help`, который ничего не пишет.
+    elif sudo -n install --help >/dev/null 2>&1; then
+        echo "   logrotate: $LOGROTATE_SCHED_DIR не записываем — активация через sudo install"
+    else
+        echo "❌ $LOGROTATE_SCHED_DIR недоступна для записи и неинтерактивного sudo" >&2
+        echo "   для install нет — политика не будет активирована в планировщике хоста." >&2
+        echo "   Починка (одна из):" >&2
+        echo "     sudo install -d -o $(id -un) -g $(id -gn) $LOGROTATE_SCHED_DIR" >&2
+        echo "     выполнить deploy от root" >&2
+        echo "   Argus не повышает привилегии сам и не правит sudoers." >&2
+        return 1
+    fi
+    # Парсер прогоняется ЗДЕСЬ, до любых записей deploy'а: иначе неисправный
+    # logrotate обнаруживался после того, как юниты уже записаны.
+    local tmp err
+    tmp=$(mktemp)
+    logrotate_policy_body > "$tmp"
+    chmod 0600 "$tmp"
+    if ! err=$(logrotate --debug --state /dev/null "$tmp" 2>&1); then
+        echo "❌ Политика не проходит парсер logrotate: $err" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+    rm -f "$tmp"
+}
+
+install_logrotate_policy() {
+    local policy="$HERMES_DIR/$LOGROTATE_POLICY_NAME" target="$LOGROTATE_SCHED_DIR/argus"
+    mkdir -p "$HERMES_DIR/logs"
+    # Содержимое уже проверено парсером в преflight; здесь только запись и
+    # активация, применимость которых тоже доказана преflight'ом.
+    logrotate_policy_body > "$policy"
+    chmod 0644 "$policy"
     DEPLOYED_PATHS+=("$policy")
     if [ -w "$LOGROTATE_SCHED_DIR" ]; then
         if ! cp "$policy" "$target"; then
@@ -405,7 +432,6 @@ EOF
         return 1
     fi
     chmod 0644 "$target" 2>/dev/null || true
-    echo "   политика ротации установлена и активирована: $target"
 }
 
 echo ""

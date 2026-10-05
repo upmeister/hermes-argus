@@ -102,11 +102,14 @@ check without a maintainer decision.
    and is OFF by default. With OFF, confirm no network-guard entry exists in the
    managed cron block and that `~/scripts/network-guard.sh` was not freshly
    installed. With ON, the deploy fails closed unless `resolvectl` and `ip`
-   exist and passwordless `sudo -n -l` succeeds while listing NOPASSWD entries
-   matching the exact argument boundaries of `resolvectl revert`,
-   `ip route flush table` and `ip rule del`; a PASSWD-only listing, or a
-   listing with lookalike commands (`revert-not-real`), is a failure. The check
-   executes no rollback and mutates no route, DNS, interface or sudoers entry.
+   exist and `sudo -n -l <command> <arguments>` — which only lists the matching
+   rule, never executes it — reports each rollback command as permitted under
+   NOPASSWD at the arguments the guard would use. Refused, and therefore a
+   failed deploy: a PASSWD-only grant, a mixed-tag sudoers line where only one
+   command is passwordless, a `(nobody)` run-as, a negated `!command` rule, a
+   grant restricted to arguments the guard cannot rely on, or a `sudo -n -l`
+   that itself fails. No rollback is executed and no route, DNS, interface or
+   sudoers entry is mutated.
    **Production action:** if this host relies on the guard, set the flag
    explicitly in `config.env` before deploying — the default is deliberately OFF
    and no automatic migration is performed.
@@ -115,11 +118,12 @@ check without a maintainer decision.
    reporting success if it could not activate it), enumerates the Argus file
    logs explicitly — Hermes-owned `agent.log` and `gateway.log` must not appear
    in the rotated set — and uses `daily` with `rotate 7` and `maxsize 50M`,
-   `compress`, `delaycompress` and `copytruncate`; the deploy validated it with
-   a `logrotate --debug` dry-run. Confirm with the host scheduler that rotation
-   actually runs (`logrotate --debug /etc/logrotate.d/argus` must exit 0).
-   systemd journal retention, Hermes log ownership and unrelated `/var/log`
-   files stay external.
+   `compress`, `delaycompress` and `copytruncate`. The parser run happens in
+   the preflight, before the deploy writes anything: an unusable `logrotate`
+   stops the install with no files deployed. Confirm with the host scheduler
+   that rotation actually runs (`logrotate --debug /etc/logrotate.d/argus` must
+   exit 0). systemd journal retention, Hermes log ownership and unrelated
+   `/var/log` files stay external.
 6. **No production-side effects beyond the authorized deploy.** Do not enable
    linger, alter sudoers, change network policy or rotate live logs as part of
    this read-back unless the maintainer separately authorizes it.
