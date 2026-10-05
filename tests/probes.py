@@ -1687,36 +1687,67 @@ def _rr1b_host_shims(shim_dir: Path, *, user_bus: bool = True, linger: str = "ye
     if logrotate:
         _write_argv_shim(shim_dir, "logrotate", 'exit "${RR1B_LOGROTATE_RC:-0}"\n')
     if sudo != "none":
-        # Шим эмулирует РЕАЛЬНУЮ семантику `sudo -n -l <команда> <аргументы>`:
-        # перечень показывает, каким правилом была бы исполнена ИМЕННО эта
-        # команда с этими аргументами (смешанные теги в одной строке sudoers
-        # не переносятся на соседние команды), exit 1 = запрещено. `install`
-        # передаётся настоящему install, чтобы путь sudo-активации H5 был
-        # работоспособен. Откат guard'а при этом не исполняется никогда.
+        # Шим печатает ТОТ ЖЕ формат, что настоящий `sudo -n -ll <cmd> <args>`
+        # (sudo display.c: display_cmndspec_long + display_cmnd):
+        #   Sudoers entry: <файл>
+        #       RunAsUsers: root
+        #       Options: authenticate   → NOPASSWD (nopasswd=true рендерится БЕЗ "!")
+        #               !authenticate   → PASSWD
+        #       Commands:
+        #   <tab><запись sudoers с маской>   ← cs->cmnd, а не развёрнутый зонд
+        #       Matched: <cmd> <args>
+        # Прошлый шим добавлял тег "NOPASSWD", которого в этом выводе НЕТ, и
+        # CI подтверждал предположение реализации вместо поведения sudo.
+        # `install` передаётся настоящему install (путь sudo-активации H5).
         real_install = subprocess.run(["bash", "-c", "command -v install"],
                                       capture_output=True, text=True, timeout=30
                                       ).stdout.strip().splitlines()[0]
         LS = [
             'POLICY="' + sudo + '"',
-            'if [ "$1" = "-n" ] && [ "$2" = "-l" ]; then',
+            'if [ "$1" = "-n" ] && [ "$2" = "-ll" ]; then',
             '  shift 2',
             '  cmd="$1"; shift',
             '  args="$*"',
+            '  base=$(basename "$cmd")',
+            '  emit() {',
+            "    printf 'Sudoers entry: /etc/sudoers.d/argus-fixture\\n'",
+            "    printf '    RunAsUsers: root\\n'",
+            "    printf '    Options: %s\\n' \"$1\"",
+            "    printf '    Commands:\\n'",
+            "    printf '\\t%s\\n' \"$2\"",
+            "    printf '    Matched: %s %s\\n' \"$cmd\" \"$args\"",
+            '    exit 0',
+            '  }',
             '  case "$POLICY" in',
             '    full)',
-            "      printf '    (root) NOPASSWD: %s %s\n' \"$cmd\" \"$args\"; exit 0 ;;",
-            '    mixed)',
-            '      case "$cmd" in',
-            "        *resolvectl*) printf '    (root) NOPASSWD: %s %s\n' \"$cmd\" \"$args\"; exit 0 ;;",
-            "        *) printf '    (root) %s %s\n' \"$cmd\" \"$args\"; exit 0 ;;",
+            '      case "$base" in',
+            '        resolvectl|ip) emit "authenticate" "$cmd *" ;;',
+            '        *) exit 1 ;;',
             '      esac ;;',
-            '    partial)',
-            '      case "$cmd" in',
-            "        *resolvectl*) printf '    (root) NOPASSWD: %s %s\n' \"$cmd\" \"$args\"; exit 0 ;;",
+            '    mixed)',
+            '      case "$base" in',
+            '        resolvectl) emit "authenticate" "$cmd *" ;;',
+            '        ip)         emit "!authenticate" "$cmd *" ;;',
+            '        *) exit 1 ;;',
+            '      esac ;;',
+            '    nobody)',
+            '      exit 1 ;;',
+            '    negate)',
+            '      case "$base" in',
+            '        resolvectl) emit "authenticate" "$cmd *" ;;',
+            '        *) exit 1 ;;',
+            '      esac ;;',
+            '    restricted)',
+            '      case "$base" in',
+            '        resolvectl) emit "authenticate" "$cmd *" ;;',
+            '        ip)         emit "authenticate" "$cmd 999" ;;',
             '        *) exit 1 ;;',
             '      esac ;;',
             '    passwd)',
-            "      printf '    (root) %s %s\n' \"$cmd\" \"$args\"; exit 0 ;;",
+            '      case "$base" in',
+            '        resolvectl|ip) emit "!authenticate" "$cmd *" ;;',
+            '        *) exit 1 ;;',
+            '      esac ;;',
             '    *) exit 1 ;;',
             '  esac',
             'fi',
@@ -6399,15 +6430,19 @@ def probe_rr1b2_network_guard(tmp: Path):
             and "MODULE_NETWORK_GUARD=OFF" in r_off.stdout):
         problems.append(f"default: rc={r_off.returncode} guard_cron={'network-guard.sh' in cron_off}")
 
-    # 2. Негативные политики — каждая должна отказать и НЕ ставить/не планировать
-    #    guard. mixed = одна строка sudoers с разными тегами: NOPASSWD на
-    #    resolvectl, PASSWD на обеих ip-командах. nobody = run-as не root.
-    #    near = правила под другие команды (revert-not-real и т.п.).
-    #    restricted = гранты только под конкретные аргументы, не покрывающие
-    #    рантайм-цели guard'а. fail = сам `sudo -n -l` завершился ошибкой.
+    # 2. Негативные sudo-политики — каждая должна отказать и НЕ ставить/не
+    #    планировать guard (все моделируют реальный вывод `sudo -ll`):
+    #      passwd     — все три команды PASSWD;
+    #      mixed      — одна строка с разными тегами: NOPASSWD на resolvectl,
+    #                   PASSWD на обеих ip-командах;
+    #      nobody     — run-as не root (команда для default run-as запрещена);
+    #      near       — правила под другие команды (revert-not-real и т.п.);
+    #      restricted — NOPASSWD, но грант под литеральные аргументы без маски
+    #                   (не покрывает рантайм-цели, которые guard находит сам);
+    #      fail       — `sudo` сам завершился ошибкой.
     for tag, policy in (("passwd", "passwd"), ("mixed", "mixed"),
-                        ("nobody", "near"), ("near", "near"),
-                        ("restricted", "near"), ("fail", "fail")):
+                        ("nobody", "nobody"), ("near", "near"),
+                        ("restricted", "restricted"), ("fail", "fail")):
         r_bad, home_bad = run(tag, guard=True, sudo=policy)
         cron_bad = _rr1b_cron_text(tmp, tag)
         out_bad = r_bad.stdout + r_bad.stderr
@@ -6496,6 +6531,115 @@ def probe_rr1b2_logrotate_preflight_order(tmp: Path):
           f"rc={result.returncode} watchdog={(home / 'scripts' / 'hermes-watchdog.sh').exists()} "
           f"unit={(home / '.config' / 'systemd' / 'user' / 'hermes-dashboard.service').exists()} "
           f"out={(result.stdout + result.stderr)[-220:]!r}")
+
+
+def probe_rr1b2_sudo_ll_real(tmp: Path):
+    """H4: парсер `sudo -n -ll` проверяется против НАСТОЯЩЕГО sudo.
+
+    Прошлые итерации падали одинаково: шим подтверждал предположение реализации
+    (сначала тег NOPASSWD в коротком выводе, которого там нет), и зелёный CI
+    ничего не ловил, потому что шим и код были согласованы между собой, но не с
+    реальностью. Здесь на disposable CI-runner'е создаётся временный sudoers
+    drop-in с маской аргументов и явным PASSWD, после чего проверяется, что
+    deploy-парсер правильно классифицирует НАСТОЯЩИЙ вывод.
+
+    Фикстура пишет sudoers ТОЛЬКО на одноразовый runner (это не путь deploy —
+    тот sudoers не правит никогда) и удаляет его в finally."""
+    problems = []
+    if os.name == "nt":
+        check("rr1b2_sudo_ll_real", True, "skipped: настоящий sudo недоступен на Windows — проверит CI")
+        return
+    if not shutil.which("sudo") or not shutil.which("visudo"):
+        check("rr1b2_sudo_ll_real", True, "skipped: sudo/visudo отсутствуют")
+        return
+    if subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=30).returncode != 0:
+        check("rr1b2_sudo_ll_real", True, "skipped: нет passwordless sudo")
+        return
+
+    home = tmp / "sudo-real-home"
+    shim = tmp / "sudo-real-shim"
+    shim.mkdir(parents=True, exist_ok=True)
+    # ВАЖНО: sudo НЕ шимится — против настоящего sudo проверяется deploy.
+    _rr1b_host_shims(shim, sudo="none")
+    _rr1b_fake_hermes(home)
+    config = write(tmp / "sudo-real-config.env",
+                   _rr1b_modules(core=True, network_guard=True)
+                   + f"WATCHDOG_BOT_TOKEN={_RR1B_H_SECRET}\n")
+
+    resolvectl_path = subprocess.run(
+        ["bash", "-c", f'PATH={shim.as_posix()!r}:$PATH command -v resolvectl'],
+        capture_output=True, text=True, timeout=30).stdout.strip()
+    ip_path = subprocess.run(
+        ["bash", "-c", f'PATH={shim.as_posix()!r}:$PATH command -v ip'],
+        capture_output=True, text=True, timeout=30).stdout.strip()
+    user = subprocess.run(["bash", "-c", "id -un"],
+                          capture_output=True, text=True, timeout=30).stdout.strip()
+    if not (resolvectl_path and ip_path and user):
+        check("rr1b2_sudo_ll_real", True, "skipped: не удалось разрешить пути шимов")
+        return
+
+    dropin = Path("/etc/sudoers.d/argus-probe")
+
+    def write_dropin(body: str) -> bool:
+        tmpf = tmp / "argus-probe-sudoers"
+        write(tmpf, body)
+        chk = subprocess.run(["sudo", "visudo", "-cf", str(tmpf)],
+                             capture_output=True, text=True, timeout=60)
+        if chk.returncode != 0:
+            problems.append(f"sudoers фикстура не прошла visudo: {chk.stdout[-160:]!r}")
+            return False
+        inst = subprocess.run(["sudo", "install", "-m", "0440", str(tmpf), str(dropin)],
+                              capture_output=True, text=True, timeout=60)
+        if inst.returncode != 0:
+            problems.append(f"не удалось установить drop-in: {inst.stderr[-160:]!r}")
+            return False
+        return True
+
+    def deploy_guard(tag: str) -> subprocess.CompletedProcess:
+        env = _probe_subprocess_env(home, {
+            "HOME": home.as_posix(),
+            "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+            "CRONTAB_FIXTURE": (tmp / f"sudo-real-cron-{tag}.txt").as_posix(),
+            "CRON_FILE": (tmp / f"sudo-real-proposal-{tag}.txt").as_posix(),
+        })
+        return subprocess.run(
+            ["bash", (REPO / "deploy.sh").as_posix(), config.as_posix()],
+            cwd=REPO.as_posix(), env=env, capture_output=True, text=True, timeout=240)
+
+    try:
+        # A. Позитив: NOPASSWD с маской аргументов на все три команды — deploy
+        #    обязан пройти. Это проверяет тег (`authenticate`) и запись sudoers
+        #    с маской (`<путь> *`) против НАСТОЯЩЕГО вывода.
+        if not write_dropin(
+                f"{user} ALL=(root) NOPASSWD: {resolvectl_path} *, "
+                f"{ip_path} route flush table *, {ip_path} rule del *\n"):
+            check("rr1b2_sudo_ll_real", False, "fixtures: drop-in не установлен")
+            return
+        home_a = tmp / "sudo-real-home"
+        res_a = deploy_guard("pos")
+        if not (res_a.returncode == 0
+                and "исполнения не было" in res_a.stdout):
+            problems.append(f"positive: rc={res_a.returncode} "
+                            f"out={(res_a.stdout + res_a.stderr)[-260:]!r}")
+
+        # B. Негатив: PASSWD на ip-команды (запись позже глобальной ALL, поэтому
+        #    она выигрывает сопоставление) — deploy обязан отказать, назвав
+        #    PASSWD, и не поставить guard.
+        if not write_dropin(
+                f"{user} ALL=(root) PASSWD: {ip_path} route flush table *, "
+                f"{ip_path} rule del *\n"):
+            check("rr1b2_sudo_ll_real", False, "fixtures: drop-in не переустановлен")
+            return
+        res_b = deploy_guard("neg")
+        out_b = res_b.stdout + res_b.stderr
+        if not (res_b.returncode != 0
+                and "С паролем" in out_b
+                and not (home_a / "scripts" / "network-guard.sh").exists()):
+            problems.append(f"negative: rc={res_b.returncode} out={out_b[-260:]!r}")
+    finally:
+        subprocess.run(["sudo", "rm", "-f", str(dropin)], capture_output=True, timeout=60)
+
+    check("rr1b2_sudo_ll_real", not problems, f"problems={problems}")
 
 
 def probe_rr1b2_logrotate_policy(tmp: Path):
@@ -7144,6 +7288,7 @@ def main() -> int:
     probe_rr1b2_user_manager(tmp)
     probe_rr1b2_hermes_preflight(tmp)
     probe_rr1b2_network_guard(tmp)
+    probe_rr1b2_sudo_ll_real(tmp)
     probe_rr1b2_installer_private_config(tmp)
     probe_rr1b2_logrotate_preflight_order(tmp)
     probe_rr1b2_logrotate_policy(tmp)

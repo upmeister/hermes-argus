@@ -102,14 +102,17 @@ check without a maintainer decision.
    and is OFF by default. With OFF, confirm no network-guard entry exists in the
    managed cron block and that `~/scripts/network-guard.sh` was not freshly
    installed. With ON, the deploy fails closed unless `resolvectl` and `ip`
-   exist and `sudo -n -l <command> <arguments>` — which only lists the matching
-   rule, never executes it — reports each rollback command as permitted under
-   NOPASSWD at the arguments the guard would use. Refused, and therefore a
-   failed deploy: a PASSWD-only grant, a mixed-tag sudoers line where only one
-   command is passwordless, a `(nobody)` run-as, a negated `!command` rule, a
-   grant restricted to arguments the guard cannot rely on, or a `sudo -n -l`
-   that itself fails. No rollback is executed and no route, DNS, interface or
-   sudoers entry is mutated.
+   exist and `sudo -n -ll <command> <arguments>` — the verbose listing, which
+   reports the matched sudoers entry and never executes it — shows, for each
+   rollback command, `Options: authenticate` (NOPASSWD; `!authenticate` means a
+   password is required, which cron cannot supply) and a matched sudoers spec
+   carrying an argument mask (`… revert *`, `… route flush table *`,
+   `… rule del *`). Refused, and therefore a failed deploy: a PASSWD-only grant,
+   a mixed-tag sudoers line where only one command is passwordless, a
+   `(nobody)` run-as, a negated `!command` rule, a grant pinned to literal
+   arguments (it cannot cover the targets the guard discovers at runtime), or a
+   `sudo` that itself fails. No rollback is executed and no route, DNS,
+   interface or sudoers entry is mutated by the deploy.
    **Production action:** if this host relies on the guard, set the flag
    explicitly in `config.env` before deploying — the default is deliberately OFF
    and no automatic migration is performed.
