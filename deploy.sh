@@ -69,6 +69,16 @@ assert_private_config() {
     return 0
 }
 
+# H1 (пятый проход, ревью b0fe08a): ссылка в точке конфига запрещена при ЛЮБОМ
+# входе, до ветки поиска файла. `[ -f ]` следует по ссылке, поэтому висячая
+# ссылка на дефолтном config.env выглядела бы «файл не найден» и тихо уходила
+# в env-fallback, хотя операторская (пусть и сломанная) ссылка на месте.
+if [ -L "$CONFIG_FILE" ]; then
+    echo "❌ Конфиг $CONFIG_FILE — символическая ссылка, а не обычный файл." >&2
+    echo "   Починка: rm $CONFIG_FILE (снимет ссылку, не цель) и положи на его" >&2
+    echo "   место обычный файл." >&2
+    exit 1
+fi
 if [ -f "$CONFIG_FILE" ]; then
     echo "📖 Загружаю конфигурацию: $CONFIG_FILE"
     assert_private_config "$CONFIG_FILE" || exit 1
@@ -253,10 +263,14 @@ preflight_hermes() {
             echo "   в $HERMES_DIR/scripts и читает $HERMES_DIR/logs)." >&2
             ok=0
         }
-        command -v python3 >/dev/null 2>&1 || {
-            echo "❌ python3 не найден — ANALYZER исполняется системным python3." >&2
+        # H3 (пятый проход, ревью b0fe08a): `command -v` доказывает лишь
+        # наличие имени в PATH, не работоспособность — та же дыра, что
+        # закрывалась для venv прогоном. Безобидный capability-прогон ДО записей.
+        if ! out=$(python3 -c 'import sys; sys.exit(0)' 2>&1); then
+            echo "❌ Системный python3 отсутствует или не работает" >&2
+            echo "   (модуль ANALYZER исполняется им): ${out:-нет вывода}" >&2
             ok=0
-        }
+        fi
     fi
 
     if [ -n "$venv_names" ]; then
@@ -498,6 +512,17 @@ preflight_logrotate() {
     # Содержимое зонда — валидная пустая logrotate-политика: если удалить его
     # не выйдет (грант без rm), остаток не ломает планировщик хоста.
     local probe_target="$LOGROTATE_SCHED_DIR/.argus-deploy-preflight-probe"
+    # H5 (пятый проход, ревью b0fe08a): путь зонда фиксирован, и без проверки
+    # чужой файл с таким именем был бы перезаписан пробной записью и удалён
+    # уборкой. Argus не перезаписывает и не удаляет чужие файлы: коллизия —
+    # отказ до единственной записи, разбор — за оператором. `-L` отдельно:
+    # висячая ссылка проходит `-e`, но cp через неё записал бы в цель.
+    if [ -e "$probe_target" ] || [ -L "$probe_target" ]; then
+        echo "❌ В $LOGROTATE_SCHED_DIR уже существует .argus-deploy-preflight-probe —" >&2
+        echo "   это имя занято пробой записи, и преflight не перезаписывает" >&2
+        echo "   и не удаляет чужие файлы. Убери его и повтори deploy." >&2
+        return 1
+    fi
     local probe_src
     probe_src=$(mktemp)
     cat > "$probe_src" <<'EOF'

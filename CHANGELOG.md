@@ -16,16 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by the installing user with no group/other permissions (`install.sh` creates
   it owner-only and checks an existing one — values are never echoed, and the
   same check guards both the installer and the direct deploy path, rejecting a
-  config whose access mode cannot even be determined; a symlink is refused as
-  not being a regular file, and an explicitly passed config path that does not
+  config whose access mode cannot even be determined; a symlink is refused at
+  the config location on every entry point, including a dangling symlink on
+  the default no-argument path, which previously looked like "not found" and
+  fell through to the environment fallback; an explicitly passed config path
+  that does not
   exist is an error rather than a silent environment-variable fallback); modules
   that install systemd *user* units require a reachable user manager, and reboot
   persistence is claimed only when `Linger` is actually `yes` (linger is never
   enabled automatically — the manual command is printed); modules that consume
   Hermes-owned paths require a real `~/.hermes/hermes-agent` with an executable
   Hermes and interpreter — ANALYZER, which deploys into `~/.hermes/scripts` and
-  reads `~/.hermes/logs`, requires the Hermes home directory and a system
-  `python3` even though it does not use the Hermes venv — and an explicitly
+  reads `~/.hermes/logs`, requires the Hermes home directory and a working
+  system `python3` — verified by a harmless capability run before anything is
+  written, not merely by presence in `PATH` — even though it does not use the
+  Hermes venv — and an explicitly
   empty `HERMES_HOST` or a
   non-integer/out-of-range `HERMES_PORT` is an error rather than a silent
   fallback to the historical default. Argus still never installs, starts or
@@ -42,7 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   into the scheduler directory through the same mechanism the activation will
   use and removed immediately, so a passwordless grant that covers `install`
   but not the target directory — which `install --help` could not detect —
-  stops the deploy before any unit is written; if the grant lacks `rm`, the
+  stops the deploy before any unit is written; the probe path is fixed, and a
+  pre-existing file at it stops the deploy without being overwritten or
+  removed; if the grant lacks `rm`, the
   leftover probe file is a valid empty policy and its manual removal is
   printed. `maxsize` — not `size` — is deliberate: `size` after `daily` cancels
   the periodic rotation entirely, which real `logrotate` reports as
@@ -76,15 +83,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answer a prompt); `-k` with a command ignores the invoking user's cached
   sudo timestamp — without it, `check_user` succeeds on a live timestamp even
   for a PASSWD rule, so a policy that silently fails in cron would pass the
-  gate. A denied command, a `(nobody)` run-as, a grant pinned to specific
-  arguments, or a password-requiring grant all refuse the install. The probe
+  gate. A denied command, a `(nobody)` run-as, a grant that does not cover the
+  sentinel probes, or a password-requiring grant all refuse the install. The
+  probe
   set is two families: the invocations the guard builds today, and sentinel
   probes with arguments no meaningful granular grant would list — the guard's
   runtime argument space is unbounded (any future interface, any table named
-  by a foreign rule, arbitrary foreign rule specs), so a grant pinned to the
-  probed literals would pass preflight and silently fail in cron; the sentinels
-  force the argument-mask form (`revert *`, `route flush table *`,
-  `rule del *`) that the repair instruction prints. No route,
+  by a foreign rule, arbitrary foreign rule specs). A finite probe set proves
+  applicability for the probed invocations and nothing beyond it; a grant
+  pinned to the probed literals fails the sentinels wherever the host's
+  default policy denies unlisted commands, but finite probes cannot prove
+  unbounded coverage, so the required shape remains the argument-mask form
+  (`revert *`, `route flush table *`, `rule del *`) that the repair
+  instruction prints — the mask covers the unbounded space by construction
+  rather than enumeration. No route,
   DNS, interface or sudoers entry is mutated by the deploy, and applicability
   is never inferred from the number of interfaces. Existing production users must set the flag explicitly before a
   future deployment; this change performs no migration.

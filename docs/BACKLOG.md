@@ -560,6 +560,10 @@ maintainer read an incomplete project state.
 - **Next action / responsible roles:** maintainer confirms keeping the
   documented path-only override (e.g., non-standard host layouts) or restricts
   it to the test harness; docs then describe whichever surface is chosen.
+  Clarification from the PR #75 re-review at `b0fe08a`: the override changes
+  where the policy is ACTIVATED — the directory the host's logrotate scheduler
+  actually reads — not merely a path Argus writes to; the decision should
+  account for that.
 - **Closure evidence:** the decision is recorded and DEPLOY_CHECKLIST/template
   match the confirmed surface.
 - **Release disposition:** not a blocker for RR1b; settle before the RR3 docs

@@ -6863,6 +6863,39 @@ def probe_rr1b2_config_symlink_explicit_missing(tmp: Path):
     if not (res.returncode != 0 and "символическая ссылка" in out_inst):
         problems.append(f"install-symlink: rc={res.returncode} out={out_inst[-220:]!r}")
 
+    # 4. deploy БЕЗ аргумента: висячая ссылка на дефолтном config.env раньше
+    #    выглядела «файл не найден» (`[ -f ]` следует по ссылке) и тихо уходила
+    #    в env-fallback со штатным завершением. Ссылка в точке конфига
+    #    запрещена при любом входе (пятый проход, ревью b0fe08a). Нужна полная
+    #    копия дерева: путь конфига — $REPO_DIR/config.env от $0.
+    fixture = tmp / "h1dangling-repo"
+    if fixture.exists():
+        shutil.rmtree(fixture)
+    shutil.copytree(REPO, fixture,
+                    ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
+    os.symlink("no-such-config-target.env", fixture / "config.env")
+    home3 = tmp / "h1dangling-home"
+    shim3 = tmp / "h1dangling-shim"
+    shim3.mkdir(parents=True, exist_ok=True)
+    _rr1b_host_shims(shim3)
+    _rr1b_fake_hermes(home3)
+    env3 = _probe_subprocess_env(home3, {
+        "HOME": home3.as_posix(),
+        "PATH": str(shim3) + os.pathsep + os.environ.get("PATH", ""),
+        "CRONTAB_FIXTURE": (tmp / "h1dangling-cron.txt").as_posix(),
+        "CRON_FILE": (tmp / "h1dangling-proposal.txt").as_posix(),
+    })
+    r_dang = subprocess.run(
+        ["bash", (fixture / "deploy.sh").as_posix()],
+        cwd=fixture.as_posix(), env=env3, capture_output=True, text=True,
+        timeout=180)
+    out_dang = r_dang.stdout + r_dang.stderr
+    if not (r_dang.returncode != 0
+            and "символическая ссылка" in out_dang
+            and "payload проверен" not in r_dang.stdout):
+        problems.append(f"dangling-default: rc={r_dang.returncode} "
+                        f"out={out_dang[-220:]!r}")
+
     check("rr1b2_config_symlink_explicit_missing", not problems,
           f"problems={problems}")
 
@@ -6899,6 +6932,26 @@ def probe_rr1b2_analyzer_needs_hermes_home(tmp: Path):
     if r_ok.returncode != 0:
         problems.append(f"analyzer-with-home: rc={r_ok.returncode} "
                         f"out={(r_ok.stdout + r_ok.stderr)[-240:]!r}")
+
+    # 3. Системный python3, который ЕСТЬ в PATH, но не работает, обязан
+    #    ронять preflight до записей: `command -v` доказывает только наличие
+    #    имени (пятый проход, ревью b0fe08a — раньше шим с exit 42 проходил,
+    #    deploy писал всё и останавливался лишь поздним payload-гейтом).
+    home_py = tmp / "h3ana-py-home"
+    (home_py / ".hermes").mkdir(parents=True, exist_ok=True)
+    shim_py = tmp / "h3ana-py-shim"
+    shim_py.mkdir(parents=True, exist_ok=True)
+    _rr1b_host_shims(shim_py)
+    _write_argv_shim(shim_py, "python3", "exit 42\n")
+    r_py = _rr1b_deploy_env(tmp, "h3ana-py", home_py, shim_py,
+                            _rr1b_modules(analyzer=True), {})
+    out_py = r_py.stdout + r_py.stderr
+    if not (r_py.returncode != 0
+            and "python3" in out_py
+            and "ANALYZER" in out_py
+            and not (home_py / ".hermes" / "scripts" / "collect-metrics.sh").exists()
+            and not (home_py / ".hermes" / "argus-logrotate.conf").exists()):
+        problems.append(f"broken-python3: rc={r_py.returncode} out={out_py[-240:]!r}")
 
     check("rr1b2_analyzer_needs_hermes_home", not problems,
           f"problems={problems}")
@@ -6962,7 +7015,7 @@ def probe_rr1b2_logrotate_write_probe(tmp: Path):
         'exit 1\n'
     )
 
-    def run(tag: str, sudo_shim: str):
+    def run(tag: str, sudo_shim: str, *, sched_closed: bool = True, plant=None):
         home = tmp / f"h5wp-{tag}-home"
         shim = tmp / f"h5wp-{tag}-shim"
         shim.mkdir(parents=True, exist_ok=True)
@@ -6973,7 +7026,10 @@ def probe_rr1b2_logrotate_write_probe(tmp: Path):
         # только через sudo install.
         sched = tmp / f"h5wp-{tag}-sched"
         sched.mkdir(parents=True, exist_ok=True)
-        sched.chmod(0o555)
+        if plant is not None:
+            plant(sched, home)
+        if sched_closed:
+            sched.chmod(0o555)
         _write_argv_shim(shim, "sudo",
                          sudo_shim.replace("__INSTALL__", _rr1b_real("install"))
                          .replace("__RM__", _rr1b_real("rm")))
@@ -7023,6 +7079,27 @@ def probe_rr1b2_logrotate_write_probe(tmp: Path):
             and "удали его вручную" in out_warn):
         problems.append(f"warn: rc={r_warn.returncode} "
                         f"leftover={leftover.exists()} out={out_warn[-240:]!r}")
+
+    # 4. Чужой файл на фиксированном пути зонда: deploy обязан отказаться,
+    #    НЕ перезаписывая и не удаляя его (пятый проход, ревью b0fe08a —
+    #    раньше пробная запись затирала существующий файл и rm его удалял).
+    owned_content = "operator-owned data\n"
+
+    def plant_owned(sched: Path, home: Path) -> None:
+        (sched / probe_name).write_text(owned_content, encoding="utf-8")
+
+    r_own, sched_own = run("own", FAIL_SHIM, sched_closed=False,
+                           plant=plant_owned)
+    out_own = r_own.stdout + r_own.stderr
+    target_own = sched_own / probe_name
+    survived = (target_own.is_file()
+                and target_own.read_text(encoding="utf-8") == owned_content)
+    if not (r_own.returncode != 0
+            and "уже существует" in out_own
+            and survived
+            and not (tmp / "h5wp-own-home" / ".hermes" / "argus-logrotate.conf").exists()):
+        problems.append(f"own-file: rc={r_own.returncode} survived={survived} "
+                        f"out={out_own[-240:]!r}")
 
     check("rr1b2_logrotate_write_probe", not problems, f"problems={problems}")
 

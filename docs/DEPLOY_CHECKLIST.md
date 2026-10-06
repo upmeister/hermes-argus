@@ -80,10 +80,13 @@ check without a maintainer decision.
    `stat -c '%U %a' config.env` must show your user and `600`. The installer
    creates it owner-only; a group/other-readable or foreign-owned file stops the
    run with the violated property and a repair command (`chmod 600` / `chown`)
-   and never echoes configuration values. A symlink is refused as well — the
-   config must be a regular file, and an explicitly passed config path that
-   does not exist is an error, not a silent environment-variable fallback (the
-   no-argument default path keeps the env fallback).
+   and never echoes configuration values. A symlink is refused at the config
+   location on every entry point — including a dangling one on the default
+   no-argument path, which would otherwise look like "not found" and fall
+   back to environment variables — and an explicitly passed config path that
+   does not exist is an error, not a silent environment-variable fallback
+   (the no-argument default path keeps the env fallback for a genuinely
+   absent file).
    **Production action:** existing production `config.env` is probably `644` —
    run `chmod 600 config.env` before the first host-readiness deploy.
 2. **User manager and linger.** Modules that install systemd *user* units
@@ -102,7 +105,9 @@ check without a maintainer decision.
    non-integer/out-of-range port is an error, not a silent fallback to
    `127.0.0.1:9119`. ANALYZER does not use the Hermes venv but does require
    the Hermes home directory to exist (it deploys into `~/.hermes/scripts` and
-   reads `~/.hermes/logs`) and a system `python3` on the host. A stopped
+   reads `~/.hermes/logs`) and a system `python3` that actually executes a
+   trivial run before anything is written — presence in `PATH` alone is not
+   accepted. A stopped
    dashboard is a runtime observation and is not repaired here.
 4. **Network guard.** `MODULE_NETWORK_GUARD` is recorded separately from CORE
    and is OFF by default. With OFF, confirm no network-guard entry exists in the
@@ -122,14 +127,20 @@ check without a maintainer decision.
    `ip route flush table 4294967293`, `ip rule del from 203.0.113.1 lookup
    4294967293` — TEST-NET-3). The guard's runtime argument space is unbounded:
    it reverts any future interface, flushes any table named by a foreign rule
-   and deletes arbitrary foreign rules. A grant pinned to specific arguments
-   passes the realistic probes but fails the sentinels and stops the deploy;
-   the grant MUST use argument masks (`revert *`, `route flush table *`,
-   `rule del *`) — exactly the form the deploy prints in its repair
-   instruction. Refused, and therefore a failed deploy: a denied command, a
-   `(nobody)` run-as, a grant pinned to specific arguments, or a
-   password-requiring grant. No rollback is executed and no route, DNS,
-   interface or sudoers entry is mutated by the deploy.
+   and deletes arbitrary foreign rules. A finite probe set proves
+   applicability for the six probed invocations and nothing beyond them — it
+   cannot prove unbounded coverage. A grant pinned to specific arguments
+   fails the sentinels on a host whose default policy denies unlisted
+   commands (the common case); it can still pass where the host's blanket
+   policy (for example `NOPASSWD: ALL`) or an explicit enumeration covers the
+   sentinel arguments. The grant MUST use argument masks (`revert *`,
+   `route flush table *`, `rule del *`) — exactly the form the deploy prints
+   in its repair instruction — so the unbounded runtime space is covered by
+   construction rather than enumeration. Refused, and therefore a failed
+   deploy: a denied command, a `(nobody)` run-as, a grant that does not cover
+   the sentinel probes, or a password-requiring grant. No rollback is
+   executed and no route, DNS, interface or sudoers entry is mutated by the
+   deploy.
    **Boundary:** the `-k/-n/-l` exit-status behavior is verified against real
    sudo 1.9.15p5 (CI fixture) and 1.9.17p2 (local fixture). Other sudo
    implementations (including sudo-rs) and older versions are outside this
@@ -152,7 +163,10 @@ check without a maintainer decision.
    deploy before any unit is written; if the probe file itself cannot be
    removed (a grant without `rm`), the deploy prints its path and the
    instruction to delete it — the leftover is a valid empty policy and does
-   not break the host scheduler. Confirm with the host scheduler
+   not break the host scheduler. The probe path is fixed; if something already
+   exists there, the deploy stops without writing or removing anything, so a
+   pre-existing scheduler-directory file is never overwritten. Confirm with
+   the host scheduler
    that rotation actually runs (`logrotate --debug /etc/logrotate.d/argus` must
    exit 0). systemd journal retention, Hermes log ownership and unrelated
    `/var/log` files stay external.
