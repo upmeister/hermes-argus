@@ -22,13 +22,13 @@ Current selected task:
 - **RR1b host readiness** — private config, Hermes/user-manager preflight,
   network-guard applicability and bounded log rotation. Implemented on
   `feat/rr1b-host-readiness` from baseline `7245cf9`
-  ([contract](rr1b-host-readiness-contract.md)). First review (promptql,
-  external, via MCP — maintainer-selected while Codex was unavailable)
-  returned BLOCKED-FOR-MAINTAINER with four in-scope blockers (H1
-  symlink/explicit-missing config, H3 ANALYZER Hermes-home, H4 granular-grant
-  false-pass, H5 `install --help` write check); the maintainer authorized one
-  more bounded pass, and the remediation is pushed on the same branch —
-  awaiting re-review and maintainer merge. Not deployed.
+  ([contract](rr1b-host-readiness-contract.md)). Both promptql reviews
+  (external, via MCP — maintainer-selected while Codex was unavailable)
+  returned BLOCKED-FOR-MAINTAINER; the fourth pass (four blockers) and the
+  fifth pass (H5 probe collision, H1 dangling symlink, H3 python3
+  capability, H4 docs honesty — maintainer-authorized, H4 docs-only by
+  maintainer decision) are pushed on the same branch — awaiting re-review
+  and maintainer merge. Not deployed.
 
 RR1a is merged, not deployed. Subsequent RR1 subdivisions and native Cronping
 Telegram setup through its provider bot are
