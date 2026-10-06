@@ -80,7 +80,10 @@ check without a maintainer decision.
    `stat -c '%U %a' config.env` must show your user and `600`. The installer
    creates it owner-only; a group/other-readable or foreign-owned file stops the
    run with the violated property and a repair command (`chmod 600` / `chown`)
-   and never echoes configuration values.
+   and never echoes configuration values. A symlink is refused as well — the
+   config must be a regular file, and an explicitly passed config path that
+   does not exist is an error, not a silent environment-variable fallback (the
+   no-argument default path keeps the env fallback).
    **Production action:** existing production `config.env` is probably `644` —
    run `chmod 600 config.env` before the first host-readiness deploy.
 2. **User manager and linger.** Modules that install systemd *user* units
@@ -89,29 +92,48 @@ check without a maintainer decision.
    prints the manual action, on unknown it warns that reboot persistence is not
    guaranteed and continues. Argus never runs `loginctl enable-linger` itself —
    check the unit journal to confirm no such call was made.
-   **Production action:** if `Linger=no`, the deploy will stop. Enable it
-   manually (`sudo loginctl enable-linger "$USER"`) and re-run, or accept that
-   Argus units will not survive logout/reboot.
+   **Production action:** if `Linger=no`, the deploy stops before writing any
+   unit — there is no "proceed anyway" path. Enable linger manually
+   (`sudo loginctl enable-linger "$USER"`) and re-run the deploy; without it
+   the deploy refuses to install units it cannot promise to keep running.
 3. **Hermes home and target.** For modules that read Hermes-owned paths, read
    back `~/.hermes/hermes-agent/venv/bin/{hermes,python}` and the configured
    `HERMES_HOST` / `HERMES_PORT`. An explicitly empty `HERMES_HOST` or a
    non-integer/out-of-range port is an error, not a silent fallback to
-   `127.0.0.1:9119`. A stopped dashboard is a runtime observation and is not
-   repaired here.
+   `127.0.0.1:9119`. ANALYZER does not use the Hermes venv but does require
+   the Hermes home directory to exist (it deploys into `~/.hermes/scripts` and
+   reads `~/.hermes/logs`) and a system `python3` on the host. A stopped
+   dashboard is a runtime observation and is not repaired here.
 4. **Network guard.** `MODULE_NETWORK_GUARD` is recorded separately from CORE
    and is OFF by default. With OFF, confirm no network-guard entry exists in the
    managed cron block and that `~/scripts/network-guard.sh` was not freshly
    installed. With ON, the deploy fails closed unless `resolvectl` and `ip`
-   exist and `sudo -k -n -l <command> <arguments>` succeeds for each rollback
-   command — the command probed at the arguments the guard would use, nothing
-   executed, sudo output not parsed. The flags each carry weight: `-k` ignores
-   the invoking user's cached sudo timestamp (with a live timestamp a PASSWD
-   rule would otherwise pass the check and fail in cron), `-n` turns a
+   exist and `sudo -k -n -l <command> <arguments>` succeeds for each probe —
+   nothing executed, sudo output not parsed. The flags each carry weight: `-k`
+   ignores the invoking user's cached sudo timestamp (with a live timestamp a
+   PASSWD rule would otherwise pass the check and fail in cron), `-n` turns a
    password requirement into a failure instead of a prompt, and `-l` only
-   lists applicability. Refused, and therefore a failed deploy: a denied
-   command, a `(nobody)` run-as, a grant pinned to other arguments, or a
+   lists applicability.
+   The probe set is two families. Three probes repeat the invocations the
+   guard builds today (`resolvectl revert <candidate-iface>`,
+   `ip route flush table 4294967295`, `ip rule del from 127.0.0.1 lookup
+   4294967295`). Three sentinel probes use arguments no meaningful granular
+   grant would list (`resolvectl revert argus-preflight-sentinel`,
+   `ip route flush table 4294967293`, `ip rule del from 203.0.113.1 lookup
+   4294967293` — TEST-NET-3). The guard's runtime argument space is unbounded:
+   it reverts any future interface, flushes any table named by a foreign rule
+   and deletes arbitrary foreign rules. A grant pinned to specific arguments
+   passes the realistic probes but fails the sentinels and stops the deploy;
+   the grant MUST use argument masks (`revert *`, `route flush table *`,
+   `rule del *`) — exactly the form the deploy prints in its repair
+   instruction. Refused, and therefore a failed deploy: a denied command, a
+   `(nobody)` run-as, a grant pinned to specific arguments, or a
    password-requiring grant. No rollback is executed and no route, DNS,
    interface or sudoers entry is mutated by the deploy.
+   **Boundary:** the `-k/-n/-l` exit-status behavior is verified against real
+   sudo 1.9.15p5 (CI fixture) and 1.9.17p2 (local fixture). Other sudo
+   implementations (including sudo-rs) and older versions are outside this
+   evidence — verify the grant manually before switching the guard on there.
    **Production action:** if this host relies on the guard, set the flag
    explicitly in `config.env` before deploying — the default is deliberately OFF
    and no automatic migration is performed.
@@ -122,7 +144,15 @@ check without a maintainer decision.
    in the rotated set — and uses `daily` with `rotate 7` and `maxsize 50M`,
    `compress`, `delaycompress` and `copytruncate`. The parser run happens in
    the preflight, before the deploy writes anything: an unusable `logrotate`
-   stops the install with no files deployed. Confirm with the host scheduler
+   stops the install with no files deployed. The preflight also performs one
+   real write probe: it installs a temporary, valid, empty logrotate policy
+   into the scheduler directory through the same mechanism the activation will
+   use and removes it immediately. A grant that covers `install` but not the
+   target directory, or a read-only scheduler directory, therefore stops the
+   deploy before any unit is written; if the probe file itself cannot be
+   removed (a grant without `rm`), the deploy prints its path and the
+   instruction to delete it — the leftover is a valid empty policy and does
+   not break the host scheduler. Confirm with the host scheduler
    that rotation actually runs (`logrotate --debug /etc/logrotate.d/argus` must
    exit 0). systemd journal retention, Hermes log ownership and unrelated
    `/var/log` files stay external.

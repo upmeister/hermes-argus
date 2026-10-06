@@ -6599,11 +6599,12 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
         return res, case_home
 
     try:
-        # A. Позитив: NOPASSWD с маской аргументов на все три команды — deploy
-        #    обязан пройти. Это проверяет тег (`authenticate`) и запись sudoers
-        #    с маской (`<путь> *`) против НАСТОЯЩЕГО вывода.
+        # A. Позитив: NOPASSWD с масками аргументов ровно в форме из строки-
+        #    починки deploy'а (`revert *`, `table *`, `del *`) — deploy обязан
+        #    пройти, ВКЛЮЧАЯ сентинел-зонды: аргументы, которые осмысленный
+        #    гранулярный грант не перечисляет, покрывает только маска.
         if not write_dropin(
-                f"{user} ALL=(root) NOPASSWD: {resolvectl_path} *, "
+                f"{user} ALL=(root) NOPASSWD: {resolvectl_path} revert *, "
                 f"{ip_path} route flush table *, {ip_path} rule del *\n"):
             check("rr1b2_sudo_ll_real", False, "fixtures: drop-in не установлен")
             return
@@ -6639,6 +6640,40 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
                 and "Нужен беспарольный грант" in out_b
                 and not (home_b / "scripts" / "network-guard.sh").exists()):
             problems.append(f"negative: rc={res_b.returncode} out={out_b[-200:]!r}{diag}")
+
+        # C. Гранулярность (сценарий false-pass из ревью PR #75): грант,
+        #    прибитый ровно к трём литеральным вызовам, которые deploy зондировал
+        #    до сентинелов, проходит «реальные» зонды, но ОБЯЗАН пасть на
+        #    сентинелах — рантайм-пространство аргументов guard'а не ограничено
+        #    (любой будущий iface, любые таблицы и правила чужих нарушений).
+        #    Отрицание сентинелов делается явными `!`-записями ровно по той же
+        #    причине, что и в кейсе B: на хосте с глобальным NOPASSWD: ALL
+        #    отсутствие совпадения у гранулярного гранта означает откат к ALL,
+        #    и «чисто гранулярный» грант неотличим от перmissive-хоста.
+        #    iface реплицирует выбор deploy: `ip` зашимлён → primary пуст →
+        #    исключаются только lo и tailscale0, берётся первый по алфавиту.
+        net = Path("/sys/class/net")
+        ifaces = sorted(p.name for p in net.iterdir()) if net.is_dir() else []
+        iface = next((i for i in ifaces if i not in ("lo", "tailscale0")),
+                     "argus-preflight")
+        if not write_dropin(
+                f"{user} ALL=(root) NOPASSWD: "
+                f"{resolvectl_path} revert {iface}, "
+                f"{ip_path} route flush table 4294967295, "
+                f"{ip_path} rule del from 127.0.0.1 lookup 4294967295, "
+                f"!{resolvectl_path} revert argus-preflight-sentinel, "
+                f"!{ip_path} route flush table 4294967293, "
+                f"!{ip_path} rule del from 203.0.113.1 lookup 4294967293\n"):
+            check("rr1b2_sudo_ll_real", False,
+                  "fixtures: drop-in не переустановлен (C)")
+            return
+        res_c, home_c = deploy_guard("gran")
+        out_c = res_c.stdout + res_c.stderr
+        if not (res_c.returncode != 0
+                and "сентинел" in out_c
+                and not (home_c / "scripts" / "network-guard.sh").exists()):
+            problems.append(f"granular: rc={res_c.returncode} iface={iface!r} "
+                            f"out={out_c[-240:]!r}")
     finally:
         subprocess.run(["sudo", "rm", "-f", str(dropin)], capture_output=True, timeout=60)
 
@@ -6734,6 +6769,262 @@ def probe_rr1b2_logrotate_policy(tmp: Path):
         return
 
     check("rr1b2_logrotate_policy", not problems, f"problems={problems}")
+
+
+def probe_rr1b2_config_symlink_explicit_missing(tmp: Path):
+    """H1 (ремедиация ревью PR #75): симлинк-конфиг — не обычный файл, и явно
+    указанный вызывающим путь конфига, которого нет, останавливает deploy
+    вместо молчаливого env-fallback'а (опечатка в пути не должна выглядеть как
+    штатная env-развёртка). Гейт проверяется в обоих входах: deploy и install.
+    `[ -f ]` следует по ссылке, поэтому раньше симлинк на корректный файл
+    проходил проверку; в install.sh висячая ссылка вдобавок приводила `cp`
+    к записи В ЦЕЛЬ мимо ожидаемого места."""
+    problems = []
+    # Проверка возможностей ФС: на Windows-ФС без devmode symlinks недоступны —
+    # тогда кейс закрывается CI (Linux), а не падает локально.
+    fs_probe = tmp / "h1sym-fs-check"
+    try:
+        fs_probe.symlink_to(tmp)
+        fs_probe.unlink()
+    except OSError:
+        check("rr1b2_config_symlink_explicit_missing", True,
+              "skipped: ФС не умеет symlinks — проверит CI")
+        return
+
+    # 1. deploy: симлинк на корректный owner-only конфиг всё равно отказ.
+    home = tmp / "h1sym-home"
+    shim = tmp / "h1sym-shim"
+    shim.mkdir(parents=True, exist_ok=True)
+    _rr1b_host_shims(shim)
+    _rr1b_fake_hermes(home)
+    real_cfg = tmp / "h1sym-real.env"
+    write(real_cfg, _rr1b_modules(core=True)
+          + f"WATCHDOG_BOT_TOKEN={_RR1B_H_SECRET}\n")
+    link = tmp / "h1sym-link.env"
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(real_cfg.resolve().as_posix())
+    env = _probe_subprocess_env(home, {
+        "HOME": home.as_posix(),
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "CRONTAB_FIXTURE": (tmp / "h1sym-cron.txt").as_posix(),
+        "CRON_FILE": (tmp / "h1sym-proposal.txt").as_posix(),
+    })
+    r_sym = subprocess.run(
+        ["bash", (REPO / "deploy.sh").as_posix(), link.as_posix()],
+        cwd=REPO.as_posix(), env=env, capture_output=True, text=True, timeout=180)
+    out_sym = r_sym.stdout + r_sym.stderr
+    if not (r_sym.returncode != 0 and "символическая ссылка" in out_sym
+            and "payload проверен" not in r_sym.stdout):
+        problems.append(f"deploy-symlink: rc={r_sym.returncode} out={out_sym[-220:]!r}")
+    if _RR1B_H_SECRET in out_sym:
+        problems.append("deploy-symlink: canary утёк в вывод")
+
+    # 2. deploy: явно указанный путь отсутствует → стоп, а не env-fallback.
+    #    Раньше печаталось предупреждение, и deploy шёл дальше по переменным
+    #    окружения с дефолтами модулей — опечатка выглядела штатной развёрткой.
+    home2 = tmp / "h1miss-home"
+    shim2 = tmp / "h1miss-shim"
+    shim2.mkdir(parents=True, exist_ok=True)
+    _rr1b_host_shims(shim2)
+    _rr1b_fake_hermes(home2)
+    env2 = _probe_subprocess_env(home2, {
+        "HOME": home2.as_posix(),
+        "PATH": str(shim2) + os.pathsep + os.environ.get("PATH", ""),
+        "CRONTAB_FIXTURE": (tmp / "h1miss-cron.txt").as_posix(),
+        "CRON_FILE": (tmp / "h1miss-proposal.txt").as_posix(),
+    })
+    r_miss = subprocess.run(
+        ["bash", (REPO / "deploy.sh").as_posix(),
+         (tmp / "h1miss-absent.env").as_posix()],
+        cwd=REPO.as_posix(), env=env2, capture_output=True, text=True, timeout=180)
+    out_miss = r_miss.stdout + r_miss.stderr
+    if not (r_miss.returncode != 0
+            and "Указанный конфиг не найден" in out_miss
+            and "payload проверен" not in r_miss.stdout):
+        problems.append(f"explicit-missing: rc={r_miss.returncode} "
+                        f"out={out_miss[-220:]!r}")
+
+    # 3. install.sh: симлинк-config.env отказывает и в этом входе — проверка
+    #    продублирована в обеих копиях и обязана совпадать.
+    body = (_rr1b_modules(core=False, integrations=True)
+            + f"WATCHDOG_BOT_TOKEN={_RR1B_H_SECRET}\n")
+
+    def make_symlink_config(fixture: Path) -> None:
+        os.unlink(fixture / "config.env")
+        write(fixture / "template-target.env", body)
+        os.symlink("template-target.env", fixture / "config.env")
+
+    res, _ = _rr1b_install_fixture(
+        tmp, "h1-inst-sym", body,
+        deploy_mode="skip",
+        mutate_repo=make_symlink_config)
+    out_inst = res.stdout + res.stderr
+    if not (res.returncode != 0 and "символическая ссылка" in out_inst):
+        problems.append(f"install-symlink: rc={res.returncode} out={out_inst[-220:]!r}")
+
+    check("rr1b2_config_symlink_explicit_missing", not problems,
+          f"problems={problems}")
+
+
+def probe_rr1b2_analyzer_needs_hermes_home(tmp: Path):
+    """H3 (ремедиация ревью PR #75): ANALYZER деплоится в $HERMES_DIR/scripts и
+    читает $HERMES_DIR/logs, но не пользуется Hermes venv — venv-предикат
+    оставлял ANALYZER-only deploy зелёным на хосте вообще без Hermes home.
+    Контроль: с существующим home ANALYZER-only проходит без venv."""
+    problems = []
+    # 1. Hermes home отсутствует → отказ с именем модуля, ничего не записано.
+    home = tmp / "h3ana-home"
+    shim = tmp / "h3ana-shim"
+    shim.mkdir(parents=True, exist_ok=True)
+    _rr1b_host_shims(shim)
+    # _rr1b_fake_hermes СОЗНАТЕЛЬНО не вызывается: Hermes на хосте нет.
+    r = _rr1b_deploy_env(tmp, "h3ana", home, shim,
+                         _rr1b_modules(analyzer=True), {})
+    out = r.stdout + r.stderr
+    if not (r.returncode != 0
+            and "Не найден Hermes home" in out
+            and "ANALYZER" in out
+            and not (home / ".hermes").exists()):
+        problems.append(f"analyzer-no-home: rc={r.returncode} out={out[-240:]!r}")
+
+    # 2. Контроль: home есть, venv не нужен — deploy проходит.
+    home_ok = tmp / "h3ana-ok-home"
+    (home_ok / ".hermes").mkdir(parents=True, exist_ok=True)
+    shim_ok = tmp / "h3ana-ok-shim"
+    shim_ok.mkdir(parents=True, exist_ok=True)
+    _rr1b_host_shims(shim_ok)
+    r_ok = _rr1b_deploy_env(tmp, "h3ana-ok", home_ok, shim_ok,
+                            _rr1b_modules(analyzer=True), {})
+    if r_ok.returncode != 0:
+        problems.append(f"analyzer-with-home: rc={r_ok.returncode} "
+                        f"out={(r_ok.stdout + r_ok.stderr)[-240:]!r}")
+
+    check("rr1b2_analyzer_needs_hermes_home", not problems,
+          f"problems={problems}")
+
+
+def probe_rr1b2_logrotate_write_probe(tmp: Path):
+    """H5 (ремедиация ревью PR #75): `sudo -n install --help` не доказывал право
+    писать В каталог планировщика — грант под другие аргументы install проходил
+    преflight, и deploy падал уже ПОСЛЕ записи юнитов. Теперь преflight
+    выполняет фактическую запись зондом тем же механизмом, что и активация:
+    провал записи останавливает deploy ДО любых других записей; остаток зонда
+    при гранте без rm — валидная пустая политика с предупреждением, а не поломка
+    планировщика хоста."""
+    problems = []
+
+    # Шим sudo имитирует root-запись: каталог фикстуры закрыт на запись текущему
+    # пользователю (chmod 0555), шим на время install/rm открывает его и
+    # возвращает режим — фактический файл при этом РЕАЛЬНО появляется, и
+    # read-back deploy'а ([ -f ]) работает честно.
+    OK_SHIM = (
+        'if [ "$1" = "-n" ] && [ "$2" = "install" ]; then\n'
+        '  shift 2\n'
+        '  dir=$(dirname "$4")\n'
+        '  chmod 0777 "$dir" 2>/dev/null\n'
+        '  __INSTALL__ "$@"\n'
+        '  rc=$?\n'
+        '  chmod 0555 "$dir" 2>/dev/null\n'
+        '  exit $rc\n'
+        'fi\n'
+        'if [ "$1" = "-n" ] && [ "$2" = "rm" ]; then\n'
+        '  shift 2\n'
+        '  dir=$(dirname "$2")\n'
+        '  chmod 0777 "$dir" 2>/dev/null\n'
+        '  __RM__ "$@"\n'
+        '  rc=$?\n'
+        '  chmod 0555 "$dir" 2>/dev/null\n'
+        '  exit $rc\n'
+        'fi\n'
+        'exit 1\n'
+    )
+    # Грант покрывает install, но не rm: зонд остаётся, deploy НЕ должен падать.
+    NO_RM_SHIM = (
+        'if [ "$1" = "-n" ] && [ "$2" = "install" ]; then\n'
+        '  shift 2\n'
+        '  dir=$(dirname "$4")\n'
+        '  chmod 0777 "$dir" 2>/dev/null\n'
+        '  __INSTALL__ "$@"\n'
+        '  rc=$?\n'
+        '  chmod 0555 "$dir" 2>/dev/null\n'
+        '  exit $rc\n'
+        'fi\n'
+        'exit 1\n'
+    )
+    # Грант НЕ покрывает запись в каталог: именно сценарий, который проходил
+    # старый `install --help`-гейт. Шим пропускает `install --help` (старый
+    # преflight) и роняет фактическую запись `install -m 0644 …` (активацию).
+    FAIL_SHIM = (
+        'if [ "$1" = "-n" ] && [ "$2" = "install" ] && [ "$3" = "--help" ]; then\n'
+        '  exit 0\n'
+        'fi\n'
+        'exit 1\n'
+    )
+
+    def run(tag: str, sudo_shim: str):
+        home = tmp / f"h5wp-{tag}-home"
+        shim = tmp / f"h5wp-{tag}-shim"
+        shim.mkdir(parents=True, exist_ok=True)
+        _rr1b_host_shims(shim)
+        _rr1b_fake_hermes(home)
+        # Каталог планировщика — НЕ из _probe_subprocess_env (тот создаёт
+        # записываемый): свой, закрытый на запись, чтобы путь активации был
+        # только через sudo install.
+        sched = tmp / f"h5wp-{tag}-sched"
+        sched.mkdir(parents=True, exist_ok=True)
+        sched.chmod(0o555)
+        _write_argv_shim(shim, "sudo",
+                         sudo_shim.replace("__INSTALL__", _rr1b_real("install"))
+                         .replace("__RM__", _rr1b_real("rm")))
+        return (
+            _rr1b_deploy_env(
+                tmp, f"h5wp-{tag}", home, shim,
+                _rr1b_modules(core=True),
+                {"LOGROTATE_SCHED_DIR": sched.as_posix()}),
+            sched,
+        )
+
+    probe_name = ".argus-deploy-preflight-probe"
+
+    # 1. Провал записи → deploy останавливается ДО любых записей развёртки.
+    r_fail, sched_fail = run("fail", FAIL_SHIM)
+    out_fail = r_fail.stdout + r_fail.stderr
+    if not (r_fail.returncode != 0
+            and "Пробная запись" in out_fail
+            and not (tmp / "h5wp-fail-home" / ".hermes" / "argus-logrotate.conf").exists()
+            and not (sched_fail / "argus").exists()
+            and not (tmp / "h5wp-fail-home" / "scripts" / "hermes-watchdog.sh").exists()
+            and not (sched_fail / probe_name).exists()):
+        problems.append(f"fail: rc={r_fail.returncode} "
+                        f"policy={(tmp / 'h5wp-fail-home' / '.hermes' / 'argus-logrotate.conf').exists()} "
+                        f"out={out_fail[-240:]!r}")
+
+    # 2. Успешная запись и уборка: политика активирована, зонда не осталось.
+    r_ok, sched_ok = run("ok", OK_SHIM)
+    if not (r_ok.returncode == 0
+            and "payload проверен" in r_ok.stdout
+            and (sched_ok / "argus").is_file()
+            and not (sched_ok / probe_name).exists()
+            and "удали его вручную" not in (r_ok.stdout + r_ok.stderr)):
+        problems.append(f"ok: rc={r_ok.returncode} "
+                        f"activated={(sched_ok / 'argus').exists()} "
+                        f"leftover={(sched_ok / probe_name).exists()}")
+
+    # 3. Грант без rm: deploy проходит, зонд остаётся как ВАЛИДНАЯ пустая
+    #    политика с явной инструкцией удаления — планировщик хоста не ломается.
+    r_warn, sched_warn = run("warn", NO_RM_SHIM)
+    leftover = sched_warn / probe_name
+    out_warn = r_warn.stdout + r_warn.stderr
+    if not (r_warn.returncode == 0
+            and (sched_warn / "argus").is_file()
+            and leftover.is_file()
+            and "missingok" in leftover.read_text(encoding="utf-8")
+            and "удали его вручную" in out_warn):
+        problems.append(f"warn: rc={r_warn.returncode} "
+                        f"leftover={leftover.exists()} out={out_warn[-240:]!r}")
+
+    check("rr1b2_logrotate_write_probe", not problems, f"problems={problems}")
 
 
 def _rr1b_deploy(tmp: Path, tag: str, modules: str, extra_env: dict | None = None):
@@ -7295,6 +7586,11 @@ def main() -> int:
     probe_rr1b2_installer_private_config(tmp)
     probe_rr1b2_logrotate_preflight_order(tmp)
     probe_rr1b2_logrotate_policy(tmp)
+    # Ремедиация ревью PR #75: H1 symlink/explicit-missing, H3 ANALYZER home,
+    # H5 write-probe
+    probe_rr1b2_config_symlink_explicit_missing(tmp)
+    probe_rr1b2_analyzer_needs_hermes_home(tmp)
+    probe_rr1b2_logrotate_write_probe(tmp)
     # R1c: Authorization headers out of child argv (shell + ai-deep-check)
     probe_r1c_shell_full_auth_not_in_argv(tmp)
     probe_r1c_quick_github_header_not_in_argv(tmp)

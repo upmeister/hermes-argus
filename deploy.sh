@@ -10,6 +10,12 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="${1:-$REPO_DIR/config.env}"
+# H1 (ремедиация ревью PR #75): явно указанный вызывающим путь — контракт.
+# Его отсутствие останавливает deploy, а не молча замещается переменными
+# окружения: иначе опечатка в пути выглядит как штатная env-развёртка без
+# конфига. Дефолтный путь без аргумента сохраняет env-fallback как штатный.
+CONFIG_FILE_EXPLICIT=0
+if [ "$#" -ge 1 ]; then CONFIG_FILE_EXPLICIT=1; fi
 SCRIPTS_DIR="$REPO_DIR/scripts"
 MODULES_DIR="$REPO_DIR/modules"
 
@@ -21,6 +27,16 @@ MODULES_DIR="$REPO_DIR/modules"
 # выводится только имя нарушенного свойства и команда починки.
 assert_private_config() {
     local cfg="$1" owner mode
+    # H1 (ремедиация): симлинк — не обычный файл. `[ -f ]` следует по ссылке,
+    # и цель с корректными правами проходила бы проверку; между проверкой и
+    # source'ом цель может уйти из-под ожидаемого расположения. Отказ называет
+    # свойство, не раскрывая цель.
+    if [ -L "$cfg" ]; then
+        echo "❌ Конфиг $cfg — символическая ссылка, а не обычный файл." >&2
+        echo "   Починка: rm $cfg (снимет ссылку, не цель) и положи на его" >&2
+        echo "   место обычный файл." >&2
+        return 1
+    fi
     if [ ! -f "$cfg" ]; then
         echo "❌ Конфиг $cfg не является обычным файлом (или отсутствует)." >&2
         echo "   Ожидается: $cfg — файл, созданный тобой." >&2
@@ -57,6 +73,11 @@ if [ -f "$CONFIG_FILE" ]; then
     echo "📖 Загружаю конфигурацию: $CONFIG_FILE"
     assert_private_config "$CONFIG_FILE" || exit 1
     set -a; source "$CONFIG_FILE"; set +a
+elif [ "$CONFIG_FILE_EXPLICIT" -eq 1 ]; then
+    echo "❌ Указанный конфиг не найден: $CONFIG_FILE" >&2
+    echo "   Явно заданный путь не замещается переменными окружения." >&2
+    echo "   Починка: создай файл по этому пути или запусти deploy.sh без аргумента." >&2
+    exit 1
 else
     echo "⚠️  config.env не найден ($CONFIG_FILE). Использую переменные окружения."
 fi
@@ -207,31 +228,54 @@ preflight_target() {
     fi
 }
 
-# H3 — Hermes venv для модулей, чей runtime его реально использует.
+# H3 — Hermes home/venv для модулей, чья поверхность их реально использует.
 # Argus наблюдает существующий Hermes и не имеет права его чинить.
-# Проверяется не только `-x`: исполняемый бит не доказывает, что интерпретатор
-# работает, поэтомуCapability проверяется безобидным запуском.
+# venv-модули (их юниты исполняются Hermes-интерпретатором) требуют рабочий
+# venv — проверяется не только `-x`: исполняемый бит не доказывает, что
+# интерпретатор работает, поэтому Capability проверяется безобидным запуском.
+# ANALYZER (ремедиация: раньше попадал только под venv-предикат и проходил
+# preflight без Hermes home вовсе) деплоится в $HERMES_DIR/scripts и читает
+# $HERMES_DIR/logs — ему нужен существующий Hermes home и системный python3,
+# но не Hermes venv.
 preflight_hermes() {
-    module_uses_hermes_venv || return 0
-    local names="" m bindir ok=1 out
-    for m in MODULE_CORE MODULE_INTEGRATIONS MODULE_TG_BOT; do
-        module_enabled "$m" && names="$names ${m#MODULE_}"
-    done
-    bindir="$HERMES_DIR/hermes-agent/venv/bin"
-    [ -d "$HERMES_DIR/hermes-agent" ] || {
-        echo "❌ Не найден $HERMES_DIR/hermes-agent (модули:$names)." >&2; ok=0; }
-    if [ "$ok" -eq 1 ]; then
-        [ -x "$bindir/python" ] || {
-            echo "❌ Интерпретатор Hermes $bindir/python отсутствует или не исполняем (модули:$names)." >&2
-            ok=0; }
-        [ -x "$bindir/hermes" ] || {
-            echo "❌ Hermes-исполняемый $bindir/hermes отсутствует или не исполняем (модули:$names)." >&2
-            ok=0; }
-        if [ "$ok" -eq 1 ] \
-           && ! out=$("$bindir/python" -c 'import sys; sys.exit(0)' 2>&1); then
-            echo "❌ Интерпретатор Hermes не работает: $bindir/python → ${out:-нет вывода}" >&2
-            echo "   (модули:$names)" >&2
+    local venv_names="" m bindir ok=1 out analyzer=0
+    module_enabled MODULE_ANALYZER && analyzer=1
+    if module_uses_hermes_venv; then
+        for m in MODULE_CORE MODULE_INTEGRATIONS MODULE_TG_BOT; do
+            module_enabled "$m" && venv_names="$venv_names ${m#MODULE_}"
+        done
+    fi
+    [ -n "$venv_names" ] || [ "$analyzer" -eq 1 ] || return 0
+
+    if [ "$analyzer" -eq 1 ]; then
+        [ -d "$HERMES_DIR" ] || {
+            echo "❌ Не найден Hermes home $HERMES_DIR (модуль ANALYZER деплоится" >&2
+            echo "   в $HERMES_DIR/scripts и читает $HERMES_DIR/logs)." >&2
             ok=0
+        }
+        command -v python3 >/dev/null 2>&1 || {
+            echo "❌ python3 не найден — ANALYZER исполняется системным python3." >&2
+            ok=0
+        }
+    fi
+
+    if [ -n "$venv_names" ]; then
+        bindir="$HERMES_DIR/hermes-agent/venv/bin"
+        [ -d "$HERMES_DIR/hermes-agent" ] || {
+            echo "❌ Не найден $HERMES_DIR/hermes-agent (модули:$venv_names)." >&2; ok=0; }
+        if [ "$ok" -eq 1 ]; then
+            [ -x "$bindir/python" ] || {
+                echo "❌ Интерпретатор Hermes $bindir/python отсутствует или не исполняем (модули:$venv_names)." >&2
+                ok=0; }
+            [ -x "$bindir/hermes" ] || {
+                echo "❌ Hermes-исполняемый $bindir/hermes отсутствует или не исполняем (модули:$venv_names)." >&2
+                ok=0; }
+            if [ "$ok" -eq 1 ] \
+               && ! out=$("$bindir/python" -c 'import sys; sys.exit(0)' 2>&1); then
+                echo "❌ Интерпретатор Hermes не работает: $bindir/python → ${out:-нет вывода}" >&2
+                echo "   (модули:$venv_names)" >&2
+                ok=0
+            fi
         fi
     fi
     if [ "$ok" -ne 1 ]; then
@@ -273,7 +317,9 @@ preflight_user_manager() {
 #   rc≠0 → запрещена, чужой run-as, грант не покрывает эти аргументы или
 #          требует пароль (с -n sudo отказывается от аутентификации:
 #          «interactive authentication is required»).
-# Роль каждого флага (проверено на реальном sudo 1.9 Ubuntu 24.04):
+# Роль каждого флага (проверено на реальном sudo: 1.9.15p5 в CI-фикстуре и
+# 1.9.17p2 локально, Ubuntu; другие реализации — например sudo-rs — и более
+# старые версии вне этой базы доказательств):
 #   -l <cmd>  — только перечисляет применимость, команду не исполняет;
 #   -n        — запрет промпта: PASSWD-правило даёт rc≠0, а не запрос пароля;
 #   -k        — С КОМАНДОЙ означает «не использовать кешированные
@@ -314,16 +360,42 @@ preflight_network_guard() {
     done
     [ -n "$iface" ] || iface="argus-preflight"
 
-    # (команда|аргументы) ровно в том виде, в каком их зовёт network-guard.sh:
-    # rollback_dns → resolvectl revert <iface>; rollback_rules → ip route flush
-    # table <tbl> и ip rule del <rule-строка> (несколько слов).
-    for probe in         "$RESOLVECTL|revert $iface"         "$IP|route flush table 4294967295"         "$IP|rule del from 127.0.0.1 lookup 4294967295"; do
+    # Формат зонда: (команда|аргументы|метка). «Реальные» зонды повторяют
+    # вызовы network-guard.sh дословно: rollback_dns → resolvectl revert <iface>;
+    # rollback_rules → ip route flush table <tbl> и ip rule del <rule-строка>.
+    # Зонды двух сортов (ремедиация ревью PR #75): раньше проверялись ровно
+    # три литеральных вызова, и грант, прибитый только к ним, проходил преflight,
+    # а в cron молча не срабатывал — рантайм-пространство аргументов guard'а
+    # НЕ ограничено: check_dns() находит любой будущий интерфейс, а
+    # rollback_rules() удаляет произвольные чужие правила и флашит все таблицы,
+    # на которые они ссылаются. Поэтому:
+    #   «реальные» зонды — вызовы, как их строит guard СЕЙЧАС;
+    #   сентинелы (метка |s) — аргументы, которые осмысленный гранулярный
+    #     грант не перечисляет: их покрывает только маска `*` из строки-инструкции
+    #     ниже. argus-preflight-sentinel — несуществующий интерфейс; таблица
+    #     4294967293 ничего не значит; 203.0.113.1 — TEST-NET-3 (RFC 5737,
+    #     документационный диапазон, в боевой политике не встречается).
+    for probe in \
+        "$RESOLVECTL|revert $iface|" \
+        "$IP|route flush table 4294967295|" \
+        "$IP|rule del from 127.0.0.1 lookup 4294967295|" \
+        "$RESOLVECTL|revert argus-preflight-sentinel|s" \
+        "$IP|route flush table 4294967293|s" \
+        "$IP|rule del from 203.0.113.1 lookup 4294967293|s"; do
         cmd_path="${probe%%|*}"
-        args="${probe#*|}"
+        rest="${probe#*|}"
+        args="${rest%%|*}"
+        kind="${rest#*|}"
         if ! sudo -k -n -l "$cmd_path" $args >/dev/null 2>&1; then
             echo "❌ Отказ: guard не сможет исполнить '$(basename "$cmd_path") $args'" >&2
             echo "   (sudo -k -n -l: запрещено, чужой run-as, грант не покрывает" >&2
             echo "   эти аргументы или требует пароль — в cron его взять неоткуда)" >&2
+            if [ "$kind" = "s" ]; then
+                echo "   ↑ это сентинел-зонд: такие аргументы осмысленный" >&2
+                echo "   гранулярный грант не перечисляет. Guard откатывает любые" >&2
+                echo "   будущие интерфейсы/таблицы/правила — грант обязан иметь" >&2
+                echo "   маску аргументов, как в строке ниже." >&2
+            fi
             ok=0
         fi
     done
@@ -334,7 +406,7 @@ preflight_network_guard() {
         echo "   Альтернатива: MODULE_NETWORK_GUARD=OFF." >&2
         return 1
     fi
-    echo "   сетевой guard: sudo -k -n -l подтвердил беспарольную применимость всех трёх откатов (исполнения не было)."
+    echo "   сетевой guard: sudo -k -n -l подтвердил беспарольную применимость всех трёх откатов, включая сентинелы на маску аргументов (исполнения не было)."
 }
 
 # H5 — Argus-owned политика ротации файловых логов. Использует уже стоящий на
@@ -398,22 +470,6 @@ preflight_logrotate() {
         echo "   Починка: sudo apt-get install -y logrotate" >&2
         return 1
     fi
-    if [ -d "$LOGROTATE_SCHED_DIR" ] && [ -w "$LOGROTATE_SCHED_DIR" ]; then
-        :
-    # Незаписываемый каталог — нормальная ситуация для обычного пользователя.
-    # Достаточно неинтерактивного sudo для install: проверяется безобидным
-    # `--help`, который ничего не пишет.
-    elif sudo -n install --help >/dev/null 2>&1; then
-        echo "   logrotate: $LOGROTATE_SCHED_DIR не записываем — активация через sudo install"
-    else
-        echo "❌ $LOGROTATE_SCHED_DIR недоступна для записи и неинтерактивного sudo" >&2
-        echo "   для install нет — политика не будет активирована в планировщике хоста." >&2
-        echo "   Починка (одна из):" >&2
-        echo "     sudo install -d -o $(id -un) -g $(id -gn) $LOGROTATE_SCHED_DIR" >&2
-        echo "     выполнить deploy от root" >&2
-        echo "   Argus не повышает привилегии сам и не правит sudoers." >&2
-        return 1
-    fi
     # Парсер прогоняется ЗДЕСЬ, до любых записей deploy'а: иначе неисправный
     # logrotate обнаруживался после того, как юниты уже записаны.
     local tmp err
@@ -426,6 +482,62 @@ preflight_logrotate() {
         return 1
     fi
     rm -f "$tmp"
+
+    if [ -d "$LOGROTATE_SCHED_DIR" ] && [ -w "$LOGROTATE_SCHED_DIR" ]; then
+        :
+    else
+        echo "   logrotate: $LOGROTATE_SCHED_DIR не записываем — активация через" >&2
+        echo "   sudo install; проверяю фактическую запись зондом"
+    fi
+    # H5 (ремедиация ревью PR #75): раньше достаточно было `sudo -n install
+    # --help`, но он доказывает лишь отсутствие запроса пароля, а не право
+    # писать В ЭТОТ каталог — грант под другие аргументы install или read-only
+    # /etc проходили преflight, и deploy падал уже ПОСЛЕ записи юнитов. Зонд
+    # выполняет фактическую запись тем же механизмом, что и активация, и
+    # немедленно убирает за собой — это единственная запись преflight'а.
+    # Содержимое зонда — валидная пустая logrotate-политика: если удалить его
+    # не выйдет (грант без rm), остаток не ломает планировщик хоста.
+    local probe_target="$LOGROTATE_SCHED_DIR/.argus-deploy-preflight-probe"
+    local probe_src
+    probe_src=$(mktemp)
+    cat > "$probe_src" <<'EOF'
+# hermes-argus deploy preflight probe — safe to delete
+/var/log/argus-preflight-probe-nonexistent.log {
+    missingok
+    notifempty
+}
+EOF
+    if [ -w "$LOGROTATE_SCHED_DIR" ]; then
+        if ! cp "$probe_src" "$probe_target" || [ ! -f "$probe_target" ]; then
+            echo "❌ Пробная запись в $LOGROTATE_SCHED_DIR не удалась — активация" >&2
+            echo "   политики здесь не сработает." >&2
+            rm -f "$probe_src" "$probe_target"
+            return 1
+        fi
+        rm -f "$probe_target" || {
+            echo "   ⚠️  Пробный файл $probe_target не удалился — убери вручную" >&2
+            echo "   (содержимое безопасно: пустая валидная logrotate-политика)." >&2
+        }
+    elif ! sudo -n install -m 0644 "$probe_src" "$probe_target" \
+        || [ ! -f "$probe_target" ]; then
+        echo "❌ Пробная запись (sudo install -m 0644) в $LOGROTATE_SCHED_DIR" >&2
+        echo "   не удалась: неинтерактивный грант install не покрывает запись в" >&2
+        echo "   этот каталог — активация политики упала бы уже после записи юнитов." >&2
+        echo "   Починка (одна из):" >&2
+        echo "     выдать грант NOPASSWD на install с записью в $LOGROTATE_SCHED_DIR" >&2
+        echo "     sudo install -d -o $(id -un) -g $(id -gn) $LOGROTATE_SCHED_DIR" >&2
+        echo "     выполнить deploy от root" >&2
+        echo "   Argus не повышает привилегии сам и не правит sudoers." >&2
+        rm -f "$probe_src"
+        return 1
+    else
+        if ! sudo -n rm -f "$probe_target" 2>/dev/null; then
+            echo "   ⚠️  Пробный файл $probe_target записан, но грант не покрывает rm —" >&2
+            echo "   удали его вручную (содержимое безопасно: пустая валидная" >&2
+            echo "   logrotate-политика)." >&2
+        fi
+    fi
+    rm -f "$probe_src"
 }
 
 install_logrotate_policy() {

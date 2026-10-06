@@ -1,6 +1,12 @@
 # RR1b contract — installer preflight, private config and host applicability
 
-Status: **IMPLEMENTED / AWAITING REVIEWER VERDICT**
+Status: **IMPLEMENTED / FOURTH PASS PUSHED — AWAITING RE-REVIEW**. First review
+by promptql (external, maintainer-selected) on head `36f4dc4` returned
+BLOCKED-FOR-MAINTAINER with four in-scope blockers (H1 symlink/explicit-missing
+config, H3 ANALYZER Hermes-home, H4 granular-grant false-pass, H5
+`install --help` write check) plus docs fixes. The maintainer authorized one
+more bounded pass; the remediation is on `feat/rr1b-host-readiness` and awaits
+re-review.
 
 This is the second focused RR1b slice. The preceding module/runtime truth
 slice is merged as PR #71 and remains not deployed. This contract covers the
