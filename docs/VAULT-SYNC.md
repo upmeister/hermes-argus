@@ -48,6 +48,16 @@ SHA-256 values match for the four updated Argus notes. The receipt records PR
 #71 as merged/not deployed, PR #73 as the selected host-readiness contract and
 DEBT-021 in the readable vault backlog.
 
+## 2026-10-04 — RR1b host-readiness implementation status (pending sync)
+
+Repository state moved on from the receipt above without a vault publication
+yet. The host-readiness contract is implemented on branch
+`feat/rr1b-host-readiness` from baseline `7245cf9` (PR #75); Linux `argus-ci`
+is green at the recorded head, and the reviewer verdict is pending. Neither
+merge nor deployment has happened. This note is the repository-side receipt
+that the vault backlog and project card still show the older
+"contract selected, builder ready" state.
+
 ## Future status updates
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.

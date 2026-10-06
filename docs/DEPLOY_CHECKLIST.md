@@ -71,24 +71,106 @@ production host:
 
 ## RR1b host-readiness read-back (after the host-readiness deploy)
 
-1. **Private config.** Confirm the deploy-time config is a regular file owned
-   by the installation user with no group/other permissions. The installer
-   must reject an unsafe fixture before sourcing it and must not print its
-   values.
-2. **Hermes and user manager.** Read back the resolved Hermes home, executable
-   and configured dashboard target. Confirm the user manager is usable and
-   record linger as yes, no or unknown; do not claim reboot persistence when it
-   is not yes.
-3. **Network guard.** Record MODULE_NETWORK_GUARD separately from CORE. When
-   OFF, confirm no managed network-guard cron entry was added. When ON, record
-   the host-specific non-interactive privilege applicability without changing
-   routes, DNS or sudoers during read-back.
-4. **File-log rotation.** Confirm the Argus-owned logrotate policy names only
-   the configured ~/.hermes/logs/*.log surface, uses daily rotation, 7
-   archived copies, a 50M threshold, compression with delayed compression and
-   copytruncate, and passes a scheduler dry-run. systemd journal policy remains
-   external.
-5. **No production-side effects beyond the authorized deploy.** Do not enable
+The deploy now stops, before writing anything, on a host it cannot honestly
+support. Every stop below is intentional — do not "fix" it by relaxing the
+check without a maintainer decision.
+
+1. **Private config.** The deploy-time config must be a regular file owned by
+   the installing user with no group/other permissions:
+   `stat -c '%U %a' config.env` must show your user and `600`. The installer
+   creates it owner-only; a group/other-readable or foreign-owned file stops the
+   run with the violated property and a repair command (`chmod 600` / `chown`)
+   and never echoes configuration values. A symlink is refused at the config
+   location on every entry point — including a dangling one on the default
+   no-argument path, which would otherwise look like "not found" and fall
+   back to environment variables — and an explicitly passed config path that
+   does not exist is an error, not a silent environment-variable fallback
+   (the no-argument default path keeps the env fallback for a genuinely
+   absent file).
+   **Production action:** existing production `config.env` is probably `644` —
+   run `chmod 600 config.env` before the first host-readiness deploy.
+2. **User manager and linger.** Modules that install systemd *user* units
+   require a reachable user manager. The deploy prints `linger: yes` only when
+   `loginctl show-user "$USER" -p Linger` really is `yes`; on `no` it stops and
+   prints the manual action, on unknown it warns that reboot persistence is not
+   guaranteed and continues. Argus never runs `loginctl enable-linger` itself —
+   check the unit journal to confirm no such call was made.
+   **Production action:** if `Linger=no`, the deploy stops before writing any
+   unit — there is no "proceed anyway" path. Enable linger manually
+   (`sudo loginctl enable-linger "$USER"`) and re-run the deploy; without it
+   the deploy refuses to install units it cannot promise to keep running.
+3. **Hermes home and target.** For modules that read Hermes-owned paths, read
+   back `~/.hermes/hermes-agent/venv/bin/{hermes,python}` and the configured
+   `HERMES_HOST` / `HERMES_PORT`. An explicitly empty `HERMES_HOST` or a
+   non-integer/out-of-range port is an error, not a silent fallback to
+   `127.0.0.1:9119`. ANALYZER does not use the Hermes venv but does require
+   the Hermes home directory to exist (it deploys into `~/.hermes/scripts` and
+   reads `~/.hermes/logs`) and a system `python3` that actually executes a
+   trivial run before anything is written — presence in `PATH` alone is not
+   accepted. A stopped
+   dashboard is a runtime observation and is not repaired here.
+4. **Network guard.** `MODULE_NETWORK_GUARD` is recorded separately from CORE
+   and is OFF by default. With OFF, confirm no network-guard entry exists in the
+   managed cron block and that `~/scripts/network-guard.sh` was not freshly
+   installed. With ON, the deploy fails closed unless `resolvectl` and `ip`
+   exist and `sudo -k -n -l <command> <arguments>` succeeds for each probe —
+   nothing executed, sudo output not parsed. The flags each carry weight: `-k`
+   ignores the invoking user's cached sudo timestamp (with a live timestamp a
+   PASSWD rule would otherwise pass the check and fail in cron), `-n` turns a
+   password requirement into a failure instead of a prompt, and `-l` only
+   lists applicability.
+   The probe set is two families. Three probes repeat the invocations the
+   guard builds today (`resolvectl revert <candidate-iface>`,
+   `ip route flush table 4294967295`, `ip rule del from 127.0.0.1 lookup
+   4294967295`). Three sentinel probes use arguments no meaningful granular
+   grant would list (`resolvectl revert argus-preflight-sentinel`,
+   `ip route flush table 4294967293`, `ip rule del from 203.0.113.1 lookup
+   4294967293` — TEST-NET-3). The guard's runtime argument space is unbounded:
+   it reverts any future interface, flushes any table named by a foreign rule
+   and deletes arbitrary foreign rules. A finite probe set proves
+   applicability for the six probed invocations and nothing beyond them — it
+   cannot prove unbounded coverage. A grant pinned to specific arguments
+   fails the sentinels on a host whose default policy denies unlisted
+   commands (the common case); it can still pass where the host's blanket
+   policy (for example `NOPASSWD: ALL`) or an explicit enumeration covers the
+   sentinel arguments. The grant MUST use argument masks (`revert *`,
+   `route flush table *`, `rule del *`) — exactly the form the deploy prints
+   in its repair instruction — so the unbounded runtime space is covered by
+   construction rather than enumeration. Refused, and therefore a failed
+   deploy: a denied command, a `(nobody)` run-as, a grant that does not cover
+   the sentinel probes, or a password-requiring grant. No rollback is
+   executed and no route, DNS, interface or sudoers entry is mutated by the
+   deploy.
+   **Boundary:** the `-k/-n/-l` exit-status behavior is verified against real
+   sudo 1.9.15p5 (CI fixture) and 1.9.17p2 (local fixture). Other sudo
+   implementations (including sudo-rs) and older versions are outside this
+   evidence — verify the grant manually before switching the guard on there.
+   **Production action:** if this host relies on the guard, set the flag
+   explicitly in `config.env` before deploying — the default is deliberately OFF
+   and no automatic migration is performed.
+5. **File-log rotation.** Confirm `~/.hermes/argus-logrotate.conf` exists and
+   was ACTIVATED as `/etc/logrotate.d/argus` (the deploy fails rather than
+   reporting success if it could not activate it), enumerates the Argus file
+   logs explicitly — Hermes-owned `agent.log` and `gateway.log` must not appear
+   in the rotated set — and uses `daily` with `rotate 7` and `maxsize 50M`,
+   `compress`, `delaycompress` and `copytruncate`. The parser run happens in
+   the preflight, before the deploy writes anything: an unusable `logrotate`
+   stops the install with no files deployed. The preflight also performs one
+   real write probe: it installs a temporary, valid, empty logrotate policy
+   into the scheduler directory through the same mechanism the activation will
+   use and removes it immediately. A grant that covers `install` but not the
+   target directory, or a read-only scheduler directory, therefore stops the
+   deploy before any unit is written; if the probe file itself cannot be
+   removed (a grant without `rm`), the deploy prints its path and the
+   instruction to delete it — the leftover is a valid empty policy and does
+   not break the host scheduler. The probe path is fixed; if something already
+   exists there, the deploy stops without writing or removing anything, so a
+   pre-existing scheduler-directory file is never overwritten. Confirm with
+   the host scheduler
+   that rotation actually runs (`logrotate --debug /etc/logrotate.d/argus` must
+   exit 0). systemd journal retention, Hermes log ownership and unrelated
+   `/var/log` files stay external.
+6. **No production-side effects beyond the authorized deploy.** Do not enable
    linger, alter sudoers, change network policy or rotate live logs as part of
    this read-back unless the maintainer separately authorizes it.
 

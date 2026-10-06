@@ -10,18 +10,96 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="${1:-$REPO_DIR/config.env}"
+# H1 (ремедиация ревью PR #75): явно указанный вызывающим путь — контракт.
+# Его отсутствие останавливает deploy, а не молча замещается переменными
+# окружения: иначе опечатка в пути выглядит как штатная env-развёртка без
+# конфига. Дефолтный путь без аргумента сохраняет env-fallback как штатный.
+CONFIG_FILE_EXPLICIT=0
+if [ "$#" -ge 1 ]; then CONFIG_FILE_EXPLICIT=1; fi
 SCRIPTS_DIR="$REPO_DIR/scripts"
 MODULES_DIR="$REPO_DIR/modules"
 
 # ── Загрузка конфигурации ──────────────────────────────────────────────────
+# H1 (RR1b, host-readiness): конфиг несёт секреты (WATCHDOG_BOT_TOKEN), поэтому
+# файл обязан быть обычным, принадлежать пользователю установки и не быть
+# доступным группе/остальным. .gitignore защищает только от попадания в Git —
+# права доступа он не проверяет. Значения конфига в диагностику не попадают:
+# выводится только имя нарушенного свойства и команда починки.
+assert_private_config() {
+    local cfg="$1" owner mode
+    # H1 (ремедиация): симлинк — не обычный файл. `[ -f ]` следует по ссылке,
+    # и цель с корректными правами проходила бы проверку; между проверкой и
+    # source'ом цель может уйти из-под ожидаемого расположения. Отказ называет
+    # свойство, не раскрывая цель.
+    if [ -L "$cfg" ]; then
+        echo "❌ Конфиг $cfg — символическая ссылка, а не обычный файл." >&2
+        echo "   Починка: rm $cfg (снимет ссылку, не цель) и положи на его" >&2
+        echo "   место обычный файл." >&2
+        return 1
+    fi
+    if [ ! -f "$cfg" ]; then
+        echo "❌ Конфиг $cfg не является обычным файлом (или отсутствует)." >&2
+        echo "   Ожидается: $cfg — файл, созданный тобой." >&2
+        return 1
+    fi
+    if ! owner=$(stat -c '%U' "$cfg" 2>/dev/null); then
+        echo "❌ Не удалось определить владельца $cfg (нет stat?)." >&2
+        return 1
+    fi
+    if [ "$owner" != "$(id -un)" ]; then
+        echo "❌ Владелец $cfg — '$owner', а установка идёт от '$(id -un)'." >&2
+        echo "   Починка: chown $(id -un) $cfg" >&2
+        return 1
+    fi
+    mode=$(stat -c '%a' "$cfg" 2>/dev/null || true)
+    # H1: недоступный режим = невозможно доказать безопасность = отказ.
+    # Раньше пустая строка трактовалась как «ок», и сбой чтения прав делал
+    # конфиг с секретами «безопасным».
+    if [ -z "$mode" ]; then
+        echo "❌ Не удалось определить режим доступа $cfg — доказательств, что" >&2
+        echo "   файл не читается посторонними, нет." >&2
+        return 1
+    fi
+    # group/other-биты = доступ посторонним к секретам в файле.
+    if [ $(( 0$mode & 077 )) -ne 0 ]; then
+        echo "❌ $cfg доступен группе/остальным (режим $mode)." >&2
+        echo "   Починка: chmod 600 $cfg" >&2
+        return 1
+    fi
+    return 0
+}
+
+# H1 (пятый проход, ревью b0fe08a): ссылка в точке конфига запрещена при ЛЮБОМ
+# входе, до ветки поиска файла. `[ -f ]` следует по ссылке, поэтому висячая
+# ссылка на дефолтном config.env выглядела бы «файл не найден» и тихо уходила
+# в env-fallback, хотя операторская (пусть и сломанная) ссылка на месте.
+if [ -L "$CONFIG_FILE" ]; then
+    echo "❌ Конфиг $CONFIG_FILE — символическая ссылка, а не обычный файл." >&2
+    echo "   Починка: rm $CONFIG_FILE (снимет ссылку, не цель) и положи на его" >&2
+    echo "   место обычный файл." >&2
+    exit 1
+fi
 if [ -f "$CONFIG_FILE" ]; then
     echo "📖 Загружаю конфигурацию: $CONFIG_FILE"
+    assert_private_config "$CONFIG_FILE" || exit 1
     set -a; source "$CONFIG_FILE"; set +a
+elif [ "$CONFIG_FILE_EXPLICIT" -eq 1 ]; then
+    echo "❌ Указанный конфиг не найден: $CONFIG_FILE" >&2
+    echo "   Явно заданный путь не замещается переменными окружения." >&2
+    echo "   Починка: создай файл по этому пути или запусти deploy.sh без аргумента." >&2
+    exit 1
 else
     echo "⚠️  config.env не найден ($CONFIG_FILE). Использую переменные окружения."
 fi
 
 # ── Значения по умолчанию ──────────────────────────────────────────────────
+# H3 (RR1b): «цель должна быть задана» проверяется по СЫРОМУ значению из
+# config.env, а не по подстановке дефолтов ниже — `${VAR:-…}` превращает
+# явно пустой HERMES_HOST в 127.0.0.1, и проверка «непустой хост» была бы
+# недостижимой ровно в том случае, когда она нужна.
+RAW_HERMES_HOST="${HERMES_HOST-__UNSET__}"
+RAW_HERMES_PORT="${HERMES_PORT-__UNSET__}"
+
 HERMES_HOST="${HERMES_HOST:-127.0.0.1}"
 HERMES_PORT="${HERMES_PORT:-9119}"
 NETDATA_PORT="${NETDATA_PORT:-19999}"
@@ -41,16 +119,38 @@ MODULE_HEARTBEAT="${MODULE_HEARTBEAT:-OFF}"
 MODULE_GH_HEARTBEAT="${MODULE_GH_HEARTBEAT:-OFF}"
 MODULE_DISCORD_BOT="${MODULE_DISCORD_BOT:-OFF}"
 MODULE_LOCAL_SERVICES="${MODULE_LOCAL_SERVICES:-OFF}"
+# H4 (RR1b): сетевой guard — host-policy инструмент с неинтерактивным sudo на
+# откат маршрутов/DNS. Это НЕ переносимая зависимость CORE: по умолчанию OFF,
+# и только явный флаг делает его применимым на конкретном хосте.
+MODULE_NETWORK_GUARD="${MODULE_NETWORK_GUARD:-OFF}"
 
 module_enabled() { [ "${!1}" = "ON" ]; }
 
 HOME_DIR="${HOME:-$HOME}"
 HERMES_DIR="${HERMES_DIR:-$HOME_DIR/.hermes}"
 
+# Модули, которые пишут или включают systemd USER-юниты. Их surface требует
+# живого user-manager'а (H2).
+module_needs_user_units() {
+    module_enabled MODULE_CORE || module_enabled MODULE_INTEGRATIONS \
+        || module_enabled MODULE_TG_BOT || module_enabled MODULE_DISCORD_BOT
+}
+
+# Модули, чей runtime использует интерпретатор Hermes venv (H3). Их юниты и
+# скрипты исполняются этим интерпретатором: CORE (hermes-gateway-pids.py
+# ре-exec'ится под ним), INTEGRATIONS (health-check читает конфиг Hermes),
+# TG_BOT (monitoring-bot-poller.service стартует venv-питоном).
+# DISCORD_BOT и LOCAL_SERVICES пользуются СВОИМ/системным python3 — требовать
+# от них Hermes venv было бы выходом за контракт.
+module_uses_hermes_venv() {
+    module_enabled MODULE_CORE || module_enabled MODULE_INTEGRATIONS \
+        || module_enabled MODULE_TG_BOT
+}
+
 echo "🔧 Развёртка hermes-argus"
 echo "   Хост: $HERMES_HOST:$HERMES_PORT"
 echo "   Hermes директория: $HERMES_DIR"
-echo "   Модули: CORE=$(module_enabled MODULE_CORE && echo ON || echo OFF) INTEGRATIONS=$(module_enabled MODULE_INTEGRATIONS && echo ON || echo OFF) TG_BOT=$(module_enabled MODULE_TG_BOT && echo ON || echo OFF) ANALYZER=$(module_enabled MODULE_ANALYZER && echo ON || echo OFF) HEARTBEAT=$(module_enabled MODULE_HEARTBEAT && echo ON || echo OFF) GH_HEARTBEAT=$(module_enabled MODULE_GH_HEARTBEAT && echo ON || echo OFF) DISCORD_BOT=$(module_enabled MODULE_DISCORD_BOT && echo ON || echo OFF) LOCAL_SERVICES=$(module_enabled MODULE_LOCAL_SERVICES && echo ON || echo OFF)"
+echo "   Модули: CORE=$(module_enabled MODULE_CORE && echo ON || echo OFF) INTEGRATIONS=$(module_enabled MODULE_INTEGRATIONS && echo ON || echo OFF) TG_BOT=$(module_enabled MODULE_TG_BOT && echo ON || echo OFF) ANALYZER=$(module_enabled MODULE_ANALYZER && echo ON || echo OFF) HEARTBEAT=$(module_enabled MODULE_HEARTBEAT && echo ON || echo OFF) GH_HEARTBEAT=$(module_enabled MODULE_GH_HEARTBEAT && echo ON || echo OFF) DISCORD_BOT=$(module_enabled MODULE_DISCORD_BOT && echo ON || echo OFF) LOCAL_SERVICES=$(module_enabled MODULE_LOCAL_SERVICES && echo ON || echo OFF) NETWORK_GUARD=$(module_enabled MODULE_NETWORK_GUARD && echo ON || echo OFF)"
 echo ""
 
 # ── Функция: развернуть bash-шаблон ──────────────────────────────────────
@@ -104,6 +204,396 @@ deploy_template() {
     echo "   ✅ $name → $dst"
 }
 
+# ── Preflight хоста (RR1b, host-readiness) ───────────────────────────────────
+# Всё fail-closed и ДО развёртки: цена ложно-зелёной «успешной» установки выше
+# цены остановки с одной понятной строкой. Ничего здесь не мутирует: маршруты,
+# DNS, интерфейсы, sudoers и linger не трогаются, Hermes не ставится и не
+# запускается. Модульный список и дефолты — те же, что у развёртки ниже.
+
+# H3 — цель liveness: непустой хост и целочисленный порт 1..65535.
+# Пустое значение, заданное оператором ОСОЗНАННО, ошибка, а не повод молча
+# подставить дефолт (иначе опечатка в конфиге выглядит как рабочая установка).
+# Десятичный домен ограничен длиной ДО арифметики: `[ 9223… -lt 1 ]` на
+# переполнении печатает «integer expected», но не делает условие ложным.
+preflight_target() {
+    local ok=1
+    if [ "$RAW_HERMES_HOST" = "__UNSET__" ]; then
+        : # не задан вовсе — работает дефолт, это штатный путь
+    elif [ -z "$RAW_HERMES_HOST" ]; then
+        echo "❌ HERMES_HOST задан пустым — цель liveness не определена." >&2
+        ok=0
+    fi
+    if [ "$RAW_HERMES_PORT" != "__UNSET__" ]; then
+        if ! [[ "$RAW_HERMES_PORT" =~ ^[0-9]{1,5}$ ]]; then
+            echo "❌ HERMES_PORT='$RAW_HERMES_PORT' — ожидалось целое 1..65535." >&2
+            ok=0
+        elif [ "$RAW_HERMES_PORT" -lt 1 ] || [ "$RAW_HERMES_PORT" -gt 65535 ]; then
+            echo "❌ HERMES_PORT='$RAW_HERMES_PORT' — вне диапазона 1..65535." >&2
+            ok=0
+        fi
+    fi
+    if [ "$ok" -ne 1 ]; then
+        echo "   Починка: задай HERMES_HOST и HERMES_PORT в config.env." >&2
+        return 1
+    fi
+}
+
+# H3 — Hermes home/venv для модулей, чья поверхность их реально использует.
+# Argus наблюдает существующий Hermes и не имеет права его чинить.
+# venv-модули (их юниты исполняются Hermes-интерпретатором) требуют рабочий
+# venv — проверяется не только `-x`: исполняемый бит не доказывает, что
+# интерпретатор работает, поэтому Capability проверяется безобидным запуском.
+# ANALYZER (ремедиация: раньше попадал только под venv-предикат и проходил
+# preflight без Hermes home вовсе) деплоится в $HERMES_DIR/scripts и читает
+# $HERMES_DIR/logs — ему нужен существующий Hermes home и системный python3,
+# но не Hermes venv.
+preflight_hermes() {
+    local venv_names="" m bindir ok=1 out analyzer=0
+    module_enabled MODULE_ANALYZER && analyzer=1
+    if module_uses_hermes_venv; then
+        for m in MODULE_CORE MODULE_INTEGRATIONS MODULE_TG_BOT; do
+            module_enabled "$m" && venv_names="$venv_names ${m#MODULE_}"
+        done
+    fi
+    [ -n "$venv_names" ] || [ "$analyzer" -eq 1 ] || return 0
+
+    if [ "$analyzer" -eq 1 ]; then
+        [ -d "$HERMES_DIR" ] || {
+            echo "❌ Не найден Hermes home $HERMES_DIR (модуль ANALYZER деплоится" >&2
+            echo "   в $HERMES_DIR/scripts и читает $HERMES_DIR/logs)." >&2
+            ok=0
+        }
+        # H3 (пятый проход, ревью b0fe08a): `command -v` доказывает лишь
+        # наличие имени в PATH, не работоспособность — та же дыра, что
+        # закрывалась для venv прогоном. Безобидный capability-прогон ДО записей.
+        if ! out=$(python3 -c 'import sys; sys.exit(0)' 2>&1); then
+            echo "❌ Системный python3 отсутствует или не работает" >&2
+            echo "   (модуль ANALYZER исполняется им): ${out:-нет вывода}" >&2
+            ok=0
+        fi
+    fi
+
+    if [ -n "$venv_names" ]; then
+        bindir="$HERMES_DIR/hermes-agent/venv/bin"
+        [ -d "$HERMES_DIR/hermes-agent" ] || {
+            echo "❌ Не найден $HERMES_DIR/hermes-agent (модули:$venv_names)." >&2; ok=0; }
+        if [ "$ok" -eq 1 ]; then
+            [ -x "$bindir/python" ] || {
+                echo "❌ Интерпретатор Hermes $bindir/python отсутствует или не исполняем (модули:$venv_names)." >&2
+                ok=0; }
+            [ -x "$bindir/hermes" ] || {
+                echo "❌ Hermes-исполняемый $bindir/hermes отсутствует или не исполняем (модули:$venv_names)." >&2
+                ok=0; }
+            if [ "$ok" -eq 1 ] \
+               && ! out=$("$bindir/python" -c 'import sys; sys.exit(0)' 2>&1); then
+                echo "❌ Интерпретатор Hermes не работает: $bindir/python → ${out:-нет вывода}" >&2
+                echo "   (модули:$venv_names)" >&2
+                ok=0
+            fi
+        fi
+    fi
+    if [ "$ok" -ne 1 ]; then
+        echo "   Argus не устанавливает Hermes. Поставь его своим штатным" >&2
+        echo "   workflow и повтори deploy." >&2
+        return 1
+    fi
+}
+
+# H2 — доступность user-manager'а и честный статус персистентности.
+preflight_user_manager() {
+    module_needs_user_units || return 0
+    if ! systemctl --user show-environment >/dev/null 2>&1; then
+        echo "❌ Недоступен systemd user-manager (нет user bus / XDG_RUNTIME_DIR)." >&2
+        echo "   Argus ставит user-юниты; без менеджера они не стартуют." >&2
+        echo "   Починка: выполняй в сессии пользователя с systemd-logind." >&2
+        return 1
+    fi
+    local linger
+    linger=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null || true)
+    case "$linger" in
+        yes) echo "   linger: yes — user-юниты переживут logout и reboot." ;;
+        no)
+            echo "❌ linger выключен — user-юниты не переживут logout/reboot." >&2
+            echo "   Argus НЕ включает linger сам. Ручная починка:" >&2
+            echo "     sudo loginctl enable-linger $(id -un)" >&2
+            return 1
+            ;;
+        *) echo "   ⚠️  Состояние linger определить не удалось — персистентность" >&2
+           echo "       после reboot НЕ гарантируется (проверь loginctl)." >&2 ;;
+    esac
+}
+
+# H4 — применимость сетевого guard'а. Ни один откат при проверке не выполняется
+# и НИЧЕГО из вывода sudo не парсится.
+#
+# Дискриминатор — код возврата `sudo -k -n -l <команда> <аргументы>`:
+#   rc=0 → эта команда с ЭТИМИ аргументами разрешена и не требует пароля;
+#   rc≠0 → запрещена, чужой run-as, грант не покрывает эти аргументы или
+#          требует пароль (с -n sudo отказывается от аутентификации:
+#          «interactive authentication is required»).
+# Роль каждого флага (проверено на реальном sudo: 1.9.15p5 в CI-фикстуре и
+# 1.9.17p2 локально, Ubuntu; другие реализации — например sudo-rs — и более
+# старые версии вне этой базы доказательств):
+#   -l <cmd>  — только перечисляет применимость, команду не исполняет;
+#   -n        — запрет промпта: PASSWD-правило даёт rc≠0, а не запрос пароля;
+#   -k        — С КОМАНДОЙ означает «не использовать кешированные
+#               полномочия» (sudoers: MODE_IGNORE_TICKET), без мутации
+#               состояния. Это закрывает дыру, которую даёт чистый код
+#               возврата: при живом timestamp оператора check_user()
+#               возвращает SUCCESS и для PASSWD-правила (check.c:
+#               case TS_CURRENT), и гейт пропустил бы политику, которая
+#               в cron с нею же молча не сработает.
+# Разбор текста sudoers регэкспом отсутствует полностью: на двух прошлых
+# итерациях он доказывал не применимость, а правильность предположений автора.
+preflight_network_guard() {
+    module_enabled MODULE_NETWORK_GUARD || return 0
+    local cmd ok=1
+    for cmd in resolvectl ip sudo; do
+        command -v "$cmd" >/dev/null 2>&1 || {
+            echo "❌ Команда '$cmd' не найдена — guard её использует." >&2; ok=0; }
+    done
+    [ "$ok" -eq 1 ] || {
+        echo "   Починка: поставь недостающее ПО или выключи MODULE_NETWORK_GUARD." >&2
+        return 1; }
+
+    local RESOLVECTL IP primary iface probe cmd_path args
+    RESOLVECTL=$(command -v resolvectl)
+    IP=$(command -v ip)
+    primary=$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)
+    # Цель DNS-отката — ЛЮБОЙ интерфейс, который guard проверяет: всё, кроме lo,
+    # primary и tailscale0 (network-guard.sh:check_dns). Зонд должен идти от
+    # имени такого интерфейса, иначе грант, прибитый к primary, выглядел бы
+    # достаточным. Если кандидатов сейчас нет — имя, которое primary-грант не
+    # покроет: покрытие будущих интерфеймов обязан давать сам грант.
+    iface=""
+    for iface in $(ls /sys/class/net 2>/dev/null); do
+        [ "$iface" = "lo" ] && continue
+        [ "$iface" = "$primary" ] && continue
+        [ "$iface" = "tailscale0" ] && continue
+        break
+    done
+    [ -n "$iface" ] || iface="argus-preflight"
+
+    # Формат зонда: (команда|аргументы|метка). «Реальные» зонды повторяют
+    # вызовы network-guard.sh дословно: rollback_dns → resolvectl revert <iface>;
+    # rollback_rules → ip route flush table <tbl> и ip rule del <rule-строка>.
+    # Зонды двух сортов (ремедиация ревью PR #75): раньше проверялись ровно
+    # три литеральных вызова, и грант, прибитый только к ним, проходил преflight,
+    # а в cron молча не срабатывал — рантайм-пространство аргументов guard'а
+    # НЕ ограничено: check_dns() находит любой будущий интерфейс, а
+    # rollback_rules() удаляет произвольные чужие правила и флашит все таблицы,
+    # на которые они ссылаются. Поэтому:
+    #   «реальные» зонды — вызовы, как их строит guard СЕЙЧАС;
+    #   сентинелы (метка |s) — аргументы, которые осмысленный гранулярный
+    #     грант не перечисляет: их покрывает только маска `*` из строки-инструкции
+    #     ниже. argus-preflight-sentinel — несуществующий интерфейс; таблица
+    #     4294967293 ничего не значит; 203.0.113.1 — TEST-NET-3 (RFC 5737,
+    #     документационный диапазон, в боевой политике не встречается).
+    for probe in \
+        "$RESOLVECTL|revert $iface|" \
+        "$IP|route flush table 4294967295|" \
+        "$IP|rule del from 127.0.0.1 lookup 4294967295|" \
+        "$RESOLVECTL|revert argus-preflight-sentinel|s" \
+        "$IP|route flush table 4294967293|s" \
+        "$IP|rule del from 203.0.113.1 lookup 4294967293|s"; do
+        cmd_path="${probe%%|*}"
+        rest="${probe#*|}"
+        args="${rest%%|*}"
+        kind="${rest#*|}"
+        if ! sudo -k -n -l "$cmd_path" $args >/dev/null 2>&1; then
+            echo "❌ Отказ: guard не сможет исполнить '$(basename "$cmd_path") $args'" >&2
+            echo "   (sudo -k -n -l: запрещено, чужой run-as, грант не покрывает" >&2
+            echo "   эти аргументы или требует пароль — в cron его взять неоткуда)" >&2
+            if [ "$kind" = "s" ]; then
+                echo "   ↑ это сентинел-зонд: такие аргументы осмысленный" >&2
+                echo "   гранулярный грант не перечисляет. Guard откатывает любые" >&2
+                echo "   будущие интерфейсы/таблицы/правила — грант обязан иметь" >&2
+                echo "   маску аргументов, как в строке ниже." >&2
+            fi
+            ok=0
+        fi
+    done
+    if [ "$ok" -ne 1 ]; then
+        echo "   Нужен беспарольный грант с маской аргументов ровно на эти команды:" >&2
+        echo "     <user> ALL=(root) NOPASSWD: /usr/bin/resolvectl revert *, /usr/sbin/ip route flush table *, /usr/sbin/ip rule del *" >&2
+        echo "   Argus не правит sudoers и не исполняет откат при проверке." >&2
+        echo "   Альтернатива: MODULE_NETWORK_GUARD=OFF." >&2
+        return 1
+    fi
+    echo "   сетевой guard: sudo -k -n -l подтвердил беспарольную применимость всех трёх откатов, включая сентинелы на маску аргументов (исполнения не было)."
+}
+
+# H5 — Argus-owned политика ротации файловых логов. Использует уже стоящий на
+# хосте logrotate: второй планировщик или «служба» не появляются.
+#
+# Область действия — ЯВНЫЙ список файлов Argus, а не `logs/*.log`: каталог
+# логов делит Argus с Hermes, и его agent.log/gateway.log — собственность
+# Hermes, которую Argus только читает. Наложение ретенции/copytruncate на них
+# было бы выходом за ownership.
+ARGUS_LOG_FILES=(argus.log auto-remediate.log dashboard-liveness.log \
+                 fallback-tracker-v2.log gateway-liveness.log health-analyzer.log \
+                 health-check-v2.log heartbeat.log integration-discover.log \
+                 integration-discover-cron.log local-services.log network-guard.log \
+                 network-guard-cron.log service-status.log ssl-expiry.log \
+                 ssl-expiry-cron.log watchdog.log watchdog-cron.log \
+                 watchdog-health.log watchdog-health-cron.log)
+LOGROTATE_POLICY_NAME="argus-logrotate.conf"
+# Каталог планировщика logrotate. Дефолт — контрактный /etc/logrotate.d;
+# переопределяется окружением для интеграционных тестов и нестандартных
+# раскладок хоста (путь, не поведение).
+LOGROTATE_SCHED_DIR="${LOGROTATE_SCHED_DIR:-/etc/logrotate.d}"
+
+# Преflight ДО любых записей: контракт требует остановиться с инструкцией
+# ремонта, если существующий механизм хоста не может активировать политику.
+# Раньше проверка была в install_logrotate_policy — после записи юнитов.
+logrotate_policy_body() {
+    # Содержимое политики печатается в stdout: один источник для преflight-парса
+    # и для финальной записи, иначе проверка и установка могли бы разойтись.
+    local f body=""
+    for f in "${ARGUS_LOG_FILES[@]}"; do
+        body+="$HERMES_DIR/logs/$f"$'
+'
+    done
+    local grp su_line=""
+    if grp=$(id -gn 2>/dev/null); then su_line="    su $(id -un) $grp"; fi
+    # daily + maxsize: maxsize не отменяет периодическую ротацию, а лишь
+    # срабатывает раньше при переполнении (size после daily отменил бы daily).
+    # copytruncate — логи дописываются работающим процессом, переименование их
+    # не освободит.
+    cat <<EOF
+# hermes-argus — ротация ТОЛЬКО файловых логов Argus (RR1b).
+# Создаётся deploy.sh; systemd-журналы, логи Hermes (agent.log, gateway.log)
+# и чужие /var/log не входят. Перечень — явный, не глоб-маска.
+$body{
+    daily
+    rotate 7
+    maxsize 50M
+    compress
+    delaycompress
+    copytruncate
+    missingok
+    notifempty
+$su_line
+}
+EOF
+}
+
+preflight_logrotate() {
+    if ! command -v logrotate >/dev/null 2>&1; then
+        echo "❌ logrotate не найден — файловые логи Argus росли бы без границы." >&2
+        echo "   Починка: sudo apt-get install -y logrotate" >&2
+        return 1
+    fi
+    # Парсер прогоняется ЗДЕСЬ, до любых записей deploy'а: иначе неисправный
+    # logrotate обнаруживался после того, как юниты уже записаны.
+    local tmp err
+    tmp=$(mktemp)
+    logrotate_policy_body > "$tmp"
+    chmod 0600 "$tmp"
+    if ! err=$(logrotate --debug --state /dev/null "$tmp" 2>&1); then
+        echo "❌ Политика не проходит парсер logrotate: $err" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+    rm -f "$tmp"
+
+    if [ -d "$LOGROTATE_SCHED_DIR" ] && [ -w "$LOGROTATE_SCHED_DIR" ]; then
+        :
+    else
+        echo "   logrotate: $LOGROTATE_SCHED_DIR не записываем — активация через" >&2
+        echo "   sudo install; проверяю фактическую запись зондом"
+    fi
+    # H5 (ремедиация ревью PR #75): раньше достаточно было `sudo -n install
+    # --help`, но он доказывает лишь отсутствие запроса пароля, а не право
+    # писать В ЭТОТ каталог — грант под другие аргументы install или read-only
+    # /etc проходили преflight, и deploy падал уже ПОСЛЕ записи юнитов. Зонд
+    # выполняет фактическую запись тем же механизмом, что и активация, и
+    # немедленно убирает за собой — это единственная запись преflight'а.
+    # Содержимое зонда — валидная пустая logrotate-политика: если удалить его
+    # не выйдет (грант без rm), остаток не ломает планировщик хоста.
+    local probe_target="$LOGROTATE_SCHED_DIR/.argus-deploy-preflight-probe"
+    # H5 (пятый проход, ревью b0fe08a): путь зонда фиксирован, и без проверки
+    # чужой файл с таким именем был бы перезаписан пробной записью и удалён
+    # уборкой. Argus не перезаписывает и не удаляет чужие файлы: коллизия —
+    # отказ до единственной записи, разбор — за оператором. `-L` отдельно:
+    # висячая ссылка проходит `-e`, но cp через неё записал бы в цель.
+    if [ -e "$probe_target" ] || [ -L "$probe_target" ]; then
+        echo "❌ В $LOGROTATE_SCHED_DIR уже существует .argus-deploy-preflight-probe —" >&2
+        echo "   это имя занято пробой записи, и преflight не перезаписывает" >&2
+        echo "   и не удаляет чужие файлы. Убери его и повтори deploy." >&2
+        return 1
+    fi
+    local probe_src
+    probe_src=$(mktemp)
+    cat > "$probe_src" <<'EOF'
+# hermes-argus deploy preflight probe — safe to delete
+/var/log/argus-preflight-probe-nonexistent.log {
+    missingok
+    notifempty
+}
+EOF
+    if [ -w "$LOGROTATE_SCHED_DIR" ]; then
+        if ! cp "$probe_src" "$probe_target" || [ ! -f "$probe_target" ]; then
+            echo "❌ Пробная запись в $LOGROTATE_SCHED_DIR не удалась — активация" >&2
+            echo "   политики здесь не сработает." >&2
+            rm -f "$probe_src" "$probe_target"
+            return 1
+        fi
+        rm -f "$probe_target" || {
+            echo "   ⚠️  Пробный файл $probe_target не удалился — убери вручную" >&2
+            echo "   (содержимое безопасно: пустая валидная logrotate-политика)." >&2
+        }
+    elif ! sudo -n install -m 0644 "$probe_src" "$probe_target" \
+        || [ ! -f "$probe_target" ]; then
+        echo "❌ Пробная запись (sudo install -m 0644) в $LOGROTATE_SCHED_DIR" >&2
+        echo "   не удалась: неинтерактивный грант install не покрывает запись в" >&2
+        echo "   этот каталог — активация политики упала бы уже после записи юнитов." >&2
+        echo "   Починка (одна из):" >&2
+        echo "     выдать грант NOPASSWD на install с записью в $LOGROTATE_SCHED_DIR" >&2
+        echo "     sudo install -d -o $(id -un) -g $(id -gn) $LOGROTATE_SCHED_DIR" >&2
+        echo "     выполнить deploy от root" >&2
+        echo "   Argus не повышает привилегии сам и не правит sudoers." >&2
+        rm -f "$probe_src"
+        return 1
+    else
+        if ! sudo -n rm -f "$probe_target" 2>/dev/null; then
+            echo "   ⚠️  Пробный файл $probe_target записан, но грант не покрывает rm —" >&2
+            echo "   удали его вручную (содержимое безопасно: пустая валидная" >&2
+            echo "   logrotate-политика)." >&2
+        fi
+    fi
+    rm -f "$probe_src"
+}
+
+install_logrotate_policy() {
+    local policy="$HERMES_DIR/$LOGROTATE_POLICY_NAME" target="$LOGROTATE_SCHED_DIR/argus"
+    mkdir -p "$HERMES_DIR/logs"
+    # Содержимое уже проверено парсером в преflight; здесь только запись и
+    # активация, применимость которых тоже доказана преflight'ом.
+    logrotate_policy_body > "$policy"
+    chmod 0644 "$policy"
+    DEPLOYED_PATHS+=("$policy")
+    if [ -w "$LOGROTATE_SCHED_DIR" ]; then
+        if ! cp "$policy" "$target"; then
+            echo "❌ Не удалось активировать политику: $target" >&2
+            return 1
+        fi
+    elif ! sudo -n install -m 0644 "$policy" "$target" 2>/dev/null; then
+        echo "❌ Не удалось активировать политику: $target" >&2
+        echo "   Преflight допускал sudo install, но фактическая активация не удалась." >&2
+        return 1
+    fi
+    chmod 0644 "$target" 2>/dev/null || true
+}
+
+echo ""
+echo "🔎 Preflight хоста..."
+preflight_target || exit 1
+preflight_hermes || exit 1
+preflight_user_manager || exit 1
+preflight_network_guard || exit 1
+preflight_logrotate || exit 1
+
 # ── Манифесты модулей (ЯВНЫЕ списки — в целевых каталогах лежит и чужая
 #    инфраструктура, wildcard-раскладка по каталогу запрещена) ──────────────
 
@@ -114,8 +604,13 @@ deploy_template() {
 # B2 (RR1b): collect-metrics.sh уехал в ANALYZER — единственный его потребитель
 # health-analyzer.py; в CORE он жил вторым экземпляром в неканоническом пути.
 CORE_HOME_SCRIPTS=(hermes-watchdog.sh hermes-gateway-pids.py auto-remediate.sh \
-                   check-updates.sh network-guard.sh)
+                   check-updates.sh)
 CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.sh ssl-expiry-check.sh)
+
+# NETWORK_GUARD (H4, RR1b): хост-политика маршрутов/DNS с неинтерактивным sudo
+# на откат. Это НЕ переносимая зависимость CORE: guard кодирует политику
+# конкретной машины, поэтому вынесен из CORE в отдельный флаг, OFF по умолчанию.
+NETWORK_GUARD_HOME_SCRIPTS=(network-guard.sh)
 
 # LOCAL_SERVICES: opt-in сборщик снимка + консьюмер (манифест, гистерезис,
 # алерты). UI/клавиатура — при MODULE_TG_BOT; переключение в /settings.
@@ -462,10 +957,27 @@ if module_enabled MODULE_LOCAL_SERVICES; then
     # начальный сбор выполняется сразу после успешного reconciliation.
 else
     # OFF: расписание снимает общий managed-блок (секция cron ниже).
-    # Установленные скрипты остаются, но без флага они no-op,
+# Установленные скрипты остаются, но без флага они no-op,
     # а старый снимок читается как unknown (все читатели закрыты флагом).
     :
 fi
+
+# H4 (RR1b): сетевой guard ставится и планируется ТОЛЬКО при явном флаге.
+# При OFF свежая установка не разворачивает файл (остаток от старой
+# развёртки может лежать, но он не ставится в cron и не активен).
+if module_enabled MODULE_NETWORK_GUARD; then
+    echo ""
+    echo "📁 [NETWORK_GUARD] откат сетевых инвариантов (host-policy)..."
+    deploy_scripts "$HOME_DIR/scripts" "${NETWORK_GUARD_HOME_SCRIPTS[@]}"
+    echo "   ℹ️  Откат выполняется только при нарушении инвариантов и только"
+    echo "      командами, проверенными в preflight (маршруты/DNS не трогаются иначе)."
+else
+    echo "   ℹ️  MODULE_NETWORK_GUARD=OFF — сетевой guard не ставится и не планируется."
+fi
+
+# H5 (RR1b): политика ротации файловых логов Argus — после того, как
+# $HERMES_DIR и его каталог логов существуют.
+install_logrotate_policy || exit 1
 
 # Общая библиотека handlers'ов — если включён хотя бы один бот. Ставится
 # СВЕЖИМ из шаблона, поэтому Discord-only установка получает свою копию, а не
@@ -641,7 +1153,6 @@ CRON_FILE="${CRON_FILE:-/tmp/hermes-argus-crontab.txt}"
 SCHEDULE=""
 if module_enabled MODULE_CORE && [ "$CRON_PROFILE" = "full" ]; then
     SCHEDULE+="*/5 * * * * $HOME_DIR/scripts/hermes-watchdog.sh >> $HERMES_DIR/logs/watchdog-cron.log 2>&1"$'\n'
-    SCHEDULE+="*/2 * * * * $HOME_DIR/scripts/network-guard.sh >> $HERMES_DIR/logs/network-guard-cron.log 2>&1"$'\n'
     SCHEDULE+="*/2 * * * * $HERMES_DIR/scripts/gateway-liveness.sh >> $HERMES_DIR/logs/gateway-liveness.log 2>&1"$'\n'
     SCHEDULE+="*/5 * * * * $HERMES_DIR/scripts/dashboard-liveness.sh >> $HERMES_DIR/logs/dashboard-liveness.log 2>&1"$'\n'
     SCHEDULE+="*/10 * * * * $HOME_DIR/scripts/auto-remediate.sh >> $HERMES_DIR/logs/auto-remediate.log 2>&1"$'\n'
@@ -653,6 +1164,11 @@ if module_enabled MODULE_LOCAL_SERVICES; then
     # Один последовательный джоб: снимок → консьюмер (не конкурирующие cron'ы).
     # Креденшелы алертов — из ~/.hermes/.env (set -a, значения не в argv).
     SCHEDULE+="$LOCAL_SERVICES_CRON_LINE"$'\n'
+fi
+# H4 (RR1b): guard — отдельный opt-in, а не часть CORE. При OFF строка не
+# генерируется, и reconciliation снимает её из managed-блока на ON→OFF.
+if module_enabled MODULE_NETWORK_GUARD && [ "$CRON_PROFILE" = "full" ]; then
+    SCHEDULE+="*/2 * * * * $HOME_DIR/scripts/network-guard.sh >> $HERMES_DIR/logs/network-guard-cron.log 2>&1"$'\n'
 fi
 if module_enabled MODULE_INTEGRATIONS; then
     SCHEDULE+="*/10 * * * * $HOME_DIR/scripts/integration-discover-wrapper.sh >> $HERMES_DIR/logs/integration-discover-cron.log 2>&1"$'\n'
@@ -713,3 +1229,5 @@ if module_enabled MODULE_INTEGRATIONS; then
 echo "   4. Включи вотчер конфига: systemctl --user enable --now hermes-argus-config.path (если не активен legacy hermes-vps-kit-* — см. шаг [INTEGRATIONS])"
 fi
 echo "   5. Тестовый прогон: $HOME_DIR/scripts/hermes-watchdog.sh"
+echo "   6. Политика ротации логов: $HERMES_DIR/$LOGROTATE_POLICY_NAME"
+echo "      (активирована в $LOGROTATE_SCHED_DIR/argus)"

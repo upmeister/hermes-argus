@@ -42,7 +42,6 @@ maintainer read an incomplete project state.
 | [DEBT-007](#debt-007) | Optional Netdata/GitHub treated as mandatory | Resolved in RR1b source | Deploy and read back; re-entry only for a new optional surface. |
 | [DEBT-008](#debt-008) | Analyzer/Discord payload and interpreter gaps | Resolved in RR1b source | Deploy and read back; re-entry for a new payload/interpreter. |
 | [DEBT-009](#debt-009) | L3 analysis job is external to ANALYZER | Open | Publish a generic Hermes job/model/delivery recipe. |
-| [DEBT-010](#debt-010) | Privileges, lifecycle and log rotation supplied externally | Selected in RR1b host readiness | Implement and read back the selected host prerequisites. |
 | [DEBT-011](#debt-011) | Global cron restore/count removed | Merged; deploy pending | Deploy RR1a separately and read back preserved operator cron. |
 | [DEBT-012](#debt-012) | Provisioning and notification claims need correction | Open | Describe actual external setup and verification. |
 | [DEBT-013](#debt-013) | Some cron senders ignore configured proxy | Open | Load/apply the existing Telegram proxy in affected senders. |
@@ -53,7 +52,10 @@ maintainer read an incomplete project state.
 | [DEBT-018](#debt-018) | Public GitHub workflow differs from production | Needs decision | Choose public timing/dedup/recovery/pin behavior. |
 | [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Open | Maintainer selects a stale-evidence policy before RR3. |
 | [DEBT-020](#debt-020) | Discord deepcheck calls a TG_BOT-owned executable | Open | Maintainer decides payload ownership vs. unsupported-module reporting. |
-| [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Selected in RR1b host readiness | Enforce owner-only config handling and read back the installer gate. |
+| [DEBT-010](#debt-010) | Host lifecycle/privilege assumptions unadmitted | Resolved in RR1b source | Deploy and read back; production still needs its own preflight verification. |
+| [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Resolved in RR1b source | Deploy and read back the installer config gate. |
+| [DEBT-022](#debt-022) | network-guard logs ROLLBACK regardless of sudo result | Open | Maintainer selects per-action failure reporting for the guard. |
+| [DEBT-023](#debt-023) | LOGROTATE_SCHED_DIR override surface unconfirmed | Needs decision | Maintainer confirms the public path override or restricts it to tests. |
 
 ## Open finding cards
 
@@ -289,13 +291,24 @@ maintainer read an incomplete project state.
 - **Closure evidence:** Every selected host prerequisite has tested availability/error behavior and a production read-back.
 - **Release disposition:** Public installer prerequisite.
 
-- **Status:** Selected in RR1b host-readiness contract; implementation pending.
+- **Status:** RESOLVED by the RR1b host-readiness contract (source; not deployed).
 - **Source:** production audit D5 and ownership map.
 - **Evidence:** production separately supplies logrotate, linger and passwordless
-  sudo. CORE assumes dashboard availability and includes a DNS/routing guard
-  reflecting personal network policy; deploy does not establish these owners.
-- **Follow-up:** implement the bounded preflight, explicit network-guard
-  applicability and Argus-owned log rotation in the selected contract.
+  sudo. CORE assumed dashboard availability and included a DNS/routing guard
+  reflecting personal network policy; deploy established none of these owners.
+- **Resolution:** `deploy.sh` now runs a fail-closed host preflight before it
+  writes anything — reachable user-manager before user units, honest `Linger`
+  reporting (never enabling it), Hermes home/executable for modules that read
+  Hermes-owned paths, validated `HERMES_HOST`/`HERMES_PORT` taken from the raw
+  config rather than after default substitution, and one Argus-owned logrotate
+  policy validated by a `logrotate --debug` dry-run. The network guard moved
+  behind `MODULE_NETWORK_GUARD` (OFF by default) with a narrow NOPASSWD
+  applicability check that executes no rollback.
+- **Boundary honored:** no linger auto-enable, no sudoers change, no route/DNS
+  mutation, no dashboard start, no Hermes install, no new scheduler.
+- **Re-entry trigger:** a new host prerequisite, a new optional module needing
+  Hermes-owned paths, or an operator decision to migrate existing production to
+  the explicit network-guard flag.
 - **Trigger:** RR1b; no public clean-install readiness claim before disposition.
 - **Scope guard:** no global sudo grants, host-network redesign or application
   backup installation by default.
@@ -493,13 +506,68 @@ maintainer read an incomplete project state.
 - **Closure evidence:** fresh creation is owner-only; unsafe mode/owner fixtures fail before sourcing; a secret canary is absent from output, argv and receipts.
 - **Release disposition:** Public installer prerequisite.
 
-- **Status:** Selected; implementation pending.
+- **Status:** RESOLVED by the RR1b host-readiness contract (source; not deployed).
 - **Source:** production dependency audit D5 and installer review.
-- **Evidence:** .gitignore prevents tracking but install.sh currently copies the
-  template without an explicit mode/owner gate, and deploy.sh sources a supplied
-  config file.
-- **Boundary:** no credential-store redesign and no ownership change for
-  Hermes .env.
+- **Evidence:** .gitignore prevents tracking but install.sh copied the template
+  without an explicit mode/owner gate, and deploy.sh sourced a supplied config
+  file.
+- **Resolution:** `install.sh` creates `config.env` under `umask 077` and checks
+  an existing one; `deploy.sh` applies the same check before sourcing. A
+  group/other-readable or foreign-owned file stops the run naming only the
+  violated property and a repair command — configuration values are never
+  echoed, and the H1 probe asserts a secret canary is absent from output.
+- **Boundary honored:** no credential-store redesign and no ownership change for
+  Hermes `.env`.
+
+<a id="debt-022"></a>
+
+### DEBT-022 — network-guard logs ROLLBACK regardless of the sudo result
+
+- **Operator impact:** if the passwordless sudo grant stops applying in cron
+  (the exact false-green scenario the H4 gate now blocks at install time), the
+  guard still writes `ROLLBACK DNS: revert <iface>` / `ROLLBACK: ip rule del …`
+  into `network-guard.log` and reports the rollback as done in its Telegram
+  alert — the operator sees remediation that never happened.
+- **Status:** open, outside the RR1b host-readiness contract.
+- **Source/evidence:** PR #75 focused review (promptql, external) at head
+  `36f4dc4`; `scripts/network-guard.sh:86–87, 97–98, 101–102` — each
+  `sudo -n … 2>/dev/null` return code is discarded and the ROLLBACK log line
+  is unconditional.
+- **Next action / responsible roles:** maintainer selects the desired
+  behavior (per-action failure logging and a louder alert when a rollback
+  could not be applied); architect scopes a bounded guard-only follow-up;
+  builder implements only after selection. The H4 install gate is not
+  affected and must not be re-opened here.
+- **Closure evidence:** an isolated fixture where the sudo call fails shows
+  the guard reporting a failed rollback (not a successful ROLLBACK) in log
+  and alert, without touching live routes, DNS or sudoers.
+- **Release disposition:** not a blocker for RR1b — the guard is an explicit
+  `MODULE_NETWORK_GUARD` opt-in, OFF by default; decide before RR3.
+
+<a id="debt-023"></a>
+
+### DEBT-023 — LOGROTATE_SCHED_DIR override surface is unconfirmed
+
+- **Operator impact:** none directly — the variable overrides only the path of
+  the logrotate scheduler directory (default `/etc/logrotate.d`) and is
+  consumed by integration-test fixtures; no behavior change is possible
+  through it.
+- **Status:** open owner decision, outside the RR1b host-readiness contract.
+- **Source/evidence:** PR #75 focused review (promptql, external) at head
+  `36f4dc4` flagged that the public config surface gained an env override the
+  maintainer has not explicitly confirmed; `deploy.sh`
+  (`LOGROTATE_SCHED_DIR="${LOGROTATE_SCHED_DIR:-/etc/logrotate.d}"`).
+- **Next action / responsible roles:** maintainer confirms keeping the
+  documented path-only override (e.g., non-standard host layouts) or restricts
+  it to the test harness; docs then describe whichever surface is chosen.
+  Clarification from the PR #75 re-review at `b0fe08a`: the override changes
+  where the policy is ACTIVATED — the directory the host's logrotate scheduler
+  actually reads — not merely a path Argus writes to; the decision should
+  account for that.
+- **Closure evidence:** the decision is recorded and DEPLOY_CHECKLIST/template
+  match the confirmed surface.
+- **Release disposition:** not a blocker for RR1b; settle before the RR3 docs
+  freeze.
 
 ## Resolved source changes with pending deployment
 
