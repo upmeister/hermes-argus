@@ -6554,7 +6554,12 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
         check("rr1b2_sudo_ll_real", True, "skipped: не удалось разрешить пути шимов")
         return
 
-    dropin = Path("/etc/sudoers.d/argus-probe")
+    # Имя обязано сортироваться ПОСЛЕ runner-файла с NOPASSWD: ALL: sudoers
+    # читает /etc/sudoers.d по алфавиту, и при последнем совпадении более
+    # поздний PASSWD-грант обязан выиграть у глобального ALL — иначе негативный
+    # кейс бессмыслен. (Первый прогон поймал ровно это: "argus-probe" шёл
+    # раньше "runner", PASSWD-правило переопределялось, deploy проходил.)
+    dropin = Path("/etc/sudoers.d/zz-argus-probe")
 
     def write_dropin(body: str) -> bool:
         tmpf = tmp / "argus-probe-sudoers"
