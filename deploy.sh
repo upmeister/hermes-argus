@@ -265,19 +265,26 @@ preflight_user_manager() {
     esac
 }
 
-# H4 — применимость сетевого guard'а. Ни один откат при проверке не выполняется.
+# H4 — применимость сетевого guard'а. Ни один откат при проверке не выполняется
+# и НИЧЕГО из вывода sudo не парсится.
 #
-# Доказательство строится на `sudo -n -ll <команда> <аргументы>`. Короткая форма
-# (`-l`) печатает только разрешённую команду БЕЗ тегов (sudo display.c:
-# display_cmnd дописывает совпавшее правило только при verbose), поэтому судить
-# по ней о NOPASSWD нельзя. Verbose печатает СОВПАВШУЮ sudoers-запись целиком:
-#   Options: authenticate     → правило NOPASSWD (cs->tags.nopasswd → без "!")
-#   Options: !authenticate    → правило PASSWD (пароль в cron взять неоткуда)
-#   Commands: <запись sudoers> → маска аргументов (например "revert *")
-# Никакого разбора текста sudoers регэкспом нет: sudo сам сопоставляет команду
-# и аргументы, парсится только то, что sudo напечатал для ЭТОГО зонда. Отрицание
-# (`!команда`), чужой run-as и запрещённая команда дают отказ `sudo -ll`, а не
-# вывод, который можно перепутать.
+# Дискриминатор — код возврата `sudo -k -n -l <команда> <аргументы>`:
+#   rc=0 → эта команда с ЭТИМИ аргументами разрешена и не требует пароля;
+#   rc≠0 → запрещена, чужой run-as, грант не покрывает эти аргументы или
+#          требует пароль (с -n sudo отказывается от аутентификации:
+#          «interactive authentication is required»).
+# Роль каждого флага (проверено на реальном sudo 1.9 Ubuntu 24.04):
+#   -l <cmd>  — только перечисляет применимость, команду не исполняет;
+#   -n        — запрет промпта: PASSWD-правило даёт rc≠0, а не запрос пароля;
+#   -k        — С КОМАНДОЙ означает «не использовать кешированные
+#               полномочия» (sudoers: MODE_IGNORE_TICKET), без мутации
+#               состояния. Это закрывает дыру, которую даёт чистый код
+#               возврата: при живом timestamp оператора check_user()
+#               возвращает SUCCESS и для PASSWD-правила (check.c:
+#               case TS_CURRENT), и гейт пропустил бы политику, которая
+#               в cron с нею же молча не сработает.
+# Разбор текста sudoers регэкспом отсутствует полностью: на двух прошлых
+# итерациях он доказывал не применимость, а правильность предположений автора.
 preflight_network_guard() {
     module_enabled MODULE_NETWORK_GUARD || return 0
     local cmd ok=1
@@ -289,14 +296,15 @@ preflight_network_guard() {
         echo "   Починка: поставь недостающее ПО или выключи MODULE_NETWORK_GUARD." >&2
         return 1; }
 
-    local RESOLVECTL IP primary iface probe cmd_path args out spec
+    local RESOLVECTL IP primary iface probe cmd_path args
     RESOLVECTL=$(command -v resolvectl)
     IP=$(command -v ip)
     primary=$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)
     # Цель DNS-отката — ЛЮБОЙ интерфейс, который guard проверяет: всё, кроме lo,
-    # primary и tailscale0 (network-guard.sh:check_dns). Если таких сейчас нет,
-    # грант всё равно обязан покрывать будущие интерфейсы, поэтому зондируем
-    # имя, которое грант под primary/lo не покроет.
+    # primary и tailscale0 (network-guard.sh:check_dns). Зонд должен идти от
+    # имени такого интерфейса, иначе грант, прибитый к primary, выглядел бы
+    # достаточным. Если кандидатов сейчас нет — имя, которое primary-грант не
+    # покроет: покрытие будущих интерфеймов обязан давать сам грант.
     iface=""
     for iface in $(ls /sys/class/net 2>/dev/null); do
         [ "$iface" = "lo" ] && continue
@@ -312,44 +320,21 @@ preflight_network_guard() {
     for probe in         "$RESOLVECTL|revert $iface"         "$IP|route flush table 4294967295"         "$IP|rule del from 127.0.0.1 lookup 4294967295"; do
         cmd_path="${probe%%|*}"
         args="${probe#*|}"
-        if ! out=$(sudo -n -ll "$cmd_path" $args 2>&1); then
+        if ! sudo -k -n -l "$cmd_path" $args >/dev/null 2>&1; then
             echo "❌ Отказ: guard не сможет исполнить '$(basename "$cmd_path") $args'" >&2
-            echo "   (sudo: команда запрещена, чужой run-as или требует пароль)" >&2
+            echo "   (sudo -k -n -l: запрещено, чужой run-as, грант не покрывает" >&2
+            echo "   эти аргументы или требует пароль — в cron его взять неоткуда)" >&2
             ok=0
-        elif printf '%s
-' "$out" | grep -q '!authenticate'; then
-            echo "❌ Отказ: '$(basename "$cmd_path") $args' разрешён С паролем (PASSWD)" >&2
-            echo "   в cron вводить пароль некому — откат молча не сработает" >&2
-            ok=0
-        elif ! printf '%s
-' "$out" | grep -q 'authenticate'; then
-            echo "❌ Не удалось доказать NOPASSWD для '$(basename "$cmd_path") $args':" >&2
-            echo "   в sudo -ll нет признака тега аутентификации" >&2
-            ok=0
-        else
-            spec=$(printf '%s
-' "$out" | awk '/^    Commands:$/{f=1;next} f&&NF{print;exit}')
-            # Commands печатает запись sudoers (cs->cmnd), а не развёрнутый зонд:
-            # она обязана покрывать ПРОИЗВОЛЬНЫЕ аргументы, потому что guard
-            # обнаруживает цели в рантайме. Грант под один литерал не sufficient.
-            if [ -z "$spec" ]; then
-                echo "❌ Не удалось прочитать совпавшую запись из sudo -ll" >&2
-                ok=0
-            elif ! printf '%s' "$spec" | grep -Eq '(^|[[:space:]])\*$|(^|[[:space:]])ALL$'; then
-                echo "❌ Грант не покрывает рантайм-цели guard'а: '$spec'" >&2
-                echo "   Нужна маска аргументов: ... revert * / ... route flush table * / ... rule del *" >&2
-                ok=0
-            fi
         fi
     done
     if [ "$ok" -ne 1 ]; then
-        echo "   Нужен NOPASSWD с маской аргументов ровно на эти команды:" >&2
+        echo "   Нужен беспарольный грант с маской аргументов ровно на эти команды:" >&2
         echo "     <user> ALL=(root) NOPASSWD: /usr/bin/resolvectl revert *, /usr/sbin/ip route flush table *, /usr/sbin/ip rule del *" >&2
         echo "   Argus не правит sudoers и не исполняет откат при проверке." >&2
         echo "   Альтернатива: MODULE_NETWORK_GUARD=OFF." >&2
         return 1
     fi
-    echo "   сетевой guard: sudo -ll подтвердил NOPASSWD с маской аргументов по всем трём откатам (исполнения не было)."
+    echo "   сетевой guard: sudo -k -n -l подтвердил беспарольную применимость всех трёх откатов (исполнения не было)."
 }
 
 # H5 — Argus-owned политика ротации файловых логов. Использует уже стоящий на

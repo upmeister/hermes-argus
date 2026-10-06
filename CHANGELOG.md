@@ -54,19 +54,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed nor scheduled — a previously generated line is recognised as
   Argus-owned and removed from the crontab rather than adopted into the managed
   block. With the flag ON the deploy fails closed unless the host has
-  `resolvectl`, `ip` and a passwordless sudo policy that actually covers each
-  rollback command with an argument wildcard. The check runs
-  `sudo -n -ll <command> <arguments>` — the verbose listing, which *reports* the
-  matched sudoers entry and never executes anything. Short-form `sudo -l`
-  output is not used: it prints only the resolved command, with no
-  authentication tag. The preflight requires the matched entry's `Options:` to
-  carry `authenticate` without the negation (`!authenticate` means the command
-  needs a password, which cron cannot supply) and requires the matched
-  sudoers command spec to carry an argument mask — a grant pinned to one
-  literal argument does not cover the rollback targets the guard discovers at
-  runtime. A PASSWD-only grant, a mixed-tag sudoers line where only one command
-  is passwordless, a `(nobody)` run-as, a negated `!command` rule, a
-  literal-argument grant, or a failing `sudo` all refuse the install. No route,
+  `resolvectl`, `ip` and a passwordless sudo grant covering each rollback
+  command at the arguments the guard would use. The check is
+  `sudo -k -n -l <command> <arguments>` and reads only its exit status — sudo
+  output is never parsed, because parsing proved twice to validate the
+  implementer's assumptions rather than sudo's behavior. Each flag carries
+  weight: `-l <command>` lists applicability without executing anything; `-n`
+  makes a password-requiring grant fail instead of prompting (cron cannot
+  answer a prompt); `-k` with a command ignores the invoking user's cached
+  sudo timestamp — without it, `check_user` succeeds on a live timestamp even
+  for a PASSWD rule, so a policy that silently fails in cron would pass the
+  gate. A denied command, a `(nobody)` run-as, a grant pinned to other
+  arguments, or a password-requiring grant all refuse the install. No route,
   DNS, interface or sudoers entry is mutated by the deploy, and applicability
   is never inferred from the number of interfaces. Existing production users must set the flag explicitly before a
   future deployment; this change performs no migration.

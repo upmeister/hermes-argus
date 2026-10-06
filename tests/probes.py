@@ -1687,69 +1687,40 @@ def _rr1b_host_shims(shim_dir: Path, *, user_bus: bool = True, linger: str = "ye
     if logrotate:
         _write_argv_shim(shim_dir, "logrotate", 'exit "${RR1B_LOGROTATE_RC:-0}"\n')
     if sudo != "none":
-        # Шим печатает ТОТ ЖЕ формат, что настоящий `sudo -n -ll <cmd> <args>`
-        # (sudo display.c: display_cmndspec_long + display_cmnd):
-        #   Sudoers entry: <файл>
-        #       RunAsUsers: root
-        #       Options: authenticate   → NOPASSWD (nopasswd=true рендерится БЕЗ "!")
-        #               !authenticate   → PASSWD
-        #       Commands:
-        #   <tab><запись sudoers с маской>   ← cs->cmnd, а не развёрнутый зонд
-        #       Matched: <cmd> <args>
-        # Прошлый шим добавлял тег "NOPASSWD", которого в этом выводе НЕТ, и
-        # CI подтверждал предположение реализации вместо поведения sudo.
-        # `install` передаётся настоящему install (путь sudo-активации H5).
+        # Шим моделирует ТОЛЬКО код возврата `sudo -k -n -l <cmd> <args>` —
+        # дискриминатор, который проверяет deploy.sh. Никакой имитации формата
+        # вывода: на двух прошлых итерациях шим, повторяющий предположения
+        # автора, подтверждал их же, а не поведение sudo (сначала тег NOPASSWD,
+        # которого в выводе нет, затем выдуманный verbose-блок). Здесь шим
+        # отвечает ровно на один вопрос: разрешил бы настоящий sudo эту команду
+        # с этими аргументами без пароля?
+        #   full       — все три команды разрешены беспарольно;
+        #   mixed      — resolvectl да, ip-команды PASSWD (как в строке sudoers
+        #                с разными тегами);
+        #   nobody     — run-as не root: для default run-as запрещено;
+        #   negate     — resolvectl разрешён, ip-команды под правилом !запрещены;
+        #   restricted — NOPASSWD, но грант под литеральные аргументы: probe-args
+        #                не совпадают с грантом (не покрывает рантайм-цели);
+        #   passwd     — все три команды PASSWD;
+        #   near/fail  — сопоставления нет / sudo сам завершился ошибкой.
         real_install = subprocess.run(["bash", "-c", "command -v install"],
                                       capture_output=True, text=True, timeout=30
                                       ).stdout.strip().splitlines()[0]
         LS = [
             'POLICY="' + sudo + '"',
-            'if [ "$1" = "-n" ] && [ "$2" = "-ll" ]; then',
-            '  shift 2',
-            '  cmd="$1"; shift',
-            '  args="$*"',
-            '  base=$(basename "$cmd")',
-            '  emit() {',
-            "    printf 'Sudoers entry: /etc/sudoers.d/argus-fixture\\n'",
-            "    printf '    RunAsUsers: root\\n'",
-            "    printf '    Options: %s\\n' \"$1\"",
-            "    printf '    Commands:\\n'",
-            "    printf '\\t%s\\n' \"$2\"",
-            "    printf '    Matched: %s %s\\n' \"$cmd\" \"$args\"",
-            '    exit 0',
-            '  }',
+            'if [ "$1" = "-k" ] && [ "$2" = "-n" ] && [ "$3" = "-l" ]; then',
+            '  shift 3',
+            '  base=$(basename "$1")',
             '  case "$POLICY" in',
-            '    full)',
-            '      case "$base" in',
-            '        resolvectl|ip) emit "authenticate" "$cmd *" ;;',
-            '        *) exit 1 ;;',
-            '      esac ;;',
-            '    mixed)',
-            '      case "$base" in',
-            '        resolvectl) emit "authenticate" "$cmd *" ;;',
-            '        ip)         emit "!authenticate" "$cmd *" ;;',
-            '        *) exit 1 ;;',
-            '      esac ;;',
-            '    nobody)',
-            '      exit 1 ;;',
-            '    negate)',
-            '      case "$base" in',
-            '        resolvectl) emit "authenticate" "$cmd *" ;;',
-            '        *) exit 1 ;;',
-            '      esac ;;',
-            '    restricted)',
-            '      case "$base" in',
-            '        resolvectl) emit "authenticate" "$cmd *" ;;',
-            '        ip)         emit "authenticate" "$cmd 999" ;;',
-            '        *) exit 1 ;;',
-            '      esac ;;',
-            '    passwd)',
-            '      case "$base" in',
-            '        resolvectl|ip) emit "!authenticate" "$cmd *" ;;',
-            '        *) exit 1 ;;',
-            '      esac ;;',
-            '    *) exit 1 ;;',
+            '    full)       [ "$base" = "resolvectl" ] || [ "$base" = "ip" ] ;;',
+            '    mixed)      [ "$base" = "resolvectl" ] ;;',
+            '    nobody)     false ;;',
+            '    negate)     [ "$base" = "resolvectl" ] ;;',
+            '    restricted) false ;;',
+            '    passwd)     false ;;',
+            '    *)          false ;;',
             '  esac',
+            '  exit $?',
             'fi',
             'if [ "$1" = "-n" ] && [ "$2" = "install" ]; then',
             '  shift 2',
@@ -6534,17 +6505,22 @@ def probe_rr1b2_logrotate_preflight_order(tmp: Path):
 
 
 def probe_rr1b2_sudo_ll_real(tmp: Path):
-    """H4: парсер `sudo -n -ll` проверяется против НАСТОЯЩЕГО sudo.
+    """H4: дискриминатор `sudo -k -n -l` проверяется против НАСТОЯЩЕГО sudo.
 
     Прошлые итерации падали одинаково: шим подтверждал предположение реализации
-    (сначала тег NOPASSWD в коротком выводе, которого там нет), и зелёный CI
-    ничего не ловил, потому что шим и код были согласованы между собой, но не с
-    реальностью. Здесь на disposable CI-runner'е создаётся временный sudoers
-    drop-in с маской аргументов и явным PASSWD, после чего проверяется, что
-    deploy-парсер правильно классифицирует НАСТОЯЩИЙ вывод.
+    (сначала тег NOPASSWD в коротком выводе, которого там нет, затем
+    смоделированный verbose-блок), и зелёный CI ничего не ловил, потому что шим
+    и код были согласованы между собой, но не с реальностью. Финальный дизайн
+    вообще не читает вывод sudo — только код возврата, — но и его нужно
+    сверить с настоящим sudo: при живом timestamp оператора check_user()
+    возвращает SUCCESS даже для PASSWD-правила, и спасает только `-k` с
+    командой (не использовать кеш). Поэтому здесь на disposable CI-runner'е
+    создаётся временный sudoers drop-in и проверяется, что deploy правильно
+    классифицирует НАСТОЯЩЕЕ поведение: положительный грант пропускает,
+    PASSWD-грант (последнее совпадение выигрывает) отказывает.
 
     Фикстура пишет sudoers ТОЛЬКО на одноразовый runner (это не путь deploy —
-    тот sudoers не правит никогда) и удаляет его в finally."""
+    тот sudoers не правит никогда) и удаляет её в finally."""
     problems = []
     if os.name == "nt":
         check("rr1b2_sudo_ll_real", True, "skipped: настоящий sudo недоступен на Windows — проверит CI")
@@ -6633,7 +6609,7 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
         res_b = deploy_guard("neg")
         out_b = res_b.stdout + res_b.stderr
         if not (res_b.returncode != 0
-                and "С паролем" in out_b
+                and "требует пароль" in out_b
                 and not (home_a / "scripts" / "network-guard.sh").exists()):
             problems.append(f"negative: rc={res_b.returncode} out={out_b[-260:]!r}")
     finally:
