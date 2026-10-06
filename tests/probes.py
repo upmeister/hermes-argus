@@ -6580,16 +6580,23 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
             return False
         return True
 
-    def deploy_guard(tag: str) -> subprocess.CompletedProcess:
-        env = _probe_subprocess_env(home, {
-            "HOME": home.as_posix(),
+    def deploy_guard(tag: str) -> tuple[subprocess.CompletedProcess, Path]:
+        # У каждого кейса СВОЙ HOME: guard, установленный позитивным деплоем,
+        # не должен существовать при негативном (иначе проверка «guard не
+        # установлен» бессмысленна).
+        case_home = tmp / f"sudo-real-home-{tag}"
+        _rr1b_fake_hermes(case_home)
+        env = _probe_subprocess_env(case_home, {
+            "HOME": case_home.as_posix(),
             "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
             "CRONTAB_FIXTURE": (tmp / f"sudo-real-cron-{tag}.txt").as_posix(),
             "CRON_FILE": (tmp / f"sudo-real-proposal-{tag}.txt").as_posix(),
         })
-        return subprocess.run(
+        res = subprocess.run(
             ["bash", (REPO / "deploy.sh").as_posix(), config.as_posix()],
-            cwd=REPO.as_posix(), env=env, capture_output=True, text=True, timeout=240)
+            cwd=REPO.as_posix(), env=env, capture_output=True, text=True,
+            timeout=240)
+        return res, case_home
 
     try:
         # A. Позитив: NOPASSWD с маской аргументов на все три команды — deploy
@@ -6600,8 +6607,7 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
                 f"{ip_path} route flush table *, {ip_path} rule del *\n"):
             check("rr1b2_sudo_ll_real", False, "fixtures: drop-in не установлен")
             return
-        home_a = tmp / "sudo-real-home"
-        res_a = deploy_guard("pos")
+        res_a, home_a = deploy_guard("pos")
         if not (res_a.returncode == 0
                 and "исполнения не было" in res_a.stdout):
             problems.append(f"positive: rc={res_a.returncode} "
@@ -6619,7 +6625,7 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
                 f"!{ip_path} rule del *\n"):
             check("rr1b2_sudo_ll_real", False, "fixtures: drop-in не переустановлен")
             return
-        res_b = deploy_guard("neg")
+        res_b, home_b = deploy_guard("neg")
         out_b = res_b.stdout + res_b.stderr
         # Диагностика на случай расхождения с реальным sudo: rc и вывод прямого
         # зонда (с -k, как в deploy) на запрещённой команде.
@@ -6630,8 +6636,8 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
                 f"direct_out={probe_rc.stdout.strip()[-120:]!r} "
                 f"direct_err={probe_rc.stderr.strip()[-120:]!r} ip_path={ip_path!r}")
         if not (res_b.returncode != 0
-                and "❌" in out_b
-                and not (home_a / "scripts" / "network-guard.sh").exists()):
+                and "Нужен беспарольный грант" in out_b
+                and not (home_b / "scripts" / "network-guard.sh").exists()):
             problems.append(f"negative: rc={res_b.returncode} out={out_b[-200:]!r}{diag}")
     finally:
         subprocess.run(["sudo", "rm", "-f", str(dropin)], capture_output=True, timeout=60)
