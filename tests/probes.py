@@ -6607,30 +6607,30 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
             problems.append(f"positive: rc={res_a.returncode} "
                             f"out={(res_a.stdout + res_a.stderr)[-260:]!r}")
 
-        # B. Негатив: PASSWD на ip-команды (запись позже глобальной ALL, поэтому
-        #    она выигрывает сопоставление) — deploy обязан отказать, назвав
-        #    PASSWD, и не поставить guard.
+        # B. Негатив: DENY (`!`) на ip-команды в ПОСЛЕДНЕМ файле — реальный
+        #    отказ sudo. PASSWD-грант здесь непроверяем принципиально: по
+        #    семантике sudoers «any» тег NOPASSWD ставится, если он есть хотя
+        #    бы у одного совпавшего правила, а на runner'е есть глобальный
+        #    NOPASSWD: ALL — PASSWD-запись никогда не сделает команду
+        #    требующей пароль (проверено на реальном sudo в изолированной
+        #    фикстуре). Deploy обязан отказать и не поставить guard.
         if not write_dropin(
-                f"{user} ALL=(root) PASSWD: {ip_path} route flush table *, "
-                f"{ip_path} rule del *\n"):
+                f"{user} ALL=(root) !{ip_path} route flush table *, "
+                f"!{ip_path} rule del *\n"):
             check("rr1b2_sudo_ll_real", False, "fixtures: drop-in не переустановлен")
             return
         res_b = deploy_guard("neg")
         out_b = res_b.stdout + res_b.stderr
-        # Диагностика на случай расхождения с реальным sudo: rc и вывод каждого
-        # прямого зонда (с -k, как в deploy) и содержимое /etc/sudoers.d.
+        # Диагностика на случай расхождения с реальным sudo: rc и вывод прямого
+        # зонда (с -k, как в deploy) на запрещённой команде.
         probe_rc = subprocess.run(
             ["sudo", "-k", "-n", "-l", ip_path, "route", "flush", "table",
              "4294967295"], capture_output=True, text=True, timeout=60)
-        sudoers_d = subprocess.run(
-            ["bash", "-c", "ls /etc/sudoers.d 2>/dev/null"],
-            capture_output=True, text=True, timeout=30).stdout.strip()
         diag = (f" direct_rc={probe_rc.returncode} "
                 f"direct_out={probe_rc.stdout.strip()[-120:]!r} "
-                f"direct_err={probe_rc.stderr.strip()[-120:]!r} "
-                f"sudoers_d={sudoers_d!r} ip_path={ip_path!r}")
+                f"direct_err={probe_rc.stderr.strip()[-120:]!r} ip_path={ip_path!r}")
         if not (res_b.returncode != 0
-                and "требует пароль" in out_b
+                and "❌" in out_b
                 and not (home_a / "scripts" / "network-guard.sh").exists()):
             problems.append(f"negative: rc={res_b.returncode} out={out_b[-200:]!r}{diag}")
     finally:
