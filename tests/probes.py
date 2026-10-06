@@ -6542,11 +6542,15 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
                    _rr1b_modules(core=True, network_guard=True)
                    + f"WATCHDOG_BOT_TOKEN={_RR1B_H_SECRET}\n")
 
+    # ВАЖНО: без !r — repr добавляет кавычки внутрь значения PATH, каталог
+    # шимов перестаёт находиться, и drop-in ссылается на системные пути вместо
+    # шим-путей, которые зондирует deploy (первый реальный прогон CI поймал
+    # ровно это: PASSWD-грант не совпал с зондируемым путём).
     resolvectl_path = subprocess.run(
-        ["bash", "-c", f'PATH={shim.as_posix()!r}:$PATH command -v resolvectl'],
+        ["bash", "-c", f"PATH='{shim.as_posix()}':$PATH command -v resolvectl"],
         capture_output=True, text=True, timeout=30).stdout.strip()
     ip_path = subprocess.run(
-        ["bash", "-c", f'PATH={shim.as_posix()!r}:$PATH command -v ip'],
+        ["bash", "-c", f"PATH='{shim.as_posix()}':$PATH command -v ip"],
         capture_output=True, text=True, timeout=30).stdout.strip()
     user = subprocess.run(["bash", "-c", "id -un"],
                           capture_output=True, text=True, timeout=30).stdout.strip()
@@ -6613,10 +6617,22 @@ def probe_rr1b2_sudo_ll_real(tmp: Path):
             return
         res_b = deploy_guard("neg")
         out_b = res_b.stdout + res_b.stderr
+        # Диагностика на случай расхождения с реальным sudo: rc и вывод каждого
+        # прямого зонда (с -k, как в deploy) и содержимое /etc/sudoers.d.
+        probe_rc = subprocess.run(
+            ["sudo", "-k", "-n", "-l", ip_path, "route", "flush", "table",
+             "4294967295"], capture_output=True, text=True, timeout=60)
+        sudoers_d = subprocess.run(
+            ["bash", "-c", "ls /etc/sudoers.d 2>/dev/null"],
+            capture_output=True, text=True, timeout=30).stdout.strip()
+        diag = (f" direct_rc={probe_rc.returncode} "
+                f"direct_out={probe_rc.stdout.strip()[-120:]!r} "
+                f"direct_err={probe_rc.stderr.strip()[-120:]!r} "
+                f"sudoers_d={sudoers_d!r} ip_path={ip_path!r}")
         if not (res_b.returncode != 0
                 and "требует пароль" in out_b
                 and not (home_a / "scripts" / "network-guard.sh").exists()):
-            problems.append(f"negative: rc={res_b.returncode} out={out_b[-260:]!r}")
+            problems.append(f"negative: rc={res_b.returncode} out={out_b[-200:]!r}{diag}")
     finally:
         subprocess.run(["sudo", "rm", "-f", str(dropin)], capture_output=True, timeout=60)
 
