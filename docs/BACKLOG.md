@@ -54,6 +54,8 @@ maintainer read an incomplete project state.
 | [DEBT-020](#debt-020) | Discord deepcheck calls a TG_BOT-owned executable | Open | Maintainer decides payload ownership vs. unsupported-module reporting. |
 | [DEBT-010](#debt-010) | Host lifecycle/privilege assumptions unadmitted | Resolved in RR1b source | Deploy and read back; production still needs its own preflight verification. |
 | [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Resolved in RR1b source | Deploy and read back the installer config gate. |
+| [DEBT-022](#debt-022) | network-guard logs ROLLBACK regardless of sudo result | Open | Maintainer selects per-action failure reporting for the guard. |
+| [DEBT-023](#debt-023) | LOGROTATE_SCHED_DIR override surface unconfirmed | Needs decision | Maintainer confirms the public path override or restricts it to tests. |
 
 ## Open finding cards
 
@@ -516,6 +518,52 @@ maintainer read an incomplete project state.
   echoed, and the H1 probe asserts a secret canary is absent from output.
 - **Boundary honored:** no credential-store redesign and no ownership change for
   Hermes `.env`.
+
+<a id="debt-022"></a>
+
+### DEBT-022 — network-guard logs ROLLBACK regardless of the sudo result
+
+- **Operator impact:** if the passwordless sudo grant stops applying in cron
+  (the exact false-green scenario the H4 gate now blocks at install time), the
+  guard still writes `ROLLBACK DNS: revert <iface>` / `ROLLBACK: ip rule del …`
+  into `network-guard.log` and reports the rollback as done in its Telegram
+  alert — the operator sees remediation that never happened.
+- **Status:** open, outside the RR1b host-readiness contract.
+- **Source/evidence:** PR #75 focused review (promptql, external) at head
+  `36f4dc4`; `scripts/network-guard.sh:86–87, 97–98, 101–102` — each
+  `sudo -n … 2>/dev/null` return code is discarded and the ROLLBACK log line
+  is unconditional.
+- **Next action / responsible roles:** maintainer selects the desired
+  behavior (per-action failure logging and a louder alert when a rollback
+  could not be applied); architect scopes a bounded guard-only follow-up;
+  builder implements only after selection. The H4 install gate is not
+  affected and must not be re-opened here.
+- **Closure evidence:** an isolated fixture where the sudo call fails shows
+  the guard reporting a failed rollback (not a successful ROLLBACK) in log
+  and alert, without touching live routes, DNS or sudoers.
+- **Release disposition:** not a blocker for RR1b — the guard is an explicit
+  `MODULE_NETWORK_GUARD` opt-in, OFF by default; decide before RR3.
+
+<a id="debt-023"></a>
+
+### DEBT-023 — LOGROTATE_SCHED_DIR override surface is unconfirmed
+
+- **Operator impact:** none directly — the variable overrides only the path of
+  the logrotate scheduler directory (default `/etc/logrotate.d`) and is
+  consumed by integration-test fixtures; no behavior change is possible
+  through it.
+- **Status:** open owner decision, outside the RR1b host-readiness contract.
+- **Source/evidence:** PR #75 focused review (promptql, external) at head
+  `36f4dc4` flagged that the public config surface gained an env override the
+  maintainer has not explicitly confirmed; `deploy.sh`
+  (`LOGROTATE_SCHED_DIR="${LOGROTATE_SCHED_DIR:-/etc/logrotate.d}"`).
+- **Next action / responsible roles:** maintainer confirms keeping the
+  documented path-only override (e.g., non-standard host layouts) or restricts
+  it to the test harness; docs then describe whichever surface is chosen.
+- **Closure evidence:** the decision is recorded and DEPLOY_CHECKLIST/template
+  match the confirmed surface.
+- **Release disposition:** not a blocker for RR1b; settle before the RR3 docs
+  freeze.
 
 ## Resolved source changes with pending deployment
 
