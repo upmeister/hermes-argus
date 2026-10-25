@@ -56,9 +56,11 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> RR0c public defaults/naming migration            DONE / PR #65
  -> RR1a managed cron ownership                     DONE / PR #68
  -> RR1b module/runtime truth                         DONE / PR #71
- -> RR1b host readiness                                CURRENT CONTRACT
- -> RR1c versioned installation/update
- -> RR1d bounded uninstall/resource migration
+ -> RR1b host readiness                          DONE / PR #75
+ -> A Hermes 0.22.5 compatibility                SELECTED FIRST
+ -> B delivery/evidence correctness              QUEUED
+ -> production reconciliation / authorized rollout
+ -> C RR1c + RR1d versioned lifecycle            QUEUED
  -> RR2 runtime i18n (English + Russian)
  -> RR3 clean-install/upgrade/uninstall acceptance
  -> v0.1.0-rc.1
@@ -200,17 +202,20 @@ The maintainer-selected sequence is:
    collector with honest failure semantics, shared bot handler payload owned
    independently of TG_BOT with an interpreter import check, and a
    module-neutral installer post-deploy gate. It is not deployed yet.
-3. **RR1b host readiness — implemented, awaiting review.** The follow-up slice
-   covers private deploy-time config, Hermes/user-manager preflight, dashboard
-   target applicability, explicit network-guard selection and bounded Argus log
-   rotation
-   ([contract](handoffs/rr1b-host-readiness-contract.md)); implementation branch
-   `feat/rr1b-host-readiness` from baseline `7245cf9`. Not deployed. Hermes L3
-   job/model/destination setup remains the separate DEBT-009 track.
-4. **RR1c — versioned installation/update — planned.** Explicit stable/edge
-   selection and a bounded update path.
-5. **RR1d — uninstall/resource migration — planned.** Remove only Argus-owned
-   resources, preserve external services and finish any supported naming handoff.
+3. **RR1b host readiness — DONE / PR #75**, merged October 6. Private
+   config, user-manager/Hermes preflight, explicit network guard and bounded
+   Argus log rotation are source-complete. Production convergence remains
+   unverified; the October 25 audit found the older PR #65 checkout plus
+   customized runtime artifacts.
+4. **A/B restart compatibility and reliability.** The maintainer selected
+   [the programme through RR1](handoffs/2026-10-25-restart-through-rr1.md):
+   A adapts Hermes launching and fallback aliases for v0.22.5; B fixes existing
+   heartbeat secret channels, proxy propagation and stale Analyzer evidence.
+5. **Production checkpoint**, separately authorized. Resolve custom runtime
+   differences and verify the accumulated source changes before claiming rollout.
+6. **C — RR1c/RR1d combined**, versioned install/update and bounded uninstall.
+   One lifecycle PR follows A+B and the checkpoint (or explicit maintainer
+   rollout deferral). This is the selected programme's stopping point.
 
 Netdata, operator proxy infrastructure, Telegram/Discord accounts, external
 heartbeat policy and the Hermes L3 job have independent setup owners. The
@@ -218,29 +223,27 @@ current public baseline must not silently require the maintainer's complete
 host stack. These later choices need focused contracts; RR1a installs none of
 that infrastructure.
 
-RR1a is merged but **not deployed**, per the maintainer. Its production rollout
-is independent of selecting the next builder task.
+RR1a is merged. Its production convergence remains unverified: the October 25
+audit found a marked cron block but the old PR #65 source checkout. The marked
+block alone does not prove the RR1a reconciler was deployed.
 
 Accepted clarification: **Netdata remains an optional external enhancement**
 for Analyzer trends, not the source of native watchdog resource metrics.
-[Monitoring-source map](monitoring-sources.md). The remaining mandatory
-quick-check/UI assumptions are [DEBT-007](BACKLOG.md#debt-007).
+[Monitoring-source map](monitoring-sources.md). PR #71 resolved the known
+quick-check/UI optionality assumptions in source; [DEBT-007](BACKLOG.md#debt-007)
+still requires deployment read-back.
 
-### Revision under discussion — RR1b selected; heartbeat remains separate
+### Restart scope selected on 2026-10-25
 
-The maintainer selected native Cronping Telegram delivery through the provider bot and
-public heartbeat setup documentation. RR1b is now split into bounded slices:
-module/runtime truth is merged as PR #71, and host readiness is the current
-selected contract. Hermes L3 setup remains separate under DEBT-009.
-Heartbeat setup/delivery and backend selection are a separate track. There is
-no Argus webhook or external-VPS prerequisite.
+The [programme](handoffs/2026-10-25-restart-through-rr1.md) owns the next
+three implementation contracts and their sequencing. The old RR1b task pointer
+is closed. Public setup, L3 recipe, RR2 and RR3 remain later; no public release
+or production operation is authorized by this documentation decision.
 
-The [heartbeat/RR1 discussion report](research/2026-10-03-heartbeat-delivery-roadmap.md)
-records accepted preferences, source evidence, the proposed sequence and open
-decisions. Native Cronping Telegram is selected; public setup and delivery
-verification remain pending. RR1c/RR1d remain versioned lifecycle and limited uninstall;
-RR2/RR3 remain localization and release acceptance. This section is a proposal,
-not admission for a new notification subsystem or a combined installer refactor.
+Native Cronping Telegram through the provider bot remains selected, without
+an Argus receiver or external-VPS prerequisite. Setup/delivery verification
+and backend policy remain separate from the existing-sender fixes in B.
+See [heartbeat decisions](research/2026-10-03-heartbeat-delivery-roadmap.md).
 
 ## RR2 — runtime localization
 
@@ -268,43 +271,20 @@ Before `v0.1.0-rc.1`:
 
 ## Hermes upstream policy
 
-Argus targets supported Hermes stable behavior first and treats upstream
-`main` as a warning/research source.
+Supported stable behavior wins; upstream main is warning/research only.
+The accepted historical authority is `v2026.9.24 / v0.21.5` at
+`f97608f178d1ffeca59860195ab7da295f7c8e5f`.
 
-2026-10-01 authority:
+The October 25 watch found published and installed Hermes `v0.22.5` at
+`bf0203a794a07aac3ff764972ab9087baa4e4f4e`. Contract A verifies this target
+before a support promotion. Managed environment paths and fallback alias
+deduplication need adaptation; current MCP markers, disabled-server semantics
+and fallback log identities still match. OA2 remains upstream-gated.
 
-```text
-stable = v2026.9.24 / v0.21.5
-stable tag commit = f97608f178d1ffeca59860195ab7da295f7c8e5f
-previous warning-source main = 35b14ad5e24137b836d5c47c21a50c6ea7aeb785
-main is ~4908 commits ahead of the stable tag at this watch
-```
-
-Stable findings relevant to Argus:
-
-- canonical top-level fallback-chain semantics are supported stable and
-  unchanged since the R2c.1 baseline;
-- `hermes mcp test` returns 0 on connect, 1 on connection failure and 3 when
-  the server is absent, while retaining the output markers Argus parses;
-- the runtime restore marker consumed by Argus remains
-  `Primary runtime restored for new turn: ...`.
-
-`scoped_fallback_chain()` for pinned/unpinned route owners is now **stable**
-(introduced by `e7bff4b6d831`, #120312). It is still not R2c.1 authority, but
-R2c.2 is now bounded stable compatibility work rather than unstable-main
-mirroring. It remains post-RC.
-
-OA2 remains closed in both stable and upstream main:
-
-- Qwen status still refresh-validates;
-- OAuth status cards still include `token_preview`;
-- the read-only `/api/providers/oauth` listing still lacks the required
-  machine-authenticated no-secret monitoring seam.
-
-Full watch:
-[2026-10-01 Hermes upstream watch](research/2026-10-01-hermes-upstream-watch.md).
-Argus' dependency-on-Hermes list:
-[hermes-argus-seams](research/hermes-argus-seams.md).
+[Current watch](research/2026-10-25-hermes-upstream-watch.md),
+[seam inventory](research/hermes-argus-seams.md), and
+[previous authority receipt](research/2026-10-01-hermes-upstream-watch.md).
+R2c.2 remains post-RC and multi-profile support is not admitted by A.
 
 ## Release threshold
 
@@ -317,7 +297,8 @@ RR0a/RR0b: closed (PR #51 / PR #63)
 RR0c: closed (PR #65); maintainer reports deployment
 RR1: current distribution gate; RR1a closed (PR #68)
 RR1b module/runtime truth: merged PR #71; deployment pending
-RR1b host readiness: implemented (baseline 7245cf9); review pending; not deployed
+RR1b host readiness: merged PR #75; production convergence unverified
+selected programme: A -> B -> Ops checkpoint -> C (RR1c/d), then stop
 distribution contract: incomplete
 public RC: gated by RR1/RR2/RR3
 ```

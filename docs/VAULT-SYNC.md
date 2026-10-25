@@ -19,6 +19,9 @@ MCP response alone. Repository backlog `docs/BACKLOG.md` and vault index
 
 ## Recovery — 2026-10-04
 
+The October 4 and October 6 sections below are historical receipts. The current
+restart state and synchronization receipt are recorded after them.
+
 The maintainer repaired vault synchronization. Inspection found that the prior
 audit had incorrectly treated a temporary `vault-stage` directory as the local
 Obsidian vault. That directory is not an authoritative mirror, and its missing
@@ -48,7 +51,7 @@ SHA-256 values match for the four updated Argus notes. The receipt records PR
 #71 as merged/not deployed, PR #73 as the selected host-readiness contract and
 DEBT-021 in the readable vault backlog.
 
-## 2026-10-04 — RR1b host-readiness implementation status (pending sync)
+## Historical 2026-10-04 — RR1b implementation status before merge
 
 Repository state moved on from the receipt above without a vault publication
 yet. The host-readiness contract is implemented on branch
@@ -58,7 +61,33 @@ merge nor deployment has happened. This note is the repository-side receipt
 that the vault backlog and project card still show the older
 "contract selected, builder ready" state.
 
-## Future status updates
+## 2026-10-25 — restart programme through RR1
+
+GitHub PR #75 merged on October 6 at `f433c53`; the old selected/review-pending
+pointers were stale. This docs candidate reconciles source status and selects
+A (Hermes compatibility), B (delivery/evidence), the authorized Ops checkpoint,
+then C (RR1c/d). No runtime work or production deployment is claimed.
+
+Before editing, the real local vault `D:/agenda` and MCP server versions of
+the project card, canonical release roadmap and backlog index had matching
+normalized bodies. The local vault was even with `origin/master`; unrelated
+working changes for another project are excluded from this synchronization.
+The three selected Argus notes were published as vault commit
+`adf9228c54925ff2ae0d083f4580e16907534271`, with a link to
+[contract PR #76](https://github.com/upmeister/hermes-argus/pull/76).
+GitHub's commit API confirms exactly those three paths. The clean server vault
+was fast-forwarded to that exact commit after checking that no other paths
+would change. Local and server Git heads matched; MCP read-back confirmed
+matching normalized bodies and `updated: 2026-10-25` for the project card,
+canonical release roadmap and backlog index. Unrelated local work stayed
+uncommitted and was neither included nor overwritten.
+
+This verifies the selected notes, not the entire vault. The notes explicitly
+say PR #76 is open, A starts after its merge, and production convergence is
+unverified. The repository docs candidate records the same state; no deployment
+or independent architecture-review PASS is implied by this sync receipt.
+
+## Future status-update procedure
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.
 2. Preserve newer local/server edits and recover regressed content from history.

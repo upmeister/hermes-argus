@@ -1,8 +1,9 @@
 # Monitoring sources and alert delivery
 
-This describes the shipped source at `ed3661f` after RR1a / PR #68. The
-maintainer has not deployed RR1a yet. Source behavior, installation state and
-successful alert delivery are separate facts.
+This describes source through PR #75. The October 25 production audit found
+an older checkout and customized artifacts; source closure and deployed behavior
+remain separate. The [restart programme](handoffs/2026-10-25-restart-through-rr1.md)
+selects subsequent compatibility/delivery/evidence work.
 
 ## The `WATCHDOG ALERT` message
 
@@ -21,10 +22,11 @@ poller is not required for this outbound send.
 | Health-check fresh | `last_check` in Analyzer's `health-state.json`, when ANALYZER is enabled | State timestamp freshness; not proof that the Hermes L3 agent ran or delivered its analysis |
 | Integrations OK | Exit/output of `health-check-integrations.sh --quick` | That quick compatibility check's result; not the complete v2 integration inventory |
 
-No RAM, swap or disk value in this message comes from Netdata. The quick
-checker does currently probe Netdata API availability, so a Netdata failure
-can reach the watchdog as an integration problem. This remaining optionality
-gap is tracked as [DEBT-007](BACKLOG.md#debt-007).
+No RAM, swap or disk value in this message comes from Netdata. PR #71 made
+the quick/UI checks expectation-aware: an unconfigured optional service is
+neutral, while a configured broken service remains visible.
+[DEBT-007](BACKLOG.md#debt-007) is resolved in source; deployment convergence
+remains unverified.
 
 ## Where Netdata is used
 
@@ -44,8 +46,8 @@ Current uses:
   separate script dependency ([DEBT-008](BACKLOG.md#debt-008)).
 - The legacy quick checker and [`webhook.py`](../scripts/webhook.py) probe
   Netdata `/api/v1/info`. These test availability rather than consume its RAM
-  or CPU data. Their present absence-as-failure behavior is not the accepted
-  optional-extension policy and needs a bounded runtime correction.
+  or CPU data. PR #71 applies the accepted expectation-aware optional-service policy;
+  absence alone is no longer a failure in current source.
 - [`watchdog-health.sh`](../scripts/watchdog-health.sh) checks an installed
   Netdata system service's activity, skipping an absent service.
 

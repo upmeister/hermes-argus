@@ -1,13 +1,12 @@
 # RR1b contract — installer preflight, private config and host applicability
 
-Status: **IMPLEMENTED / FIFTH PASS PUSHED — AWAITING RE-REVIEW**. Both promptql
-reviews (external, maintainer-selected) returned BLOCKED-FOR-MAINTAINER. The
-fourth pass (`f6cddb1`+`b0fe08a`) fixed the first review's four blockers and
-recorded DEBT-022/023; the second review found four residuals, and the
-maintainer authorized the fifth pass (`49e5288`): H5 probe-path collision
-refusal, H1 dangling-symlink refusal on the default path, H3 system-python3
-capability run, and H4 as a docs-only honesty fix (maintainer decision).
-Awaiting re-review.
+Status: **COMPLETE IN SOURCE / MERGED PR #75 on 2026-10-06**.
+Merge commit `f433c531bff935d869e2dd75beaf2a5bfdd200d8`; reviewed implementation
+head `0c5ab39` (fifth pass). The vault records the maintainer-selected external
+promptql PASS-TO-MAINTAINER receipt; GitHub establishes the subsequent merge.
+Earlier remediation details remain historical. Production convergence is
+unverified; this contract is no longer the selected task. The
+[restart programme](2026-10-25-restart-through-rr1.md) owns current work.
 
 This is the second focused RR1b slice. The preceding module/runtime truth
 slice is merged as PR #71 and remains not deployed. This contract covers the
@@ -22,7 +21,8 @@ Actual baseline used: `7245cf98076e7b643c835ad1fd0205198a0d586b` (`main` with
 PR #71 merged plus the two documentation commits that followed it), branch
 `feat/rr1b-host-readiness`. Not deployed.
 
-Focused reviewer: **Codex**.
+Original focused reviewer assignment: **Codex**. Final recorded review was
+**promptql**, selected by the maintainer while Codex was unavailable.
 
 Production risk: **high** — this changes bootstrap failure conditions,
 secret-bearing configuration handling, scheduled network remediation

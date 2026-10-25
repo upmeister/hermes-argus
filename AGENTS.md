@@ -259,46 +259,39 @@ branch-protection changes require explicit maintainer authorization.
 
 ## Current release direction
 
-Public release path:
+RR1a (PR #68), RR1b module/runtime truth (PR #71) and RR1b host readiness
+(PR #75, merged 2026-10-06) are complete in source. Main at the restart audit
+is `f433c531bff935d869e2dd75beaf2a5bfdd200d8`. Production inspection on
+2026-10-25 found the older PR #65 checkout and mixed installed artifacts;
+RR1 convergence is not verified. Never equate merged source with deployment.
+
+The maintainer selected the restart programme through RR1c/RR1d on 2026-10-25:
 
 ```text
-R1c DONE
- -> R2a/R2a.1 DONE
- -> R2c.1 DONE / PR #49
- -> RR0a DONE / PR #51
- -> RR0b DONE / PR #63
- -> RR0c DONE / PR #65
- -> RR1a managed cron ownership                 DONE / PR #68
- -> RR1b module/runtime truth                         DONE / PR #71
- -> RR1b host readiness                        IMPLEMENTED / PR #75 (review pending)
- -> RR1c versioned installation/update
- -> RR1d bounded uninstall/resource migration
- -> RR2 runtime i18n (en + ru)
- -> RR3 release acceptance
- -> v0.1.0-rc.1
+A Hermes 0.22.5 launch + fallback inventory compatibility
+ -> B existing delivery + Analyzer evidence correctness
+ -> production reconciliation / separately authorized rollout
+ -> C RR1c + RR1d versioned installation/update + bounded uninstall
+ -> STOP this programme
+ -> later RR2 runtime i18n / public setup / RR3 acceptance / v0.1.0-rc.1
 ```
 
-Public docs remain English-only. Runtime English/Russian localization is a
-release-readiness task, not permission to duplicate documentation.
+When implementing or reviewing this programme, read
+`docs/handoffs/2026-10-25-restart-through-rr1.md`, then exactly its current
+A/B/C contract. A is first after the docs PR merges; B follows A; C requires
+the Ops checkpoint or an explicit maintainer rollout deferral. Three outcome
+PRs are intended; do not split every finding into its own PR or combine the
+whole queue. Codex is the focused reviewer. Runtime merges and every
+production action remain maintainer-controlled.
 
-RR1 planning must read
-`docs/research/2026-10-03-production-deployment-dependencies.md`. Production
-contains external Netdata, egress, log rotation and Hermes L3 setup that Argus
-does not currently provision. RR1a is merged; RR1b B1–B4 are merged as PR #71 and remain not deployed.
-The host-readiness contract below is implemented on `feat/rr1b-host-readiness`
-from baseline `7245cf9` (PR #75) and awaits reviewer verdict and maintainer
-merge; it does not authorize deployment.
-
-The selected contract is docs/handoffs/rr1b-host-readiness-contract.md.
-Documentation-surface sync status is recorded in docs/VAULT-SYNC.md.
-
-Netdata is an optional external enhancement; watchdog OS metrics do not depend
-on its trends. Remaining mandatory quick-check/UI assumptions are backlog
-work, not an implicit permission to install Netdata. Before selecting further
-RR1/heartbeat contracts, read
-`docs/research/2026-10-03-heartbeat-delivery-roadmap.md`. Native Cronping Telegram
-delivery is selected; no Argus webhook/external VPS is required. Later setup/API
-assistance needs a separate contract. RR1a is not deployed yet.
+RR1 planning still uses
+`docs/research/2026-10-03-production-deployment-dependencies.md` and the current
+`docs/research/2026-10-25-project-reconnaissance.md`. Preserve the existing
+network-guard decision explicitly during any future rollout. Netdata remains
+optional; native Cronping Telegram is selected without an Argus webhook or
+external VPS. Its public setup and Hermes L3 recipe remain later work.
+Public docs remain English-only; RR2 preserves Russian runtime installations.
+Documentation-surface synchronization is recorded in `docs/VAULT-SYNC.md`.
 
 ## References
 
@@ -317,7 +310,7 @@ assistance needs a separate contract. RR1a is not deployed yet.
   `projects/hermes-argus/plans/2026-09-20-public-release-roadmap.md`.
 
 
-## Current upstream authority — 2026-10-01
+## Accepted upstream authority and current compatibility target
 
 ```text
 Hermes stable = v2026.9.24 / v0.21.5
@@ -327,6 +320,13 @@ previous warning-source main = 35b14ad5e24137b836d5c47c21a50c6ea7aeb785
 
 Stable authority wins. Upstream `main` is a warning/research source only.
 
-Upstream watches: `docs/research/2026-10-01-hermes-upstream-watch.md` (current).
+The block above remains the accepted historical support baseline. Latest observed
+stable and production version = `v0.22.5`, commit
+`bf0203a794a07aac3ff764972ab9087baa4e4f4e`; it is contract A's verification
+target, not yet a passed Argus compatibility claim. Promote it only with A's
+passing Linux evidence and synchronized status documents.
+
+Current research: `docs/research/2026-10-25-hermes-upstream-watch.md`;
+the 2026-10-01 watch is the previous accepted-authority receipt.
 Argus' dependency-on-Hermes list: `docs/research/hermes-argus-seams.md` — an
 upstream watch re-verifies that list rather than reading the whole changelog.

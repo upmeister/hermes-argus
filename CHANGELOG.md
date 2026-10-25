@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planning
+
+- Reconciled RR1b host readiness with merged PR #75 and recorded the October 25
+  production/upstream reconnaissance. Selected three implementation contracts:
+  Hermes 0.22.5 compatibility, existing delivery/evidence fixes, and combined
+  RR1c/RR1d versioned install/update/uninstall, with a separately authorized
+  production checkpoint. These are planned changes, not shipped runtime fixes
+  or an upstream support promotion; RR2/RR3 remain outside this programme.
+
 ### Added
 
 - The bootstrap now refuses to complete on a host it cannot honestly support
