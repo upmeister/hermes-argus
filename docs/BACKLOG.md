@@ -56,8 +56,8 @@ maintainer read an incomplete project state.
 | [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Resolved in RR1b source | Deploy and read back the installer config gate. |
 | [DEBT-022](#debt-022) | network-guard logs ROLLBACK regardless of sudo result | Open | Maintainer selects per-action failure reporting for the guard. |
 | [DEBT-023](#debt-023) | LOGROTATE_SCHED_DIR override surface unconfirmed | Needs decision | Maintainer confirms the public path override or restricts it to tests. |
-| [DEBT-024](#debt-024) | Hermes PM removes the legacy runtime path Argus assumes | Resolved in source (A, review pending) | Codex review, maintainer merge; rollout read-back stays at the Ops checkpoint. |
-| [DEBT-025](#debt-025) | Fallback inventory does not canonicalize provider aliases | Resolved in source (A, review pending) | Codex review, maintainer merge; deployment verification pending. |
+| [DEBT-024](#debt-024) | Hermes PM removes the legacy runtime path Argus assumes | Resolved in source, merged (A / PR #77) | Rollout read-back stays at the Ops checkpoint. |
+| [DEBT-025](#debt-025) | Fallback inventory does not canonicalize provider aliases | Resolved in source, merged (A / PR #77) | Deployment verification pending. |
 | [DEBT-026](#debt-026) | Production checkout/payload/schedule have mixed provenance | Ops checkpoint | Reconcile runtime differences before an authorized rollout. |
 | [DEBT-027](#debt-027) | Current cached integration failures have no diagnosis | Ops diagnosis | Establish sanitized causes; return out-of-scope remediation to maintainer. |
 | [DEBT-028](#debt-028) | pgrep failure in the gateway helper reads as "no gateway" | Open (pre-existing, found in A review) | Maintainer selects liveness fix: observation error must be rc 2, not rc 1. |
@@ -588,8 +588,8 @@ maintainer read an incomplete project state.
 
 - **Impact:** A valid managed Hermes installation can fail Argus preflight or
   lose its probe/helper launch path when the legacy venv is retired.
-- **Status:** RESOLVED in source by contract A (one implementation PR, Codex
-  review pending); deployment verification remains at the Ops checkpoint.
+- **Status:** RESOLVED in source by contract A (PR #77, merged 2026-10-26,
+  Codex GO/PASS); deployment verification remains at the Ops checkpoint.
 - **Source:** [upstream watch](research/2026-10-25-hermes-upstream-watch.md#installation-and-gateway-seams-missing-from-the-old-watch-list),
   Hermes `pm/environments.py` and Argus deploy/probe/helper/service consumers.
 - **Resolution:** one installation-bound adapter `scripts/hermes-runtime.py`
@@ -626,8 +626,8 @@ maintainer read an incomplete project state.
 
 - **Impact:** `opencode-zen` and `opencode` for the same model/endpoint become
   two Argus entries where Hermes retains one; later inventory identities shift.
-- **Status:** RESOLVED in source by contract A (one implementation PR, Codex
-  review pending); deployment verification pending.
+- **Status:** RESOLVED in source by contract A (PR #77, merged 2026-10-26,
+  Codex GO/PASS); deployment verification pending.
 - **Source:** [S1 watch](research/2026-10-25-hermes-upstream-watch.md#s1--top-level-fallback-inventory-a-real-bounded-mismatch).
 - **Resolution:** discovery reads the literal `_ALIAS_GROUPS` from the
   installed `hermes_cli/providers.py` (stdlib AST + literal_eval, Dict of

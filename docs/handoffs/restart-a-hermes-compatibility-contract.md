@@ -1,14 +1,18 @@
 # A — Hermes 0.22.5 launch and inventory compatibility
 
-Status: **implemented on one task branch, Codex review pending**. Base:
+Status: **DONE / PR #77, merged 2026-10-26** (merge commit `4adcd8f`, exact
+reviewed head `64eca82b905476d8739efa566fa77a3dda376a23`). Base:
 `11c7bcde7be569175fc969997d8a14afeb16f0d0` (main after the
 [programme docs PR](2026-10-25-restart-through-rr1.md) merged). One
-implementation PR covers both compatibility defects; this is not a general
-Hermes compatibility layer. v0.22.5 is not yet a supported-baseline claim:
-promotion travels with the merged PR after PASS.
+implementation PR covered both compatibility defects; this is not a general
+Hermes compatibility layer. With the maintainer merge, `v0.22.5 / bf0203a`
+is the accepted stable authority (see `AGENTS.md`); production convergence
+remains unverified and belongs to the separately authorized Ops checkpoint.
 Production risk: **medium** (launch paths and discovery identity).
-Merge authority: **maintainer after Codex PASS**. Reviewer: **Codex**.
-No deployment is authorized.
+Merge authority: **maintainer after Codex PASS** (used: one implementation
+pass, one REMEDIATE remediation, one maintainer-authorized targeted fix for
+the dashboard-unit root pin, final GO/PASS-TO-MAINTAINER). Reviewer:
+**Codex**. No deployment is authorized.
 
 ## Problem -> evidence -> smallest patch
 

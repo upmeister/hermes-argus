@@ -107,6 +107,30 @@ with a clean tree (run `run_04eac362fc624fa98ed156871f403aed`, lane
 selected notes, not the entire vault. The notes say review is pending and
 production convergence remains unverified; no deployment or merge is implied.
 
+## 2026-10-26 — contract A merged (PR #77), authority promoted to v0.22.5
+
+PR #77 merged by maintainer authorization on 2026-10-26 (merge commit
+`4adcd8f27532ece9c0bb49f8b897f41d4148b99b`, exact reviewed head `64eca82b`,
+Codex final verdict GO/PASS-TO-MAINTAINER; one REMEDIATE remediation round
+plus one maintainer-authorized targeted fix for the dashboard-unit
+HERMES_HOME pin). Repository status surfaces were updated in the same change:
+AGENTS.md authority block now names `v0.22.5 / bf0203a` as the accepted
+stable authority, handoffs mark A DONE and B current, ROADMAP and both
+backlog dispositions moved to "resolved in source, merged".
+
+Vault publication: local vault commit
+`0a864dc9c6d9b36e28bcc304ed31ba8cb537cb93` ("hermes-argus: контракт A
+смержен (PR #77)") changes exactly the three Argus notes (project card,
+`plans/2026-09-20-public-release-roadmap.md`, `docs/BACKLOG.md`) and is
+pushed to the GitHub vault remote. The server vault was fast-forwarded
+`274d0b8..0a864dc` (run `run_1ed16ad0aa4c4b2dbe8b2f1784435853`, lane
+`vault-sync`); HEAD and `origin/master` both report `0a864dc` with a clean
+tree. All three vault copies point at `0a864dc`. This verifies the selected
+notes, not the entire vault. The notes keep production convergence
+unverified: merged source is not a deployment, and the Ops checkpoint stays
+separately authorized. An unrelated nail-bot note modified in the local
+vault was left uncommitted, out of this synchronization.
+
 ## Future status-update procedure
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.

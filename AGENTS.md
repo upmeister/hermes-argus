@@ -259,11 +259,13 @@ branch-protection changes require explicit maintainer authorization.
 
 ## Current release direction
 
-RR1a (PR #68), RR1b module/runtime truth (PR #71) and RR1b host readiness
-(PR #75, merged 2026-10-06) are complete in source. Main at the restart audit
-is `f433c531bff935d869e2dd75beaf2a5bfdd200d8`. Production inspection on
-2026-10-25 found the older PR #65 checkout and mixed installed artifacts;
-RR1 convergence is not verified. Never equate merged source with deployment.
+RR1a (PR #68), RR1b module/runtime truth (PR #71), RR1b host readiness
+(PR #75, merged 2026-10-06) and restart contract A (PR #77, merged
+2026-10-26 at exact head `64eca82b`, Codex GO/PASS) are complete in source.
+Main at the restart audit is `f433c531bff935d869e2dd75beaf2a5bfdd200d8`.
+Production inspection on 2026-10-25 found the older PR #65 checkout and mixed
+installed artifacts; RR1 convergence is not verified. Never equate merged
+source with deployment.
 
 The maintainer selected the restart programme through RR1c/RR1d on 2026-10-25:
 
@@ -278,11 +280,11 @@ A Hermes 0.22.5 launch + fallback inventory compatibility
 
 When implementing or reviewing this programme, read
 `docs/handoffs/2026-10-25-restart-through-rr1.md`, then exactly its current
-A/B/C contract. A is first after the docs PR merges; B follows A; C requires
-the Ops checkpoint or an explicit maintainer rollout deferral. Three outcome
-PRs are intended; do not split every finding into its own PR or combine the
-whole queue. Codex is the focused reviewer. Runtime merges and every
-production action remain maintainer-controlled.
+A/B/C contract. A is merged (PR #77); **B is the current contract**; C
+requires the Ops checkpoint or an explicit maintainer rollout deferral. Three
+outcome PRs are intended; do not split every finding into its own PR or
+combine the whole queue. Codex is the focused reviewer. Runtime merges and
+every production action remain maintainer-controlled.
 
 RR1 planning still uses
 `docs/research/2026-10-03-production-deployment-dependencies.md` and the current
@@ -318,14 +320,13 @@ stable tag commit = bf0203a794a07aac3ff764972ab9087baa4e4f4e
 previous accepted authority = v2026.9.24 / v0.21.5, f97608f178d1ffeca59860195ab7da295f7c8e5f
 ```
 
-The promotion of `v0.22.5 / bf0203a` to accepted stable authority is part of
-contract A (PR #77) and takes effect on that PR's maintainer merge: the Linux
-evidence attached to that PR — the fixture suite re-run on a clean ext4
-Ubuntu 24.04 by review, plus the isolated rehearsal on an intentionally
-installed real v0.22.5 checkout/launcher — is the promotion receipt. Before
-the merge, the accepted authority remains
-`v2026.9.24 / v0.21.5 / f97608f…`. Merged source is still not deployment:
-production convergence stays with the separately authorized Ops checkpoint.
+`v0.22.5 / bf0203a` is the accepted stable authority as of the contract A
+maintainer merge (PR #77, 2026-10-26, merge commit `4adcd8f`). The promotion
+receipt is the Linux evidence attached to that PR — the fixture suite re-run
+on a clean ext4 Ubuntu 24.04 by review, plus the isolated rehearsal on an
+intentionally installed real v0.22.5 checkout/launcher. Merged source is
+still not deployment: production convergence stays with the separately
+authorized Ops checkpoint.
 
 Stable authority wins. Upstream `main` is a warning/research source only.
 

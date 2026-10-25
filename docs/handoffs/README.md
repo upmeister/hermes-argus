@@ -9,8 +9,8 @@ This replaces the old RR1b active pointer. PR #75 is already merged.
 
 | Order | Contract | State |
 | --- | --- | --- |
-| A | [Hermes 0.22.5 compatibility](restart-a-hermes-compatibility-contract.md) | Implemented (base `11c7bcde`, one implementation PR); Codex review pending |
-| B | [Delivery/evidence correctness](restart-b-delivery-evidence-contract.md) | Queued after A merge |
+| A | [Hermes 0.22.5 compatibility](restart-a-hermes-compatibility-contract.md) | **DONE / PR #77**, merged 2026-10-26 (exact head `64eca82b`, Codex GO/PASS); production convergence unverified |
+| B | [Delivery/evidence correctness](restart-b-delivery-evidence-contract.md) | **Current contract** |
 | Ops | [Production checkpoint](2026-10-25-restart-through-rr1.md#operations-checkpoint) | Separate exact-SHA authorization; not implied by this plan |
 | C | [RR1c/d versioned lifecycle](restart-c-versioned-lifecycle-contract.md) | After A+B and Ops receipt or explicit rollout deferral |
 
