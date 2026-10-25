@@ -324,7 +324,10 @@ The block above remains the accepted historical support baseline. Latest observe
 stable and production version = `v0.22.5`, commit
 `bf0203a794a07aac3ff764972ab9087baa4e4f4e`; it is contract A's verification
 target, not yet a passed Argus compatibility claim. Promote it only with A's
-passing Linux evidence and synchronized status documents.
+passing Linux evidence and synchronized status documents. Contract A is
+implemented (one PR, review pending): on PASS and maintainer merge, this block
+is updated in the same merge to promote `v0.22.5 / bf0203a` to the accepted
+stable authority; until then the block above stays the accepted baseline.
 
 Current research: `docs/research/2026-10-25-hermes-upstream-watch.md`;
 the 2026-10-01 watch is the previous accepted-authority receipt.

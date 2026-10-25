@@ -39,6 +39,7 @@ reason_text = {
     "config_yaml_syntax": "config.yaml: синтаксическая ошибка",
     "config_yaml_shape": "config.yaml: верхний уровень — не словарь",
     "config_unreadable": "config.yaml: файл не читается",
+    "provider_alias_source": "источник алиасов провайдеров не читается (hermes_cli/providers.py)",
 }
 for e in r["events"][:10]:
     ent = e.get("entity") or {}

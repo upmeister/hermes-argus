@@ -26,16 +26,74 @@ substrings» (hermes_cli/AGENTS.md; баг-класс ~10 fleet-update issues).
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # HERMES_HOME может быть не экспортирован в cron — берём из профиля по умолчанию.
 AGENT_DIR = Path.home() / ".hermes" / "hermes-agent"
-# В cron `python3` — это /usr/bin/python3, где пакет hermes НЕ установлен.
-# Матчер живёт в venv Hermes, поэтому интерпретатор выбирается явно, иначе
-# помощник откажет (код 2) ровно там, где нужна проверка.
-VENV_PYTHON = AGENT_DIR / "venv" / "bin" / "python"
+# Контракт A (2026-10-25): интерпретатор Hermes больше не фиксирован как
+# venv/bin/python — PM-установка v0.22.5 удаляет in-checkout venv после коммита
+# поколения зависимостей. Выбор рантайма делает адаптер hermes-runtime.py
+# (опубликованный лаунчер или легаси-venv), резолв — на каждый запуск.
+RUNTIME_ADAPTER = Path(__file__).resolve().parent / "hermes-runtime.py"
 _REEXEC_FLAG = "HERMES_GATEWAY_PIDS_REEXEC"
+# Файл, куда потомок пишет свой ИТОГОВЫЙ код работы. Отличает «помощник
+# отработал и честно ответил (в т.ч. 1 = не найден)» от «запуск под рантаймом
+# не удался» (креш python без нашего кода тоже выходит с кодом 1): нет файла —
+# окружение, честный код 2, не ложное «не найден».
+_RESULT_ENV = "HERMES_GATEWAY_PIDS_RESULT"
+
+
+def _mark_result(rc: int) -> None:
+    """Потомок фиксирует выполненную работу (вызывается только с env-меткой)."""
+    path = os.environ.get(_RESULT_ENV)
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="ascii") as f:
+            f.write(str(rc))
+    except OSError:
+        pass
+
+
+def _reexec_under_runtime():
+    """Запуск себя под рантаймом Hermes, если матчер здесь не импортируется.
+
+    Cron отдаёт `/usr/bin/python3`, где `gateway` может не импортироваться:
+    без re-exec помощник отвечал бы «матчер недоступен» именно там, где
+    watchdog обязан проверять живость. Один подпроцесс через адаптер, без
+    цикла: адаптер резолвит текущую установку (лаунчер или легаси-venv) и
+    exec'ает этот же скрипт под выбранным интерпретатором; stdout/stderr
+    проходят наружу как свои. Возвращает False, если работать будем сами.
+    Код результата (когда работу выполнил потомок) выходит через sys.exit:
+    0/1 — только при подтверждённом файлом итоге; любой другой исход —
+    окружение, честный код 2, не «процесс мёртв» и не ложное «не найден»."""
+    if os.environ.get(_REEXEC_FLAG):
+        return False  # уже под рантаймом — работаем сами
+    if not RUNTIME_ADAPTER.is_file():
+        return False  # модуль-only установка без адаптера: честный отказ ниже
+    fd, result_path = tempfile.mkstemp(prefix="hermes-gwp-")
+    os.close(fd)
+    env = dict(os.environ, **{_REEXEC_FLAG: "1", _RESULT_ENV: result_path})
+    try:
+        rc = subprocess.call(
+            [sys.executable, str(RUNTIME_ADAPTER), "run-script",
+             os.path.abspath(__file__), *sys.argv[1:]], env=env)
+        try:
+            with open(result_path, encoding="ascii") as f:
+                child_rc = int(f.read().strip() or "999")
+        except (OSError, ValueError):
+            child_rc = 999  # итог не подтверждён — запуск не удался
+    except OSError:
+        return False  # exec не удался — честный отказ ниже, не крах
+    finally:
+        try:
+            os.unlink(result_path)
+        except OSError:
+            pass
+    sys.exit(child_rc if child_rc in (0, 1) else 2)
 
 
 def _load_matcher():
@@ -51,23 +109,6 @@ def _load_matcher():
     return looks_like_gateway_command_line
 
 
-def _reexec_under_venv() -> None:
-    """Перезапуск под интерпретатором venv, если текущий — не тот.
-
-    Cron отдаёт `/usr/bin/python3`, где `gateway` не импортируется: без
-    re-exec помощник отвечал бы «матчер недоступен» именно там, где
-    watchdog обязан проверять живость. Один ре-исп, без цикла.
-    """
-    if os.environ.get(_REEXEC_FLAG):
-        return  # уже пробовали — дальше только честный отказ
-    if os.path.realpath(sys.executable) == os.path.realpath(str(VENV_PYTHON)):
-        return  # уже правильный интерпретатор
-    if not VENV_PYTHON.exists():
-        return
-    env = dict(os.environ, **{_REEXEC_FLAG: "1"})
-    os.execve(str(VENV_PYTHON), [str(VENV_PYTHON), os.path.abspath(__file__), *sys.argv[1:]], env)
-
-
 def live_gateway_pids(matcher) -> list[int]:
     """PID'ы процессов, чья полная cmdline — настоящий `gateway run`.
 
@@ -79,8 +120,6 @@ def live_gateway_pids(matcher) -> list[int]:
 
     Только наш HERMES_HOME: чужой gateway с другого install не считается.
     """
-    import subprocess
-
     from gateway.status import _read_process_cmdline  # каноническое чтение cmdline
 
     try:
@@ -109,23 +148,27 @@ def live_gateway_pids(matcher) -> list[int]:
 
 
 def main(argv: list[str]) -> int:
-    _reexec_under_venv()
-    matcher = _load_matcher()
-    if matcher is None:
-        # Окружение недоступно → честный отказ, а не «процесс мёртв».
-        print(
-            "gateway-pids: канонический матчер недоступен "
-            f"({AGENT_DIR} не найден или импорт не удался)",
-            file=sys.stderr,
-        )
-        return 2
-    pids = live_gateway_pids(matcher)
-    if "--count" in argv:
-        print(len(pids))
-    elif "--quiet" not in argv:
-        for pid in pids:
-            print(pid)
-    return 0 if pids else 1
+    if not _reexec_under_runtime():
+        matcher = _load_matcher()
+        if matcher is None:
+            # Окружение недоступно → честный отказ, а не «процесс мёртв».
+            print(
+                "gateway-pids: канонический матчер недоступен "
+                f"({AGENT_DIR} не найден или импорт не удался)",
+                file=sys.stderr,
+            )
+            _mark_result(2)
+            return 2
+        pids = live_gateway_pids(matcher)
+        rc = 0 if pids else 1
+        _mark_result(rc)
+        if "--count" in argv:
+            print(len(pids))
+        elif "--quiet" not in argv:
+            for pid in pids:
+                print(pid)
+        return rc
+    return 2
 
 
 if __name__ == "__main__":

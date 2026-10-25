@@ -42,7 +42,10 @@ DEFAULT_REGISTRY = HERMES_DIR / "state" / "registry.yaml"
 DEFAULT_SNAPSHOT = HERMES_DIR / "state" / "integration-snapshot.json"
 DEFAULT_ENV = HERMES_DIR / ".env"
 DEFAULT_OUT = HERMES_DIR / "state" / "health-check-v2-report.json"
-DEFAULT_HERMES_BIN = HERMES_DIR / "hermes-agent" / "venv" / "bin" / "hermes"
+# Контракт A: CLI Hermes резолвится адаптером на каждый запуск (PM-установка
+# v0.22.5 не гарантирует in-checkout venv); `--hermes-bin` остаётся явным
+# override для оператора и фикстур. Сбой адаптера → без маркеров → fail, не green.
+DEFAULT_HERMES_BIN = Path(__file__).resolve().parent / "hermes-runtime.py"
 HONCHO_GLOBAL_CONFIG = Path.home() / ".honcho" / "config.json"
 
 HTTP_RETRIES = 3
@@ -389,6 +392,10 @@ def check_mcp(hermes_bin: str, name: str) -> tuple[bool, str]:
         return True, detail
     except subprocess.TimeoutExpired:
         return False, "mcp: timeout 90s"
+    except OSError:
+        # Контракт A3: недоступный запускатель (нет адаптера/рантайма) —
+        # bounded fail с вердиктом, не крах движка и не ложный green.
+        return False, "mcp: hermes runtime unavailable"
 
 
 def parse_host_port(value: str) -> tuple[str, int] | None:

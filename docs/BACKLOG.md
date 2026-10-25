@@ -56,8 +56,8 @@ maintainer read an incomplete project state.
 | [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Resolved in RR1b source | Deploy and read back the installer config gate. |
 | [DEBT-022](#debt-022) | network-guard logs ROLLBACK regardless of sudo result | Open | Maintainer selects per-action failure reporting for the guard. |
 | [DEBT-023](#debt-023) | LOGROTATE_SCHED_DIR override surface unconfirmed | Needs decision | Maintainer confirms the public path override or restricts it to tests. |
-| [DEBT-024](#debt-024) | Hermes PM removes the legacy runtime path Argus assumes | Selected A | Adapt the installation-bound launch surface and prove clean v0.22.5 operation. |
-| [DEBT-025](#debt-025) | Fallback inventory does not canonicalize provider aliases | Selected A | Match static canonical identity without importing runtime providers. |
+| [DEBT-024](#debt-024) | Hermes PM removes the legacy runtime path Argus assumes | Resolved in source (A, review pending) | Codex review, maintainer merge; rollout read-back stays at the Ops checkpoint. |
+| [DEBT-025](#debt-025) | Fallback inventory does not canonicalize provider aliases | Resolved in source (A, review pending) | Codex review, maintainer merge; deployment verification pending. |
 | [DEBT-026](#debt-026) | Production checkout/payload/schedule have mixed provenance | Ops checkpoint | Reconcile runtime differences before an authorized rollout. |
 | [DEBT-027](#debt-027) | Current cached integration failures have no diagnosis | Ops diagnosis | Establish sanitized causes; return out-of-scope remediation to maintainer. |
 
@@ -587,13 +587,25 @@ maintainer read an incomplete project state.
 
 - **Impact:** A valid managed Hermes installation can fail Argus preflight or
   lose its probe/helper launch path when the legacy venv is retired.
-- **Status:** selected in [A](handoffs/restart-a-hermes-compatibility-contract.md), not implemented.
+- **Status:** RESOLVED in source by contract A (one implementation PR, Codex
+  review pending); deployment verification remains at the Ops checkpoint.
 - **Source:** [upstream watch](research/2026-10-25-hermes-upstream-watch.md#installation-and-gateway-seams-missing-from-the-old-watch-list),
   Hermes `pm/environments.py` and Argus deploy/probe/helper/service consumers.
-- **Next action / owner:** builder supplies one installation-bound adapter;
-  Codex reviews; maintainer merges and separately authorizes deployment.
-- **Closure evidence:** A1–A5 pass on legacy-layout fixtures and isolated real
-  v0.22.5 managed Linux installation; no captured generation path.
+- **Resolution:** one installation-bound adapter `scripts/hermes-runtime.py`
+  binds every launch consumer to `$HERMES_DIR/hermes-agent` — the published
+  launcher for CLI calls, the `--print-runtime-command` boundary for
+  interpreter resolution; Argus scripts run under it with `hermes_bootstrap`
+  activation (upstream's own venv_sync composition). Legacy in-tree venv stays
+  the no-launcher fallback; a present-but-unusable launcher is a bounded
+  failure, never a stale-venv fallback; the gateway helper keeps its 0/1/2
+  contract with a result sentinel distinguishing an honest 1 from a crashed
+  launch. Runtime resolves at each launch; templates carry no generation paths.
+- **Closure evidence:** A1–A5 probes (fixture layouts, failure modes,
+  module-only deploys, base-unit skip) and an isolated Ubuntu 24.04 rehearsal
+  on an intentionally installed real v0.22.5: the new deploy passes preflight
+  where the baseline rejects the same layout; `hermes --version` answers
+  through the real launcher; the matcher loads through the re-exec chain and
+  honestly reports no gateway; boundary argv carries no generation path.
 - **Release disposition:** resolve before advertising v0.22.5 compatibility or
   freezing RR1c/d. Existing production still has old paths; this is not proof
   of a current outage there.
@@ -604,14 +616,26 @@ maintainer read an incomplete project state.
 
 - **Impact:** `opencode-zen` and `opencode` for the same model/endpoint become
   two Argus entries where Hermes retains one; later inventory identities shift.
-- **Status:** selected in [A](handoffs/restart-a-hermes-compatibility-contract.md), not implemented.
+- **Status:** RESOLVED in source by contract A (one implementation PR, Codex
+  review pending); deployment verification pending.
 - **Source:** [S1 watch](research/2026-10-25-hermes-upstream-watch.md#s1--top-level-fallback-inventory-a-real-bounded-mismatch).
-- **Next action / owner:** builder applies bounded static alias data to identity;
-  reviewer checks order, distinct endpoints and last-good degradation behavior.
-- **Closure evidence:** A6–A7 fixtures distinguish aliases from distinct routes,
-  with no provider imports or copied roster.
+- **Resolution:** discovery reads the literal `_ALIAS_GROUPS` from the
+  installed `hermes_cli/providers.py` (stdlib AST + literal_eval, Dict of
+  str→str-sequence only; no provider import, no roster copy) and applies the
+  canonical identity to fallback dedupe only, keeping first-entry display
+  fields, model/base-URL normalization and source ordering. Missing/unreadable/
+  unrecognized alias source degrades discovery through the existing last-good
+  envelope with the stable reason `provider_alias_source`; unknown providers
+  stay lowercased.
+- **Closure evidence:** A6/A7 probes (alias pair, distinct endpoints, legacy
+  `fallback_model` ordering, malformed/missing source, unknown provider,
+  canary non-disclosure, legacy-caller lower() semantics) and a rehearsal run
+  against the real checkout's `providers.py`: the pair dedupes to two rows
+  with first-entry fields where the baseline kept three.
 - **Release disposition:** compatibility correction; no routing/credential
-  resolver, R2c.2 or multi-profile expansion.
+  resolver, R2c.2 or multi-profile expansion. Design choice recorded: canonical
+  identity applies whenever the alias data reads, including legacy Hermes
+  minors whose own dedupe was lowercase-only.
 
 <a id="debt-026"></a>
 

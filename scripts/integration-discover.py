@@ -13,6 +13,7 @@ last_good_at); при деградации инвентаризация last-goo
 повтор идентичной деградации — тихий (exit 0). Сырой текст ошибки парсера в
 вывод не попадает: в config.yaml могут быть секреты.
 """
+import ast
 import json, os, re, sys, hashlib
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from datetime import datetime, timezone
@@ -124,6 +125,9 @@ def load_yaml(path):
 DISC_REASON_SYNTAX = "config_yaml_syntax"
 DISC_REASON_SHAPE = "config_yaml_shape"
 DISC_REASON_UNREADABLE = "config_unreadable"
+# S1 (контракт A): источник канонических алиасов провайдеров отсутствует/
+# нечитается/не распознан — идентичность дедупликации фолбека невоспроизводима.
+DISC_REASON_ALIAS = "provider_alias_source"
 
 
 def load_config():
@@ -155,6 +159,68 @@ def load_config():
     if not isinstance(data, dict):
         return {}, "degraded", DISC_REASON_SHAPE
     return data, "ok", ""
+
+
+# ── S1 (контракт A): канонические алиасы провайдеров фолбека ────────────────
+# v0.22.5 canonicalizes провайдера при дедупликации фолбека через
+# hermes_cli.providers.normalize_provider (легаси v0.21.5 — только lower()).
+# Читаем ЛИТЕРАЛЬНЫЙ `_ALIAS_GROUPS` из УСТАНОВЛЕННОГО исходника: stdlib AST +
+# literal_eval, только Dict-литерал строк→последовательностей строк. Без
+# импорта модуля, исполнения исходника и копирования ростера в Argus.
+# Нечитаемый/нераспознанный источник — деградация дискавери через last-good
+# конверт: публиковать инвентарь с другой идентичностью дедупликации означало
+# бы ложные removed/сдвиг model:fallback:N.
+
+def load_provider_alias_map():
+    """({alias: canonical}, "") или (None, DISC_REASON_ALIAS).
+
+    canonical возвращается КАК ЗАПИСАНО в данных (зеркало upstream
+    ALIASES.get(key, key)); ключи-алиасы нормализуются strip().lower()."""
+    path = HERMES_DIR / "hermes-agent" / "hermes_cli" / "providers.py"
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None, DISC_REASON_ALIAS
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return None, DISC_REASON_ALIAS
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = (node.target,)
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "_ALIAS_GROUPS"
+                   for t in targets):
+            continue
+        if not isinstance(node.value, ast.Dict):
+            return None, DISC_REASON_ALIAS
+        try:
+            groups = ast.literal_eval(node.value)
+        except (ValueError, TypeError, MemoryError, RecursionError):
+            return None, DISC_REASON_ALIAS
+        if not isinstance(groups, dict) or not all(
+                isinstance(canon, str) and canon
+                and isinstance(names, (list, tuple))
+                and all(isinstance(name, str) and name for name in names)
+                for canon, names in groups.items()):
+            return None, DISC_REASON_ALIAS
+        aliases = {}
+        for canon, names in groups.items():
+            for name in names:
+                aliases[name.strip().lower()] = canon
+        return aliases, ""
+    return None, DISC_REASON_ALIAS
+
+
+def canonical_provider(name: str, alias_map: dict | None) -> str:
+    """Зеркало hermes_cli.providers.normalize_provider: strip().lower(), затем
+    таблица алиасов. None (прямой вызов без чтения, легаси-семантика) —
+    чистый lower()."""
+    key = name.strip().lower()
+    return (alias_map or {}).get(key, key)
 
 
 def env_names(path):
@@ -245,9 +311,12 @@ def _mcp_server_enabled(server_cfg) -> bool:
     return True
 
 
-def extract_entities(cfg=None):
+def extract_entities(cfg=None, provider_aliases=None):
     # cfg=None: legacy in-process callers (probes) читают CONFIG сами;
     # main() всегда передаёт уже разобранный load_config() результат.
+    # provider_aliases=None: вызывающий не выполнял чтение алиасов —
+    # идентичность дедупликации остаётся легаси lower(). main() передаёт
+    # прочитанную таблицу; dеградация чтения в main() не доходит сюда.
     if cfg is None:
         cfg = load_yaml(CONFIG)
     env = env_names(ENV_FILE)
@@ -338,6 +407,10 @@ def extract_entities(cfg=None):
                     "key_env": section.get("key_env", "")}
 
     model_ref("model:primary", "primary", cfg.get("model") or {}, use_default_key=True)
+    # S1: идентичность дедупликации = (канонический провайдер, model, base_url)
+    # — зеркало fallback_config._entry_identity v0.22.5. Поля отображения
+    # остаются от ПЕРВОГО вхождения; порядок источников и lower() модели/
+    # base_url не меняются. Неизвестный провайдер остаётся lower().
     fallbacks, seen_fallbacks = [], set()
     for source in ("fallback_providers", "fallback_model"):
         raw = cfg.get(source)
@@ -351,7 +424,8 @@ def extract_entities(cfg=None):
                 continue
             base_url = entry.get("base_url")
             base_url = base_url.strip().rstrip("/") if isinstance(base_url, str) else ""
-            identity = (provider.lower(), model.lower(), base_url.lower())
+            identity = (canonical_provider(provider, provider_aliases),
+                        model.lower(), base_url.lower())
             if identity in seen_fallbacks:
                 continue
             seen_fallbacks.add(identity)
@@ -485,11 +559,20 @@ def main():
         prev_status = "ok"
 
     cfg, disc_status, disc_reason = load_config()
+    # S1 (контракт A): канал алиасов проверяется ДО извлечения сущностей.
+    # Деградация чтения при валидном config.yaml — та же last-good семантика,
+    # что у деградации config: замороженный инвентарь вместо инвентаря с
+    # невоспроизводимой идентичностью дедупликации.
+    provider_aliases = None
+    if disc_status == "ok":
+        provider_aliases, alias_reason = load_provider_alias_map()
+        if provider_aliases is None:
+            disc_status, disc_reason = "degraded", alias_reason
     now = datetime.now(timezone.utc).isoformat()
     events = []
 
     if disc_status == "ok":
-        entities, env = extract_entities(cfg)
+        entities, env = extract_entities(cfg, provider_aliases=provider_aliases)
         env_keys = sorted(env.keys())
         updated = now
         config_hash = hashlib.sha256(CONFIG.read_bytes()).hexdigest()[:12] \

@@ -25,6 +25,7 @@ import re
 import subprocess
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 import time as _time
 
 # Секреты больше не используются здесь (эндпоинты удалены), но оставлены как
@@ -35,7 +36,10 @@ import time as _time
 BOT_TOKEN = os.environ.get("WATCHDOG_BOT_TOKEN", "")
 CHAT_ID = os.environ.get("WATCHDOG_CHAT_ID", "@WATCHDOG_CHAT_ID@")
 ALLOWED_USER_ID = os.environ.get("WATCHDOG_ALLOWED_USER_ID", "").strip()
-HERMES_BIN = "@HERMES_BIN@"
+# Контракт A: CLI Hermes — через соседний адаптер (deploy кладёт
+# hermes-runtime.py рядом в ОБА каталога webhook.py: ~/scripts и
+# ~/.hermes/scripts). Жёсткий venv-путь PM-установка v0.22.5 не гарантирует.
+HERMES_BIN = str(Path(__file__).resolve().parent / "hermes-runtime.py")
 
 # Rate-limit для «🚫 нет доступа» ответов неавторизованным.
 _DENY_LOG: dict[str, float] = {}
