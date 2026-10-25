@@ -94,3 +94,18 @@ Outside this programme: RR2/RR3 implementation, RC/tag publication, Cronping
 account/setup automation, L3 job creation, new heartbeat backend semantics,
 OAuth health, multi-profile coverage, plugin inventory expansion, OTLP backend,
 gateway-liveness redesign, network policy changes and unrelated cleanup.
+
+## Assignment text
+
+Builder: "Implement contract A (then B/C only after their start gates), using
+this merged programme as authority. Refresh origin/main, record the base SHA,
+implement only its owning surface, supply the criterion/evidence receipt and
+open one implementation PR. Stop on the contract's scope blockers. Do not
+deploy or proceed to later stages just because tests pass."
+
+Reviewer: "Review the named implementation PR's exact head against its A/B/C
+contract and this programme. Check every acceptance row and supplied Linux
+evidence, inspect relevant callers, and distinguish source completion from
+deployment. Return PASS-TO-MAINTAINER, one bounded REMEDIATE request, or
+BLOCKED-FOR-MAINTAINER. Out-of-scope findings go to linked backlog cards;
+no automatic new workstream, merge, deploy or second review wave."

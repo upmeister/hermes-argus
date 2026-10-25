@@ -72,9 +72,20 @@ Before editing, the real local vault `D:/agenda` and MCP server versions of
 the project card, canonical release roadmap and backlog index had matching
 normalized bodies. The local vault was even with `origin/master`; unrelated
 working changes for another project are excluded from this synchronization.
-The three selected Argus notes are being updated with the same source and
-deployment distinctions. The publication/convergence receipt will be recorded
-before this docs PR is handed off.
+The three selected Argus notes were published as vault commit
+`adf9228c54925ff2ae0d083f4580e16907534271`, with a link to
+[contract PR #76](https://github.com/upmeister/hermes-argus/pull/76).
+GitHub's commit API confirms exactly those three paths. The clean server vault
+was fast-forwarded to that exact commit after checking that no other paths
+would change. Local and server Git heads matched; MCP read-back confirmed
+matching normalized bodies and `updated: 2026-10-25` for the project card,
+canonical release roadmap and backlog index. Unrelated local work stayed
+uncommitted and was neither included nor overwritten.
+
+This verifies the selected notes, not the entire vault. The notes explicitly
+say PR #76 is open, A starts after its merge, and production convergence is
+unverified. The repository docs candidate records the same state; no deployment
+or independent architecture-review PASS is implied by this sync receipt.
 
 ## Future status-update procedure
 
