@@ -18,6 +18,11 @@ trying to become a second Hermes runtime.
 > path targets a GitHub `v0.1.0-rc.1` after the remaining security,
 > fail-safe, installer and localization gates are closed.
 
+Current source includes RR1a and both RR1b slices (through PR #75). The
+[selected restart programme](docs/handoffs/2026-10-25-restart-through-rr1.md)
+now covers Hermes 0.22.5 compatibility, delivery/evidence fixes and RR1c/RR1d.
+Production convergence and compatibility promotion remain separately verified.
+
 ## Why this exists
 
 Hermes already owns the hard runtime decisions:
@@ -275,8 +280,11 @@ R1c  Authorization headers out of child argv — DONE
  -> RR0b  dead/duplicate runtime removal — DONE / PR #63
  -> RR0c  public defaults/naming migration — DONE / PR #65
  -> RR1a  managed cron ownership — DONE / PR #68
- -> RR1b  module/runtime truth DONE / PR #71; host readiness current
- -> RR1c/RR1d  versioned lifecycle and bounded uninstall
+ -> RR1b  module/runtime truth DONE / PR #71; host readiness DONE / PR #75
+ -> A  Hermes 0.22.5 launch and inventory compatibility
+ -> B  existing delivery and evidence correctness
+ -> production reconciliation / separately authorized rollout
+ -> C  RR1c/RR1d versioned lifecycle and bounded uninstall
  -> RR2  runtime i18n: English + Russian
  -> RR3  clean install / upgrade / uninstall acceptance
  -> v0.1.0-rc.1
@@ -318,7 +326,7 @@ contract under [docs/handoffs/](docs/handoffs/).
 ## Documentation
 
 - [Public roadmap](docs/ROADMAP.md)
-- [Hermes upstream watch — 2026-09-24](docs/research/2026-09-24-hermes-upstream-watch.md)
+- [Hermes upstream watch — 2026-10-25](docs/research/2026-10-25-hermes-upstream-watch.md)
 - [Pre-release legacy/personal-dependency audit](docs/research/2026-09-21-pre-release-legacy-audit.md)
 - [Project/agent contract](AGENTS.md)
 - [Integration evidence policy](docs/adr/0001-integration-evidence-policy.md)
@@ -331,7 +339,8 @@ contract under [docs/handoffs/](docs/handoffs/).
 - [Production dependency audit](docs/research/2026-10-03-production-deployment-dependencies.md)
 - [Heartbeat/RR1 discussion](docs/research/2026-10-03-heartbeat-delivery-roadmap.md)
 - [RR1b module/runtime truth contract](docs/handoffs/rr1b-module-runtime-truth-contract.md)
-- [Active RR1b host-readiness contract](docs/handoffs/rr1b-host-readiness-contract.md)
+- [Selected restart programme through RR1](docs/handoffs/2026-10-25-restart-through-rr1.md)
+- [Completed RR1b host-readiness contract](docs/handoffs/rr1b-host-readiness-contract.md)
 - [Changelog](CHANGELOG.md)
 
 Historical handoffs remain useful research records, but their presence does not

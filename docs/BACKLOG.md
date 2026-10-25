@@ -44,18 +44,22 @@ maintainer read an incomplete project state.
 | [DEBT-009](#debt-009) | L3 analysis job is external to ANALYZER | Open | Publish a generic Hermes job/model/delivery recipe. |
 | [DEBT-011](#debt-011) | Global cron restore/count removed | Merged; deploy pending | Deploy RR1a separately and read back preserved operator cron. |
 | [DEBT-012](#debt-012) | Provisioning and notification claims need correction | Open | Describe actual external setup and verification. |
-| [DEBT-013](#debt-013) | Some cron senders ignore configured proxy | Open | Load/apply the existing Telegram proxy in affected senders. |
-| [DEBT-014](#debt-014) | Heartbeat credentials exposed in curl arguments | Open | Contract the bounded stdin-channel correction. |
+| [DEBT-013](#debt-013) | Some cron senders ignore configured proxy | Selected B | Load/apply the existing Telegram proxy in affected senders. |
+| [DEBT-014](#debt-014) | Heartbeat credentials exposed in curl arguments | Selected B | Correct the stdin channel under the restart contract. |
 | [DEBT-015](#debt-015) | Empty-crontab detection is locale-sensitive | Deferred | Make empty/read-error detection locale-independent. |
 | [DEBT-016](#debt-016) | Heartbeat selection follows credentials | Needs decision | Choose explicit backend selection and compatibility migration. |
 | [DEBT-017](#debt-017) | Native Cronping Telegram setup | Native route selected; setup pending | Publish provider-bot instructions and verify delivery separately from pings. |
 | [DEBT-018](#debt-018) | Public GitHub workflow differs from production | Needs decision | Choose public timing/dedup/recovery/pin behavior. |
-| [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Open | Maintainer selects a stale-evidence policy before RR3. |
+| [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Selected B | Apply the existing 7200-second freshness bound to the UI consumer. |
 | [DEBT-020](#debt-020) | Discord deepcheck calls a TG_BOT-owned executable | Open | Maintainer decides payload ownership vs. unsupported-module reporting. |
 | [DEBT-010](#debt-010) | Host lifecycle/privilege assumptions unadmitted | Resolved in RR1b source | Deploy and read back; production still needs its own preflight verification. |
 | [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Resolved in RR1b source | Deploy and read back the installer config gate. |
 | [DEBT-022](#debt-022) | network-guard logs ROLLBACK regardless of sudo result | Open | Maintainer selects per-action failure reporting for the guard. |
 | [DEBT-023](#debt-023) | LOGROTATE_SCHED_DIR override surface unconfirmed | Needs decision | Maintainer confirms the public path override or restricts it to tests. |
+| [DEBT-024](#debt-024) | Hermes PM removes the legacy runtime path Argus assumes | Selected A | Adapt the installation-bound launch surface and prove clean v0.22.5 operation. |
+| [DEBT-025](#debt-025) | Fallback inventory does not canonicalize provider aliases | Selected A | Match static canonical identity without importing runtime providers. |
+| [DEBT-026](#debt-026) | Production checkout/payload/schedule have mixed provenance | Ops checkpoint | Reconcile runtime differences before an authorized rollout. |
+| [DEBT-027](#debt-027) | Current cached integration failures have no diagnosis | Ops diagnosis | Establish sanitized causes; return out-of-scope remediation to maintainer. |
 
 ## Open finding cards
 
@@ -287,7 +291,7 @@ maintainer read an incomplete project state.
 ### DEBT-010 — host lifecycle/privilege assumptions need explicit admission
 
 - **Operator impact:** New hosts lack declared setup or may adopt unsuitable policy.
-- **Next action / responsible roles:** Implement the RR1b host-readiness contract. Maintainer authorizes; architect reviews; builder implements.
+- **Next action / responsible roles:** Source merged in PR #75; maintainer authorizes rollout after the restart Ops checkpoint, then deployment executor supplies read-back.
 - **Closure evidence:** Every selected host prerequisite has tested availability/error behavior and a production read-back.
 - **Release disposition:** Public installer prerequisite.
 
@@ -339,6 +343,8 @@ maintainer read an incomplete project state.
 
 ### DEBT-013 — explicit Telegram proxy is not loaded by every cron sender
 
+- **Current assignment (2026-10-25):** Selected in restart contract B; existing senders only. See [contract B](handoffs/restart-b-delivery-evidence-contract.md). Earlier next-action text below is historical context.
+
 - **Operator impact:** Different senders can use different delivery paths.
 - **Next action / responsible roles:** Load/apply the existing Telegram proxy in affected senders. Maintainer selects; architect scopes; builder after contract.
 - **Closure evidence:** Direct/proxy fixtures cover affected senders with secret-safe argv.
@@ -358,6 +364,8 @@ maintainer read an incomplete project state.
 <a id="debt-014"></a>
 
 ### DEBT-014 — external heartbeat secret URLs remain in curl argv
+
+- **Current assignment (2026-10-25):** Selected in restart contract B; ping/backend semantics preserved. See [contract B](handoffs/restart-b-delivery-evidence-contract.md). Earlier next-action text below is historical context.
 
 - **Operator impact:** Secret URLs can appear in process listings.
 - **Next action / responsible roles:** Contract the bounded stdin-channel correction. Maintainer selects; architect scopes; builder after contract.
@@ -454,6 +462,8 @@ maintainer read an incomplete project state.
 
 ### DEBT-019 — Analyzer UI marks old state healthy without a freshness decision
 
+- **Current assignment (2026-10-25):** Selected in restart contract B; architect specifies the existing 7200-second bound and invalid/future handling for review. See [contract B](handoffs/restart-b-delivery-evidence-contract.md). Earlier next-action text below is historical context.
+
 - **Operator impact:** after collection failures, `/watchdog` can keep a green
   Analyzer line indefinitely while showing an old last-check timestamp.
 - **Next action / responsible roles:** maintainer selects the desired stale
@@ -502,7 +512,7 @@ maintainer read an incomplete project state.
 
 - **Operator impact:** an ignored config.env can still be readable by another
   local account or sourced from an unexpected owner before deployment.
-- **Next action / responsible roles:** Implement the RR1b host-readiness contract. Maintainer authorizes; architect reviews; builder implements.
+- **Next action / responsible roles:** Source merged in PR #75; maintainer authorizes rollout after the restart Ops checkpoint, then deployment executor supplies read-back.
 - **Closure evidence:** fresh creation is owner-only; unsafe mode/owner fixtures fail before sourcing; a secret canary is absent from output, argv and receipts.
 - **Release disposition:** Public installer prerequisite.
 
@@ -568,6 +578,88 @@ maintainer read an incomplete project state.
   match the confirmed surface.
 - **Release disposition:** not a blocker for RR1b; settle before the RR3 docs
   freeze.
+
+## Restart findings — 2026-10-25
+
+<a id="debt-024"></a>
+
+### DEBT-024 — Hermes PM launch layout disagrees with Argus hardcoded venv
+
+- **Impact:** A valid managed Hermes installation can fail Argus preflight or
+  lose its probe/helper launch path when the legacy venv is retired.
+- **Status:** selected in [A](handoffs/restart-a-hermes-compatibility-contract.md), not implemented.
+- **Source:** [upstream watch](research/2026-10-25-hermes-upstream-watch.md#installation-and-gateway-seams-missing-from-the-old-watch-list),
+  Hermes `pm/environments.py` and Argus deploy/probe/helper/service consumers.
+- **Next action / owner:** builder supplies one installation-bound adapter;
+  Codex reviews; maintainer merges and separately authorizes deployment.
+- **Closure evidence:** A1–A5 pass on legacy-layout fixtures and isolated real
+  v0.22.5 managed Linux installation; no captured generation path.
+- **Release disposition:** resolve before advertising v0.22.5 compatibility or
+  freezing RR1c/d. Existing production still has old paths; this is not proof
+  of a current outage there.
+
+<a id="debt-025"></a>
+
+### DEBT-025 — provider aliases duplicate static fallback slots
+
+- **Impact:** `opencode-zen` and `opencode` for the same model/endpoint become
+  two Argus entries where Hermes retains one; later inventory identities shift.
+- **Status:** selected in [A](handoffs/restart-a-hermes-compatibility-contract.md), not implemented.
+- **Source:** [S1 watch](research/2026-10-25-hermes-upstream-watch.md#s1--top-level-fallback-inventory-a-real-bounded-mismatch).
+- **Next action / owner:** builder applies bounded static alias data to identity;
+  reviewer checks order, distinct endpoints and last-good degradation behavior.
+- **Closure evidence:** A6–A7 fixtures distinguish aliases from distinct routes,
+  with no provider imports or copied roster.
+- **Release disposition:** compatibility correction; no routing/credential
+  resolver, R2c.2 or multi-profile expansion.
+
+<a id="debt-026"></a>
+
+### DEBT-026 — mixed production artifacts need reconciliation before rollout
+
+- **Impact:** Blind deployment may overwrite an unexplained quick-checker
+  customization or disable the currently scheduled network guard by default.
+- **Status:** open Ops checkpoint; no production mutation authorized.
+- **Source:** [October 25 read-only reconnaissance](research/2026-10-25-project-reconnaissance.md#production-is-older-and-partly-customized):
+  PR #65 checkout/core payloads, marked cron block, changed quick checker.
+- **Next action / owner:** deployment executor prepares sanitized differences;
+  maintainer chooses their disposition and exact rollout SHA.
+- **Closure evidence:** intended artifacts, preserved operator cron, guard
+  selection, logrotate and service state read back against authorized source.
+- **Release disposition:** operational gate; does not reopen completed RR1b
+  implementation. Checkout age is not a reliable last-deploy timestamp.
+
+<a id="debt-027"></a>
+
+### DEBT-027 — cached integration failures need bounded diagnosis
+
+- **Impact:** Recent monitoring output is not an all-green operational receipt;
+  the failures' causes are not established by service liveness.
+- **Status:** open diagnosis; no inferred upstream regression or fix scope.
+- **Source:** October 25 read-only cached health-check inspection; only failure
+  presence was recorded, without private identities or raw response data.
+- **Next action / owner:** architect/deployment executor reads sanitized reason
+  evidence; maintainer selects any remediation outside A/B. Active side-effecting
+  checks require separate authorization.
+- **Closure evidence:** each failure has a cause and explicit resolved/deferred
+  disposition; resolution requires relevant verification, not a guessed cause.
+- **Release disposition:** classify before claiming a successful operational
+  rollout; not permission to broaden implementation PR B.
+
+<a id="sync-002"></a>
+
+### SYNC-002 — merged RR1b still appeared selected or awaiting review
+
+- **Impact:** Returning builders could repeat completed work or base planning
+  on an obsolete handoff and vault summary.
+- **Status:** corrected in the restart docs candidate; repository merge pending.
+- **Source:** PR #75 merged October 6 while AGENTS/roadmap/handoffs and vault
+  pointers continued to describe an unmerged task.
+- **Next action / owner:** maintainer merges the docs PR; architect records
+  vault convergence in [VAULT-SYNC](VAULT-SYNC.md).
+- **Closure evidence:** current pointers name A, PR #75 is source-complete,
+  production remains unverified, and selected vault notes match their remote.
+- **Release disposition:** documentation repair, not a runtime deployment.
 
 ## Resolved source changes with pending deployment
 

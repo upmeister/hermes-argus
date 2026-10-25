@@ -6,6 +6,26 @@ the resident Pytna agent through the Peetna MCP, because it has the production
 runtime context. A local SSH/Linux deployment is a fallback for the
 maintainer.
 
+## Restart checkpoint — 2026-10-25
+
+RR1a and both RR1b slices are merged through PR #75. The read-only October 25
+inspection found an older PR #65 checkout with mixed runtime artifacts, not a
+verified deployment of those merged changes. Follow the
+[restart programme Ops checkpoint](handoffs/2026-10-25-restart-through-rr1.md#operations-checkpoint)
+after A/B; it does not authorize deploy or notification tests.
+
+Before rollout, resolve the installed quick-checker's difference from source,
+read the actual marked cron block, choose network-guard ON/OFF explicitly,
+and record launcher, private config, linger and logrotate activation facts.
+Keep operator/customized resources until their disposition is approved. Classify
+cached integration failures without publishing private identities or payloads.
+A future RR1c/d rollout must also follow contract C's preservation decisions.
+
+The failure-injection scenarios below belong in isolated rehearsals by default.
+Changing permissions, disabling collectors, stopping services or sending test
+alerts on production requires explicit inclusion in the maintainer's authorization;
+a generic read-back request does not authorize those mutations.
+
 ## Before deployment
 
 1. Confirm the maintainer explicitly authorized this deployment and name the
@@ -26,7 +46,9 @@ configured delivery route, optional external heartbeat and user-manager
 persistence. Netdata API success is not notification delivery evidence, and
 Analyzer state freshness is not proof that a Hermes L3 analysis job is installed.
 Record log rotation and network-guard privileges/applicability separately.
-These prerequisites are not automatic installer behavior yet.
+RR1b now enforces its declared host prerequisites in source; external service,
+account and L3 setup remain operator-owned. Verify the installed behavior,
+not merely the presence of the newer source contract.
 
 ## RR1b module/runtime truth read-back (after the first RR1b deploy)
 

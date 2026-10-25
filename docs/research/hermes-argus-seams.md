@@ -1,7 +1,10 @@
 # Argus ↔ Hermes seams
 
-Status: **durable reference.** Last verified 2026-10-01 against Hermes stable
-`v2026.9.24 / v0.21.5` (`f97608f178d1ffeca59860195ab7da295f7c8e5f`).
+Status: **durable reference; research refreshed 2026-10-25**. Accepted support
+remains v0.21.5 (`f97608f`) pending contract A's compatibility evidence.
+Latest inspected target is v0.22.5 (`bf0203a`); see the
+[watch](2026-10-25-hermes-upstream-watch.md). Research verification is not a
+clean-install or deployment receipt.
 
 This file lists every place where Argus depends on a Hermes-owned behavior.
 An upstream watch pass is the act of re-verifying this list, not of reading the
@@ -21,7 +24,8 @@ where it lives in Hermes, and what to re-check on a watch pass.
 - **Hermes:** `hermes_cli/fallback_config.py:get_fallback_chain()`.
 - **Re-check:** source-key order, mapping-vs-list handling, dedupe identity,
   base_url normalization.
-- **Status:** stable, matches R2c.1. Last verified v0.21.5.
+- **Status:** source order remains stable; v0.22.5 adds canonical provider
+  aliases to dedupe identity. Argus mismatch is [DEBT-025](../BACKLOG.md#debt-025), selected in A.
 
 ## S2 — Scoped route-owner fallback
 
@@ -50,16 +54,13 @@ where it lives in Hermes, and what to re-check on a watch pass.
 
 ## S4 — MCP `enabled` key
 
-- **Argus reads:** currently nothing — this is the gap.
-- **Why a seam:** `enabled: false` on an `mcp_servers.<name>` entry means the
-  server is deliberately off, but `hermes mcp test` still probes it. Argus
-  therefore reports a disabled server as failed/unavailable (HTTP) or even
-  green (stdio with a valid command).
-- **Hermes:** `tools/mcp_tool_common.py:mcp_server_enabled()` — the one reader
-  of the key; absent/null/unparseable = on.
-- **Re-check:** the default-on rule and that no other surface disagrees.
-- **Status:** stable gap; subject of the proposed MCP disabled-server
-  contract.
+- **Argus reads:** `enabled` intent since merged PR #59; disabled entries are
+  skipped without a real probe.
+- **Hermes:** `tools/mcp_tool_common.py:mcp_server_enabled()`; default-on for
+  absent/null/unparseable values. Explicit `mcp test` still probes disabled entries.
+- **Re-check:** boolean interpretation and explicit test behavior.
+- **Status:** fixed in Argus; semantics rechecked against v0.22.5. The previous
+  wording that Argus did not read the key was stale.
 
 ## S5 — Runtime fallback marker
 
@@ -79,6 +80,42 @@ where it lives in Hermes, and what to re-check on a watch pass.
   `token_preview` / secret-ish fields were removed, whether status reads still
   refresh credentials.
 - **Status:** CLOSED / UPSTREAM-GATED (gate not satisfied on v0.21.5).
+
+## S7 — installation-bound launch and interpreter
+
+- **Argus:** deploy preflight, MCP binary default, gateway helper and service
+  templates currently assume checkout `venv/bin`; A adapts these consumers.
+- **Hermes:** `hermes_cli/_launchers.py` published launcher and
+  `--print-runtime-command`; `pm/environments.py` owns environment selection.
+- **Re-check:** a managed install without legacy venv; commands after a
+  generation change; no stale selected-interpreter path in installed templates.
+- **Status:** confirmed mismatch, [DEBT-024](../BACKLOG.md#debt-024), selected A.
+
+## S8 — gateway identity and log routing
+
+- **Argus:** `hermes-gateway-pids.py` imports Hermes's strict matcher/private
+  cmdline reader and filters by installation path; liveness and fallback
+  tracking read default-home logs.
+- **Hermes:** `gateway/status.py`, multiplexed profile routing and runtime logs.
+- **Re-check:** import names, real launch argv, process/home scope and logger
+  identities. A preserves current scope; broader multi-profile coverage is separate.
+- **Status:** imports/log markers retained on v0.22.5; no full multi-profile claim.
+
+## S9 — registry source data
+
+- **Argus:** `scripts/gen-registry.py` statically parses `OPTIONAL_ENV_VARS`.
+- **Hermes:** `hermes_cli/config_defaults.py` data and helper signatures.
+- **Re-check:** generator completes against immutable source; generated fields
+  retain intended semantics; integration completeness is a separate question.
+- **Status:** v0.22.5 parser experiment succeeds (153 entries + 9 kit entries).
+
+## S10 — static account/plugin inventory scope
+
+- **Argus:** single-home auth structure and `plugins/model-providers` metadata.
+- **Hermes:** profile credential inheritance and plugin discovery/catalog ownership.
+- **Re-check:** source locations/shapes and whether static evidence is being
+  mistaken for the effective runtime set. Never execute plugins for inventory.
+- **Status:** coverage boundary; no full plugin or multi-profile expansion selected.
 
 ## Watch procedure
 
