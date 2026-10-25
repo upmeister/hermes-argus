@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=%h/.hermes/.env
+Environment="HERMES_HOME=@HERMES_DIR@"
 # Контракт A: CLI через адаптер (PM-установка v0.22.5 не гарантирует in-checkout
 # venv; лаунчер резолвится на каждый старт юнита).
 ExecStart=/usr/bin/python3 @HOME_DIR@/scripts/hermes-runtime.py hermes serve --host @HERMES_HOST@ --port @HERMES_PORT@

@@ -7829,6 +7829,8 @@ def probe_hr_payload_static_and_module_deploys(tmp: Path):
         text = (REPO / "modules" / "systemd" / unit).read_text(encoding="utf-8")
         if "hermes-runtime.py" not in text:
             problems.append(f"{unit}: ExecStart не через адаптер")
+        if 'Environment="HERMES_HOME=@HERMES_DIR@"' not in text:
+            problems.append(f"{unit}: нет привязки HERMES_HOME к выбранному корню")
     # Poller stdlib-only: системный python3, без venv-путей и без адаптера.
     poller = (REPO / "modules" / "systemd" / "monitoring-bot-poller.service") \
         .read_text(encoding="utf-8")
