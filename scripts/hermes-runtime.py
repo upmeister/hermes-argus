@@ -71,19 +71,23 @@ RC_USAGE = 64
 
 
 def hermes_root() -> Path:
-    """Корень установки Hermes: только $HERMES_DIR/hermes-agent, никакого PATH."""
-    base = os.environ.get("HERMES_DIR") or (Path.home() / ".hermes")
+    """Корень установки Hermes: `$HERMES_DIR`/`$HERMES_HOME`/~/.hermes +
+    hermes-agent. Никакого PATH. HERMES_DIR — соглашение Argus, HERMES_HOME —
+    Hermes (его выставляют юниты); оба должны означать один и тот же home,
+    чтобы все потребители установки соглашались о корне."""
+    base = (os.environ.get("HERMES_DIR") or os.environ.get("HERMES_HOME")
+            or (Path.home() / ".hermes"))
     return Path(base) / "hermes-agent"
 
 
 def published_launcher(root: Path) -> Path | None:
     """Опубликованный лаунчер `<root>/.hermes/bin/hermes` или None, если его нет.
 
-    Существующий, но неисполняемый лаунчер — НЕ «отсутствие»: возвращается сам
-    путь, а неисполнимость отлита в явный отказ (откат на протухший venv
-    запрещён контрактом)."""
+    Висячая ссылка — НЕ «отсутствие» (lexists): сломанный лаунчер отлится в
+    явный отказ ниже, а не в молчаливый откат на легаси-venv. Неисполняемый
+    файл — тоже НЕ «отсутствие»."""
     path = root / ".hermes" / "bin" / "hermes"
-    return path if path.exists() else None
+    return path if (path.exists() or path.is_symlink()) else None
 
 
 class RuntimeUnavailable(Exception):
@@ -144,9 +148,14 @@ def _query_runtime_command(launcher: Path) -> list[str]:
             f"{type(argv).__name__} длиной {len(argv) if isinstance(argv, list) else 'n/a'}")
     if not all(isinstance(tok, str) and tok for tok in argv):
         raise RuntimeMalformed("argv лаунчера содержит не-строковые токены")
+    # Классификация без пересказа содержимого ответа лаунчера (A3): сам путь
+    # может быть произвольными данными ответа, не публикуем его в диагностику.
     if not Path(argv[0]).is_file():
         raise RuntimeMalformed(
-            f"интерпретатор из argv лаунчера отсутствует: {argv[0]}")
+            "интерпретатор из argv лаунчера отсутствует на диске")
+    if not os.access(argv[0], os.X_OK):
+        raise RuntimeMalformed(
+            "интерпретатор из argv лаунчера не исполняем")
     return argv
 
 
@@ -204,13 +213,22 @@ def cmd_check(root: Path) -> int:
         return getattr(exc, "rc", RC_RUNTIME)
 
 
+def _exec(argv: list[str]) -> None:
+    """exec без шелла; неудача исполнения — bounded отказ (код 2), не traceback."""
+    try:
+        os.execve(argv[0], argv, dict(os.environ))
+    except OSError as exc:
+        raise RuntimeUnavailable(
+            f"запуск резолвнутого рантайма не удался ({exc.__class__.__name__})") from None
+
+
 def cmd_hermes(root: Path, args: list[str]) -> int:
     if not args:
         print("hermes-runtime: режим `hermes` требует аргументов CLI",
               file=sys.stderr)
         return RC_USAGE
     argv = resolve_cli_argv(root) + args
-    os.execve(argv[0], argv, dict(os.environ))
+    _exec(argv)
 
 
 def cmd_run_script(root: Path, args: list[str]) -> int:
@@ -238,7 +256,7 @@ def cmd_run_script(root: Path, args: list[str]) -> int:
                 str(root), str(script), *args[1:]]
     else:
         argv = [interpreter, str(script), *args[1:]]
-    os.execve(argv[0], argv, dict(os.environ))
+    _exec(argv)
 
 
 def main(argv: list[str]) -> int:

@@ -31,12 +31,21 @@ import sys
 import tempfile
 from pathlib import Path
 
-# HERMES_HOME может быть не экспортирован в cron — берём из профиля по умолчанию.
-AGENT_DIR = Path.home() / ".hermes" / "hermes-agent"
-# Контракт A (2026-10-25): интерпретатор Hermes больше не фиксирован как
-# venv/bin/python — PM-установка v0.22.5 удаляет in-checkout venv после коммита
-# поколения зависимостей. Выбор рантайма делает адаптер hermes-runtime.py
-# (опубликованный лаунчер или легаси-venv), резолв — на каждый запуск.
+# Контракт A (2026-10-25): корень установки привязывается к выбранной
+# установке ($HERMES_DIR / $HERMES_HOME / ~/.hermes — та же цепочка, что у
+# адаптера hermes-runtime.py), а не только к домашнему профилю: иначе при
+# нестандартном home помощник и адаптер разошлись бы по разным установкам.
+def _agent_dir() -> Path:
+    base = (os.environ.get("HERMES_DIR") or os.environ.get("HERMES_HOME")
+            or (Path.home() / ".hermes"))
+    return Path(base) / "hermes-agent"
+
+
+AGENT_DIR = _agent_dir()
+# Интерпретатор Hermes больше не фиксирован как venv/bin/python — PM-установка
+# v0.22.5 удаляет in-checkout venv после коммита поколения зависимостей. Выбор
+# рантайма делает адаптер hermes-runtime.py (опубликованный лаунчер или
+# легаси-venv), резолв — на каждый запуск.
 RUNTIME_ADAPTER = Path(__file__).resolve().parent / "hermes-runtime.py"
 _REEXEC_FLAG = "HERMES_GATEWAY_PIDS_REEXEC"
 # Файл, куда потомок пишет свой ИТОГОВЫЙ код работы. Отличает «помощник
@@ -74,8 +83,13 @@ def _reexec_under_runtime():
         return False  # уже под рантаймом — работаем сами
     if not RUNTIME_ADAPTER.is_file():
         return False  # модуль-only установка без адаптера: честный отказ ниже
-    fd, result_path = tempfile.mkstemp(prefix="hermes-gwp-")
-    os.close(fd)
+    try:
+        fd, result_path = tempfile.mkstemp(prefix="hermes-gwp-")
+        os.close(fd)
+    except OSError:
+        # Нет временного хранилища — нельзя отличить честный 1 от креша:
+        # честный отказ (код 2 через matcher-None), не ложное «не найден».
+        return False
     env = dict(os.environ, **{_REEXEC_FLAG: "1", _RESULT_ENV: result_path})
     try:
         rc = subprocess.call(

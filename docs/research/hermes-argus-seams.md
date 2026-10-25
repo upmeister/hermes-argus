@@ -95,11 +95,16 @@ where it lives in Hermes, and what to re-check on a watch pass.
 - **Status:** implemented (contract A review pending,
   [DEBT-024](../BACKLOG.md#debt-024)): every launch consumer binds to the
   configured installation root through `scripts/hermes-runtime.py` — the
-  published launcher for CLI calls, `--print-runtime-command --module runpy`
-  for Argus Python scripts; legacy in-tree venv remains the no-launcher
-  fallback; present-but-unusable launcher is a bounded failure, never a
-  stale-venv fallback. A watch pass re-verifies the launcher path, the
-  `--print-runtime-command` argv shape and the module-only deploy manifests.
+  published launcher for CLI calls; for Argus Python scripts the adapter
+  resolves the runtime interpreter via the machine boundary and launches them
+  in the upstream venv_sync shape (checkout on `sys.path` +
+  `hermes_bootstrap` activation + `runpy.run_path`), because the launcher's
+  runpy variant takes a module name, not a script path (confirmed on real
+  v0.22.5). Legacy in-tree venv remains the no-launcher fallback;
+  present-but-unusable launcher — including a dangling launcher symlink — is a
+  bounded failure, never a stale-venv fallback. A watch pass re-verifies the
+  launcher path, the `--print-runtime-command` argv shape and the module-only
+  deploy manifests.
 
 ## S8 — gateway identity and log routing
 

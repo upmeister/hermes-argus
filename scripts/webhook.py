@@ -282,8 +282,13 @@ def handle_kanban_snapshot() -> str:
     """Канбан-снапшот: счётчики по статусам + активные задачи (running/ready)."""
     try:
         # HERMES_BIN с абсолютным путём: в PATH systemd user-юнитов нет venv/bin
-        # (голый "hermes" → Errno 2, инцидент 18.08)
-        r = subprocess.run([HERMES_BIN, "kanban", "list"],
+        # (голый "hermes" → Errno 2, инцидент 18.08). Контракт A: это адаптер
+        # hermes-runtime.py — его первый позиционный аргумент РЕЖИМ `hermes`,
+        # поэтому вызов строится через cli-хелпер ниже.
+        argv = ([HERMES_BIN, "hermes", "kanban", "list"]
+                if os.path.basename(HERMES_BIN) == "hermes-runtime.py"
+                else [HERMES_BIN, "kanban", "list"])
+        r = subprocess.run(argv,
                            capture_output=True, text=True, timeout=30,
                            env={**os.environ, "HERMES_HOME": "@HOME_DIR@/.hermes"})
         from collections import Counter

@@ -7675,14 +7675,60 @@ def probe_hr_adapter_failures(tmp: Path):
             and "Traceback" not in r.stderr):
         problems.append(f"garbage: rc={r.returncode} err={r.stderr[-120:]!r}")
 
-    # 3. Лаунчер вернул JSON с несуществующим интерпретатором → код 3.
+    # 3. Лаунчер вернул JSON с несуществующим интерпретатором → код 3, и путь
+    #    из ответа лаунчера НЕ пересказывается в диагностике (A3, canary).
     home = tmp / "hr-fail-missing-py-home"
     _hr_fake_managed(home, argvlog=tmp / "hr-fail-mp-launcher.log",
                      gens={"g1": tmp / "hr-no-such-interpreter"})
     r = _hr_adapter_run(home, "run-script", str(_hr_script(home)),
                         extra_env={"HR_GEN": "g1"})
-    if not (r.returncode == 3 and "hr-no-such-interpreter" in r.stderr):
+    if not (r.returncode == 3 and "Traceback" not in r.stderr
+            and "hr-no-such-interpreter" not in r.stderr
+            and "отсутствует" in r.stderr):
         problems.append(f"missing-py: rc={r.returncode} err={r.stderr[-120:]!r}")
+
+    # 3b. Интерпретатор существует, но не исполняем → код 3, не exec-креш.
+    home = tmp / "hr-fail-noexec-py-home"
+    dead_py = write(tmp / "hr-dead-interpreter", "not an executable program\n")
+    dead_py.chmod(0o644)
+    _hr_fake_managed(home, argvlog=tmp / "hr-fail-nxpy-launcher.log",
+                     gens={"g1": dead_py})
+    r = _hr_adapter_run(home, "run-script", str(_hr_script(home)),
+                        extra_env={"HR_GEN": "g1"})
+    if not (r.returncode == 3 and "не исполняем" in r.stderr
+            and "Traceback" not in r.stderr):
+        problems.append(f"noexec-py: rc={r.returncode} err={r.stderr[-120:]!r}")
+
+    # 3c. Исполнимый, но не программируемый файл (exec ENOEXEC) → bounded
+    #     отказ кода 2, без traceback.
+    home = tmp / "hr-fail-enoexec-home"
+    junk = write(tmp / "hr-junk-interpreter", "\x7fELF-nope\n")
+    junk.chmod(0o755)
+    _hr_fake_managed(home, argvlog=tmp / "hr-fail-enoexec-launcher.log",
+                     gens={"g1": junk})
+    r = _hr_adapter_run(home, "run-script", str(_hr_script(home)),
+                        extra_env={"HR_GEN": "g1"})
+    if not (r.returncode == 2 and "Traceback" not in r.stderr):
+        problems.append(f"enoexec: rc={r.returncode} err={r.stderr[-120:]!r}")
+
+    # 3d. Висячая ссылка на лаунчер при живом легаси-venv — явный отказ,
+    #     откат на venv запрещён (A3).
+    home = tmp / "hr-fail-dangling-home"
+    venv_log = tmp / "hr-fail-dangling-venv.log"
+    _hr_fake_legacy(home, argvlog=venv_log)
+    launcher_path = (home / ".hermes" / "hermes-agent" / ".hermes" / "bin"
+                     / "hermes")
+    launcher_path.parent.mkdir(parents=True, exist_ok=True)
+    if launcher_path.exists() or launcher_path.is_symlink():
+        launcher_path.unlink()
+    launcher_path.symlink_to(tmp / "hr-no-such-launcher-target")
+    r = _hr_adapter_run(home, "hermes", "--version")
+    venv_used = (venv_log.exists()
+                 and venv_log.read_text(encoding="utf-8").strip())
+    if not (r.returncode == 2 and not venv_used
+            and "Traceback" not in r.stderr):
+        problems.append(f"dangling: rc={r.returncode} venv_used={bool(venv_used)} "
+                        f"err={r.stderr[-100:]!r}")
 
     # 4. Лаунчер есть, но не исполняем; venv рабочий — отката быть не должно.
     home = tmp / "hr-fail-noexec-home"
@@ -7913,7 +7959,108 @@ def probe_hr_gateway_pids_adapter(tmp: Path):
     if r3.returncode != 2:
         problems.append(f"crash1: rc={r3.returncode} (ожидался 2, не ложная 1)")
 
+    # 4. Ошибка создания sentinel-файла — НЕ необработанный rc 1: помощник
+    #    падает до ложного «не найден» (возвращает False → matcher-None → 2).
+    gwp = load_module("hermes-gateway-pids")
+    home4 = tmp / "hr-gwp-mkstemp-home"
+    scripts4 = home4 / "scripts"
+    scripts4.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(REPO / "scripts" / "hermes-gateway-pids.py",
+                    scripts4 / "hermes-runtime.py")  # адаптер присутствует
+    real_mkstemp = gwp.tempfile.mkstemp
+
+    def _boom(*a, **k):
+        raise OSError("mkstemp canary failure")
+
+    gwp.tempfile.mkstemp = _boom
+    try:
+        fell_through = gwp._reexec_under_runtime() is False
+    except SystemExit:
+        fell_through = False
+    finally:
+        gwp.tempfile.mkstemp = real_mkstemp
+    if not fell_through:
+        problems.append("mkstemp-fail: не честный отказ до ложного ответа")
+
+    # 5. Нестандартный HERMES_DIR: помощник привязывается к выбранному корню
+    #    (та же цепочка, что адаптер), а не только к домашнему профилю.
+    home5 = tmp / "hr-gwp-hermesdir-home"
+    custom = tmp / "hr-custom-hermes-home"
+    scripts5 = home5 / "scripts"
+    scripts5.mkdir(parents=True, exist_ok=True)
+    env5 = _probe_subprocess_env(
+        home5, {"HOME": home5.as_posix(), "HERMES_DIR": custom.as_posix()})
+    r5 = subprocess.run([sys.executable, str(REPO / "scripts"
+                                                / "hermes-gateway-pids.py")],
+                        cwd=REPO.as_posix(), env=env5, capture_output=True,
+                        text=True, timeout=60)
+    if not (r5.returncode == 2
+            and (custom / "hermes-agent").as_posix() in r5.stderr):
+        problems.append(f"hermes-dir: rc={r5.returncode} "
+                        f"err={r5.stderr[-120:]!r}")
+
     check("hr_gateway_pids_adapter", not problems, f"problems={problems}")
+
+
+def probe_hr_consumer_chains(hc, wh, tmp: Path):
+    """Полные цепочки потребителей через адаптер: MCP-check и kanban доходят
+    до CLI Hermes с правильным режимом (`hermes`), а не до rc 64 адаптера."""
+    problems = []
+    home = tmp / "hr-chains-home"
+    cli_log = tmp / "hr-chains-cli.log"
+    _hr_fake_legacy(home, argvlog=cli_log)
+    adapter = REPO / "scripts" / "hermes-runtime.py"
+
+    # 1. check_mcp через дефолтный адаптер: shim CLI получает ровно
+    #    `mcp test <name>` (режим `hermes` съеден адаптером), маркер парсится.
+    #    Shim-CLI печатает маркер подключения: подключаем это в сам shim.
+    bindir = home / ".hermes" / "hermes-agent" / "venv" / "bin"
+    write(bindir / "hermes",
+          f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{cli_log.as_posix()}"\n'
+          'printf "✓ Connected (7ms)\\n"\nexit 0\n')
+    bindir_hermes = bindir / "hermes"
+    bindir_hermes.chmod(0o755)
+    old_env = os.environ.get("HERMES_DIR")
+    os.environ["HERMES_DIR"] = (home / ".hermes").as_posix()
+    try:
+        ok, detail = hc.check_mcp(str(adapter), "probe-server")
+    finally:
+        if old_env is None:
+            os.environ.pop("HERMES_DIR", None)
+        else:
+            os.environ["HERMES_DIR"] = old_env
+    recorded = cli_log.read_text(encoding="utf-8").splitlines() \
+        if cli_log.exists() else []
+    if not (ok is True and "connected in 7ms" in detail
+            and "mcp test probe-server" in recorded
+            and "hermes mcp test" not in " ".join(recorded)):
+        problems.append(f"mcp-chain: ok={ok} detail={detail!r} recorded={recorded!r}")
+
+    # 2. kanban через адаптер: shim получает `kanban list`, вывод парсится.
+    write(bindir / "hermes",
+          f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{cli_log.as_posix()}"\n'
+          'printf "● task-one\\n"\nexit 0\n')
+    bindir_hermes.chmod(0o755)
+    cli_log.unlink(missing_ok=True)
+    old_bin, old_env = wh.HERMES_BIN, os.environ.get("HERMES_DIR")
+    wh.HERMES_BIN = str(adapter)
+    os.environ["HERMES_DIR"] = (home / ".hermes").as_posix()
+    try:
+        snapshot = wh.handle_kanban_snapshot()
+    finally:
+        wh.HERMES_BIN = old_bin
+        if old_env is None:
+            os.environ.pop("HERMES_DIR", None)
+        else:
+            os.environ["HERMES_DIR"] = old_env
+    recorded = cli_log.read_text(encoding="utf-8").splitlines() \
+        if cli_log.exists() else []
+    if not ("task-one" in snapshot
+            and "kanban list" in " ".join(recorded)
+            and "hermes kanban" not in " ".join(recorded)):
+        problems.append(f"kanban-chain: snap={snapshot[:60]!r} recorded={recorded!r}")
+
+    check("hr_consumer_chains", not problems, f"problems={problems}")
 
 
 def probe_hr_healthcheck_and_webhook_adapter(hc, wh):
@@ -8319,6 +8466,7 @@ def main() -> int:
     probe_hr_preflight_managed(tmp)
     probe_hr_payload_static_and_module_deploys(tmp)
     probe_hr_gateway_pids_adapter(tmp)
+    probe_hr_consumer_chains(hc, wh, tmp)
     probe_hr_healthcheck_and_webhook_adapter(hc, wh)
     probe_s1_alias_canonical(disc, tmp)
 

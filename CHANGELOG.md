@@ -83,17 +83,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the gateway matcher helper and the systemd fallback templates, so a valid
   managed installation was rejected at deploy time or became unobservable. A
   single new entrypoint, `scripts/hermes-runtime.py`, now binds every launch
-  to the configured installation root: CLI calls (`hermes --version`, `hermes
-  mcp test`, `hermes serve`, `hermes gateway run`, `kanban list`) go through
-  the published launcher, and Argus Python scripts (gateway matcher, bot
-  poller) run through its `--print-runtime-command --module runpy` boundary
-  with the returned argv executed without a shell. The runtime is resolved at
-  each launch and never persisted, so generated units contain no
-  generation-specific paths and survive environment switches. A legacy
-  in-tree venv remains supported when the launcher has not been published; a
-  launcher that is present but unusable is an explicit bounded failure, not a
-  silent fallback to stale dependencies, and the gateway helper's
-  0/1/2 contract (environment failure is not process death) is preserved.
+  to the configured installation root (`$HERMES_DIR`/`$HERMES_HOME`/
+  `~/.hermes`): CLI calls (`hermes --version`, `hermes mcp test`, `hermes
+  serve`, `hermes gateway run`, `kanban list`) go through the published
+  launcher, and the gateway matcher helper runs under the installation's
+  runtime interpreter with the checkout importable and `hermes_bootstrap`
+  activating the selected dependency generation — the same launch shape
+  upstream's own `venv_sync` builds. The runtime is resolved at each launch
+  and never persisted, so generated units contain no generation-specific paths
+  and survive environment switches. The stdlib-only Telegram poller moved to
+  the system `python3` (its Hermes surface is the CLI, reached through the
+  adapter by the webhook library). A legacy in-tree venv remains supported when
+  the launcher has not been published; a launcher that is present but unusable
+  (including a dangling launcher symlink or a non-executable resolved
+  interpreter) is an explicit bounded failure, not a silent fallback to stale
+  dependencies, and the gateway helper's 0/1/2 contract (environment failure is
+  not process death) is preserved: a crashed launch is distinguished from an
+  honest "not found" by a result sentinel, and no child output is ever
+  reflected into Argus diagnostics. Rehearsal finding recorded: the launcher's
+  `--print-runtime-command --module runpy` variant treats its trailing
+  argument as a module name (confirmed on real v0.22.5, python 3.14), so
+  script paths cannot ride it — hence the venv_sync-style composition for
+  scripts.
 - Fallback inventory deduplication now canonicalizes provider aliases the way
   Hermes itself does (contract A). Hermes collapses entries like
   `opencode-zen` and `opencode` for the same model and endpoint into one

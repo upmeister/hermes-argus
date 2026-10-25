@@ -60,6 +60,7 @@ maintainer read an incomplete project state.
 | [DEBT-025](#debt-025) | Fallback inventory does not canonicalize provider aliases | Resolved in source (A, review pending) | Codex review, maintainer merge; deployment verification pending. |
 | [DEBT-026](#debt-026) | Production checkout/payload/schedule have mixed provenance | Ops checkpoint | Reconcile runtime differences before an authorized rollout. |
 | [DEBT-027](#debt-027) | Current cached integration failures have no diagnosis | Ops diagnosis | Establish sanitized causes; return out-of-scope remediation to maintainer. |
+| [DEBT-028](#debt-028) | pgrep failure in the gateway helper reads as "no gateway" | Open (pre-existing, found in A review) | Maintainer selects liveness fix: observation error must be rc 2, not rc 1. |
 
 ## Open finding cards
 
@@ -592,20 +593,29 @@ maintainer read an incomplete project state.
 - **Source:** [upstream watch](research/2026-10-25-hermes-upstream-watch.md#installation-and-gateway-seams-missing-from-the-old-watch-list),
   Hermes `pm/environments.py` and Argus deploy/probe/helper/service consumers.
 - **Resolution:** one installation-bound adapter `scripts/hermes-runtime.py`
-  binds every launch consumer to `$HERMES_DIR/hermes-agent` — the published
-  launcher for CLI calls, the `--print-runtime-command` boundary for
-  interpreter resolution; Argus scripts run under it with `hermes_bootstrap`
-  activation (upstream's own venv_sync composition). Legacy in-tree venv stays
-  the no-launcher fallback; a present-but-unusable launcher is a bounded
-  failure, never a stale-venv fallback; the gateway helper keeps its 0/1/2
-  contract with a result sentinel distinguishing an honest 1 from a crashed
-  launch. Runtime resolves at each launch; templates carry no generation paths.
+  binds every launch consumer to the selected installation root
+  (`$HERMES_DIR`/`$HERMES_HOME`/`~/.hermes`) — the published launcher for CLI
+  calls, the `--print-runtime-command` boundary for interpreter resolution;
+  Argus scripts run under it with `hermes_bootstrap` activation (upstream's
+  own venv_sync composition), and CLI consumers insert the adapter's `hermes`
+  mode. Legacy in-tree venv stays the no-launcher fallback; a present-but-
+  unusable launcher — including a dangling launcher symlink or a
+  non-executable resolved interpreter — is a bounded failure, never a
+  stale-venv fallback; failed `execve` and temp-file failures in the gateway
+  helper are bounded (the helper keeps its 0/1/2 contract with a result
+  sentinel distinguishing an honest 1 from a crashed launch; no launcher
+  response data is reflected into diagnostics). Runtime resolves at each
+  launch; templates carry no generation paths.
 - **Closure evidence:** A1–A5 probes (fixture layouts, failure modes,
-  module-only deploys, base-unit skip) and an isolated Ubuntu 24.04 rehearsal
-  on an intentionally installed real v0.22.5: the new deploy passes preflight
-  where the baseline rejects the same layout; `hermes --version` answers
-  through the real launcher; the matcher loads through the re-exec chain and
-  honestly reports no gateway; boundary argv carries no generation path.
+  module-only deploys, base-unit skip, full consumer chains for the MCP check
+  and kanban through the adapter) and an isolated Ubuntu 24.04 rehearsal
+  on an intentionally installed real v0.22.5: new deploy passes preflight where
+  the baseline rejects the same layout; `hermes --version` answers through the
+  real launcher; the matcher loads through the re-exec chain and honestly
+  reports no gateway; boundary argv carries no generation path. Remediation
+  (review round 1, Codex): consumer call sites now speak the adapter's mode
+  grammar; root binding agrees across adapter/helper/units; crash-vs-notfound
+  and temp-failure paths are bounded.
 - **Release disposition:** resolve before advertising v0.22.5 compatibility or
   freezing RR1c/d. Existing production still has old paths; this is not proof
   of a current outage there.
@@ -669,6 +679,27 @@ maintainer read an incomplete project state.
   disposition; resolution requires relevant verification, not a guessed cause.
 - **Release disposition:** classify before claiming a successful operational
   rollout; not permission to broaden implementation PR B.
+
+<a id="debt-028"></a>
+
+### DEBT-028 — pgrep failure in the gateway helper reads as "no gateway"
+
+- **Impact:** A transient `pgrep` error (OSError/timeout) in
+  `hermes-gateway-pids.py` returns an empty candidate list, which the helper
+  reports as rc 1 ("не найден") — the watchdog can classify a false
+  gateway-dead and restart a live process.
+- **Status:** open; pre-existing defect inherited from main `11c7bcd`, not a
+  PR #77 regression. Found in the contract A review round 1 (Codex).
+- **Source:** [review PR #77](https://github.com/upmeister/hermes-argus/pull/77),
+  `scripts/hermes-gateway-pids.py` pgrep exception path.
+- **Next action / owner:** maintainer selects a bounded liveness fix
+  (separate task, outside contract A): observation error must yield rc 2
+  (honest "did not check"), while a successful scan with no matches keeps rc 1.
+- **Closure evidence:** a fault-injected pgrep failure reports rc 2 without a
+  traceback; a normal empty scan still reports rc 1; callers treat 2 as
+  "не проверил" rather than "process death".
+- **Release disposition:** liveness correctness; must not be bundled into the
+  contract A PR.
 
 <a id="sync-002"></a>
 
