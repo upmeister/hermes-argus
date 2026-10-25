@@ -313,18 +313,21 @@ Documentation-surface synchronization is recorded in `docs/VAULT-SYNC.md`.
 ## Accepted upstream authority and current compatibility target
 
 ```text
-Hermes stable = v2026.9.24 / v0.21.5
-stable tag commit = f97608f178d1ffeca59860195ab7da295f7c8e5f
-previous warning-source main = 35b14ad5e24137b836d5c47c21a50c6ea7aeb785
+Hermes stable = v0.22.5
+stable tag commit = bf0203a794a07aac3ff764972ab9087baa4e4f4e
+previous accepted authority = v2026.9.24 / v0.21.5, f97608f178d1ffeca59860195ab7da295f7c8e5f
 ```
 
-Stable authority wins. Upstream `main` is a warning/research source only.
+The promotion of `v0.22.5 / bf0203a` to accepted stable authority is part of
+contract A (PR #77) and takes effect on that PR's maintainer merge: the Linux
+evidence attached to that PR — the fixture suite re-run on a clean ext4
+Ubuntu 24.04 by review, plus the isolated rehearsal on an intentionally
+installed real v0.22.5 checkout/launcher — is the promotion receipt. Before
+the merge, the accepted authority remains
+`v2026.9.24 / v0.21.5 / f97608f…`. Merged source is still not deployment:
+production convergence stays with the separately authorized Ops checkpoint.
 
-The block above remains the accepted historical support baseline. Latest observed
-stable and production version = `v0.22.5`, commit
-`bf0203a794a07aac3ff764972ab9087baa4e4f4e`; it is contract A's verification
-target, not yet a passed Argus compatibility claim. Promote it only with A's
-passing Linux evidence and synchronized status documents.
+Stable authority wins. Upstream `main` is a warning/research source only.
 
 Current research: `docs/research/2026-10-25-hermes-upstream-watch.md`;
 the 2026-10-01 watch is the previous accepted-authority receipt.

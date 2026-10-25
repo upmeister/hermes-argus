@@ -25,6 +25,7 @@ import re
 import subprocess
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 import time as _time
 
 # Секреты больше не используются здесь (эндпоинты удалены), но оставлены как
@@ -35,7 +36,10 @@ import time as _time
 BOT_TOKEN = os.environ.get("WATCHDOG_BOT_TOKEN", "")
 CHAT_ID = os.environ.get("WATCHDOG_CHAT_ID", "@WATCHDOG_CHAT_ID@")
 ALLOWED_USER_ID = os.environ.get("WATCHDOG_ALLOWED_USER_ID", "").strip()
-HERMES_BIN = "@HERMES_BIN@"
+# Контракт A: CLI Hermes — через соседний адаптер (deploy кладёт
+# hermes-runtime.py рядом в ОБА каталога webhook.py: ~/scripts и
+# ~/.hermes/scripts). Жёсткий venv-путь PM-установка v0.22.5 не гарантирует.
+HERMES_BIN = str(Path(__file__).resolve().parent / "hermes-runtime.py")
 
 # Rate-limit для «🚫 нет доступа» ответов неавторизованным.
 _DENY_LOG: dict[str, float] = {}
@@ -278,8 +282,13 @@ def handle_kanban_snapshot() -> str:
     """Канбан-снапшот: счётчики по статусам + активные задачи (running/ready)."""
     try:
         # HERMES_BIN с абсолютным путём: в PATH systemd user-юнитов нет venv/bin
-        # (голый "hermes" → Errno 2, инцидент 18.08)
-        r = subprocess.run([HERMES_BIN, "kanban", "list"],
+        # (голый "hermes" → Errno 2, инцидент 18.08). Контракт A: это адаптер
+        # hermes-runtime.py — его первый позиционный аргумент РЕЖИМ `hermes`,
+        # поэтому вызов строится через cli-хелпер ниже.
+        argv = ([HERMES_BIN, "hermes", "kanban", "list"]
+                if os.path.basename(HERMES_BIN) == "hermes-runtime.py"
+                else [HERMES_BIN, "kanban", "list"])
+        r = subprocess.run(argv,
                            capture_output=True, text=True, timeout=30,
                            env={**os.environ, "HERMES_HOME": "@HOME_DIR@/.hermes"})
         from collections import Counter

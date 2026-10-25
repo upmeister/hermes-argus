@@ -136,12 +136,13 @@ module_needs_user_units() {
         || module_enabled MODULE_TG_BOT || module_enabled MODULE_DISCORD_BOT
 }
 
-# Модули, чей runtime использует интерпретатор Hermes venv (H3). Их юниты и
-# скрипты исполняются этим интерпретатором: CORE (hermes-gateway-pids.py
-# ре-exec'ится под ним), INTEGRATIONS (health-check читает конфиг Hermes),
-# TG_BOT (monitoring-bot-poller.service стартует venv-питоном).
-# DISCORD_BOT и LOCAL_SERVICES пользуются СВОИМ/системным python3 — требовать
-# от них Hermes venv было бы выходом за контракт.
+# Модули, чья поверхность потребляет рантайм Hermes (H3). CORE: юниты
+# gateway/dashboard запускаются через адаптер, hermes-gateway-pids.py
+# ре-exec'ится под рантаймом. INTEGRATIONS: health-check зовёт CLI Hermes.
+# TG_BOT: webhook.py зовёт CLI Hermes (kanban) через адаптер; сам poller —
+# stdlib-only под системным python3. DISCORD_BOT и LOCAL_SERVICES пользуются
+# СВОИМ/системным python3 — требовать от них рантайм Hermes было бы выходом
+# за контракт.
 module_uses_hermes_venv() {
     module_enabled MODULE_CORE || module_enabled MODULE_INTEGRATIONS \
         || module_enabled MODULE_TG_BOT
@@ -179,7 +180,6 @@ deploy_template() {
         printf 's/@HERMES_HOST@/%s/g\n' "$HERMES_HOST"
         printf 's/@HERMES_PORT@/%s/g\n' "$HERMES_PORT"
         printf 's|@HERMES_DIR@|%s|g\n' "$HERMES_DIR"
-        printf 's|@HERMES_BIN@|%s|g\n' "$HERMES_DIR/hermes-agent/venv/bin/hermes"
         printf 's|@HOME_DIR@|%s|g\n' "$HOME_DIR"
         printf 's/@MODULE_INTEGRATIONS@/%s/g\n' "$(module_enabled MODULE_INTEGRATIONS && echo ON || echo OFF)"
         printf 's/@MODULE_ANALYZER@/%s/g\n' "$(module_enabled MODULE_ANALYZER && echo ON || echo OFF)"
@@ -238,17 +238,18 @@ preflight_target() {
     fi
 }
 
-# H3 — Hermes home/venv для модулей, чья поверхность их реально использует.
+# H3 — Hermes home/рантайм для модулей, чья поверхность их реально использует.
 # Argus наблюдает существующий Hermes и не имеет права его чинить.
-# venv-модули (их юниты исполняются Hermes-интерпретатором) требуют рабочий
-# venv — проверяется не только `-x`: исполняемый бит не доказывает, что
-# интерпретатор работает, поэтому Capability проверяется безобидным запуском.
+# venv-модули (их юниты/скрипты исполняются рантаймом Hermes через адаптер)
+# требуют рабочий рантайм: опубликованный лаунчер PM-установки или легаси
+# in-tree venv. Решает адаптер hermes-runtime.py check — не только `-x`:
+# исполняемый бит не доказывает, что интерпретатор работает.
 # ANALYZER (ремедиация: раньше попадал только под venv-предикат и проходил
 # preflight без Hermes home вовсе) деплоится в $HERMES_DIR/scripts и читает
 # $HERMES_DIR/logs — ему нужен существующий Hermes home и системный python3,
-# но не Hermes venv.
+# но не рантайм Hermes.
 preflight_hermes() {
-    local venv_names="" m bindir ok=1 out analyzer=0
+    local venv_names="" m ok=1 out analyzer=0
     module_enabled MODULE_ANALYZER && analyzer=1
     if module_uses_hermes_venv; then
         for m in MODULE_CORE MODULE_INTEGRATIONS MODULE_TG_BOT; do
@@ -274,22 +275,17 @@ preflight_hermes() {
     fi
 
     if [ -n "$venv_names" ]; then
-        bindir="$HERMES_DIR/hermes-agent/venv/bin"
         [ -d "$HERMES_DIR/hermes-agent" ] || {
             echo "❌ Не найден $HERMES_DIR/hermes-agent (модули:$venv_names)." >&2; ok=0; }
-        if [ "$ok" -eq 1 ]; then
-            [ -x "$bindir/python" ] || {
-                echo "❌ Интерпретатор Hermes $bindir/python отсутствует или не исполняем (модули:$venv_names)." >&2
-                ok=0; }
-            [ -x "$bindir/hermes" ] || {
-                echo "❌ Hermes-исполняемый $bindir/hermes отсутствует или не исполняем (модули:$venv_names)." >&2
-                ok=0; }
-            if [ "$ok" -eq 1 ] \
-               && ! out=$("$bindir/python" -c 'import sys; sys.exit(0)' 2>&1); then
-                echo "❌ Интерпретатор Hermes не работает: $bindir/python → ${out:-нет вывода}" >&2
-                echo "   (модули:$venv_names)" >&2
-                ok=0
-            fi
+        # Контракт A: работоспособность рантайма Hermes (опубликованный лаунчер
+        # PM-установки v0.22.5 ИЛИ легаси in-tree venv) проверяет адаптер —
+        # ровно та граница, через которую пойдут все потребители. Безобидная
+        # проба `check`: резолв + валидация, ничего не запускает и не мутирует.
+        if [ "$ok" -eq 1 ] \
+           && ! out=$(HERMES_DIR="$HERMES_DIR" python3 "$REPO_DIR/scripts/hermes-runtime.py" check 2>&1); then
+            echo "❌ Рантайм Hermes недоступен (модули:$venv_names):" >&2
+            echo "${out:-нет вывода}" >&2
+            ok=0
         fi
     fi
     if [ "$ok" -ne 1 ]; then
@@ -601,10 +597,13 @@ preflight_logrotate || exit 1
 # hermes-gateway-pids.py — канонический матчер живости gateway, зовётся
 # hermes-watchdog.sh и gateway-liveness.sh; без него оба считают gateway
 # мёртвым (или, наоборот, молча пропускают проверку). Идёт в $HOME_DIR/scripts.
+# hermes-runtime.py (контракт A) — адаптер запуска Hermes для всех
+# потребителей этого каталога: hermes-gateway-pids.py (re-exec под рантаймом),
+# check-updates.sh (CLI --version), юниты hermes-gateway/dashboard.service.
 # B2 (RR1b): collect-metrics.sh уехал в ANALYZER — единственный его потребитель
 # health-analyzer.py; в CORE он жил вторым экземпляром в неканоническом пути.
 CORE_HOME_SCRIPTS=(hermes-watchdog.sh hermes-gateway-pids.py auto-remediate.sh \
-                   check-updates.sh)
+                   check-updates.sh hermes-runtime.py)
 CORE_HERMES_SCRIPTS=(dashboard-liveness.sh gateway-liveness.sh watchdog-health.sh ssl-expiry-check.sh)
 
 # NETWORK_GUARD (H4, RR1b): хост-политика маршрутов/DNS с неинтерактивным sudo
@@ -619,8 +618,10 @@ CORE_SYSTEMD=(hermes-dashboard.service hermes-dashboard.service.d/memory-limits.
               hermes-gateway.service hermes-gateway.service.d/memory-limits.conf)
 
 # INTEGRATIONS: discover конфига + каскад-трекер фолбека + health-check v2 (ядро Argus v2)
+# hermes-runtime.py (контракт A): health-check-v2.py зовёт CLI Hermes (`hermes
+# mcp test`) через соседний адаптер.
 INTEGRATIONS_HOME_SCRIPTS=(integration-discover.py integration-discover-wrapper.sh fallback-tracker-v2.py \
-                           health-check-v2.py health-check-v2-wrapper.sh)
+                           health-check-v2.py health-check-v2-wrapper.sh hermes-runtime.py)
 INTEGRATIONS_HERMES_SCRIPTS=(health-check-integrations.sh)
 # RR0c (B3): канонические имена юнитов нового образца — Argus-owned. Легаси
 # hermes-vps-kit-* на живой машине не трогаются и не мигрируют автоматически:
@@ -634,14 +635,18 @@ INTEGRATIONS_SYSTEMD=(hermes-argus-config.path hermes-argus-discover.service)
 # webhook` и брал файл из ~/scripts, который ставился только TG_BOT, поэтому
 # MODULE_DISCORD_BOT=ON без TG_BOT зависел от старой установленной копии.
 # Два бота — два control plane, но библиотека handlers'ов у них одна.
-SHARED_BOT_HOME_SCRIPTS=(webhook.py)
+# hermes-runtime.py (контракт A): webhook.py зовёт CLI Hermes (kanban list)
+# через соседний адаптер; Discord-only установка получает свою копию.
+SHARED_BOT_HOME_SCRIPTS=(webhook.py hermes-runtime.py)
 
 # TG_BOT: интерактивный мониторинг-бот (control plane) — OFF по умолчанию.
 # webhook.py в $HOME_DIR/scripts ставит SHARED выше; в ~/.hermes/scripts копия
 # остаётся своей (poller импортирует её из своего каталога — урок 2026-09-07:
 # частичный деплой оставлял свежую и старую копии, AttributeError на import).
+# hermes-runtime.py (контракт A): юнит poller'а запускает скрипт через адаптер
+# из ~/.hermes/scripts — module-only установка обязана нести его сама.
 TG_BOT_HOME_SCRIPTS=(ai-deep-check.py register-commands.sh)
-TG_BOT_HERMES_SCRIPTS=(monitoring-bot-poller.py webhook.py)
+TG_BOT_HERMES_SCRIPTS=(monitoring-bot-poller.py webhook.py hermes-runtime.py)
 TG_BOT_SYSTEMD=(monitoring-bot-poller.service)
 
 # DISCORD_BOT: control plane для Discord (C5) — OFF по умолчанию

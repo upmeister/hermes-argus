@@ -87,6 +87,26 @@ say PR #76 is open, A starts after its merge, and production convergence is
 unverified. The repository docs candidate records the same state; no deployment
 or independent architecture-review PASS is implied by this sync receipt.
 
+## 2026-10-26 — contract A implemented, PR #77 review pending
+
+Contract A is implemented on branch `feat/restart-a-hermes-compat` from
+baseline `11c7bcd` (main after the PR #76 merge) and opened as
+[implementation PR #77](https://github.com/upmeister/hermes-argus/pull/77);
+head `1b01ce1` carries the implementation plus this receipt. The reviewer
+verdict is pending; neither merge nor deployment has happened. The vault
+project card, release roadmap and backlog index were updated to this state.
+
+Vault publication: local vault commit
+`12357b0071901a51fa5298fc19e9e3fa98c4db75` ("hermes-argus: contract A
+implemented as PR #77, Codex review pending") changes exactly the three Argus
+notes (project card, `plans/2026-09-20-public-release-roadmap.md`,
+`docs/BACKLOG.md`) and is pushed to the GitHub vault remote. The server vault
+(`~/obsidian-vault`) reported the same commit as both HEAD and `origin/master`
+with a clean tree (run `run_04eac362fc624fa98ed156871f403aed`, lane
+`vault-sync`), so all three vault copies point at `12357b0`. This verifies the
+selected notes, not the entire vault. The notes say review is pending and
+production convergence remains unverified; no deployment or merge is implied.
+
 ## Future status-update procedure
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.

@@ -42,7 +42,9 @@ send_tg() {
 
     # ── Hermes ────────────────────────────────────────────────────────────
     echo "🐱 Hermes Agent:"
-    CURRENT_VERSION=$(@HERMES_BIN@ --version 2>/dev/null || echo "неизвестно")
+    # Контракт A: CLI через адаптер (PM-установка v0.22.5 не гарантирует
+    # in-checkout venv; резолв лаунчера — на каждый запуск).
+    CURRENT_VERSION=$("$HOME/scripts/hermes-runtime.py" hermes --version 2>/dev/null || echo "неизвестно")
     echo "  Установлена: ${CURRENT_VERSION}"
 
     # Проверяем последний релиз на GitHub (без аутентификации — публичный API)

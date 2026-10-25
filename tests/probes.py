@@ -996,6 +996,7 @@ def probe_oa1_secret_canary_scan(tmp: Path):
     write(home / "auth.json", _oa1_auth(auth))
     write(home / "config.yaml", "")
     write(home / ".env", "")
+    _alias_source(home)
     env = dict(os.environ, HERMES_DIR=str(home),
                DISCOVER_REPORT=str(tmp / "oa1-report.json"))
     outs = []
@@ -4190,10 +4191,20 @@ R2A_CORRUPT_CFG = "providers: {broken\n"
 R2A_SHAPE_CFG = "- just\n- a list\n"
 
 
+def _alias_source(home: Path) -> Path:
+    """Минимальный источник канонических алиасов (контракт A): фикстурный
+    hermes_cli/providers.py с литеральным _ALIAS_GROUPS. Дискавери без
+    читаемого источника деградирует (provider_alias_source), поэтому
+    фикстуры, проверяющие ok-семантику через main(), обязаны его иметь."""
+    return write(home / "hermes-agent" / "hermes_cli" / "providers.py",
+                 '_ALIAS_GROUPS = {"opencode": ("opencode-zen", "zen"),}\n')
+
+
 def _r2a_home(tmp: Path, name: str) -> Path:
     home = tmp / name
     home.mkdir(parents=True, exist_ok=True)
     write(home / ".env", "R2A_K1=x\n")
+    _alias_source(home)
     return home
 
 
@@ -4648,6 +4659,7 @@ def probe_r2a_wrapper_renders_transitions(tmp: Path):
     scripts.mkdir(parents=True, exist_ok=True)
     # ~/.hermes/logs в проде создаёт deploy.sh; фикстура повторяет это
     (hermes / "logs").mkdir(parents=True, exist_ok=True)
+    _alias_source(hermes)
     shutil.copyfile(REPO / "scripts" / "integration-discover.py",
                     scripts / "integration-discover.py")
     shim_dir = tmp / "r2a-shims"
@@ -7488,6 +7500,734 @@ def probe_rr1b_install_module_neutral_gate(tmp: Path):
           f"tpl_out={res_tpl.stdout[-260:]!r}")
 
 
+# ── Контракт A: адаптер запуска Hermes v0.22.5 + канонические алиасы фолбека ──
+# PM-установка Hermes v0.22.5 удаляет in-checkout venv после коммита поколения
+# зависимостей и публикует лаунчер <checkout>/.hermes/bin/hermes; Argus жил
+# жёстким venv-путём. Фикстуры запускают НАСТОЯЩИЙ адаптер и НАСТОЯЩИЙ deploy
+# над фикстурными раскладками; ответы «лаунчера» подменяются shim'ами, сама
+# логика резолва/парсинга/отказов — нет. Пробы Linux-first (как и deploy):
+# shim'ы исполняются только под POSIX-шеллом.
+
+_HR_PY = Path(sys.executable).as_posix()
+
+
+def _hr_env(home: Path, extra: dict | None = None) -> dict:
+    return _probe_subprocess_env(home, {
+        "HERMES_DIR": (home / ".hermes").as_posix(),
+        "PYTHONIOENCODING": "utf-8", **(extra or {})})
+
+
+def _hr_adapter_run(home: Path, *args, extra_env: dict | None = None,
+                    timeout: int = 60):
+    return subprocess.run(
+        [sys.executable, str(REPO / "scripts" / "hermes-runtime.py"), *args],
+        cwd=REPO.as_posix(), env=_hr_env(home, extra_env),
+        capture_output=True, text=True, timeout=timeout)
+
+
+def _hr_fake_legacy(home: Path, argvlog: Path | None = None) -> None:
+    """Легаси-раскладка (A2): in-tree venv с shim'ами python/hermes, которые
+    при заданном логе пишут свои аргументы и делегируют настоящему python."""
+    bindir = home / ".hermes" / "hermes-agent" / "venv" / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    log = f'printf \'%s\\n\' "$*" >> "{argvlog.as_posix()}"\n' if argvlog else ""
+    _write_argv_shim(bindir, "python", log + f'exec "{_HR_PY}" "$@"\n')
+    _write_argv_shim(bindir, "hermes", log + "exit 0\n")
+
+
+def _hr_fake_managed(home: Path, *, argvlog: Path, gens: dict | None = None,
+                     exit_code: str = "0", stdout: str = "",
+                     fail_stderr: str | None = None) -> None:
+    """Managed-раскладка (A1): опубликованный лаунчер <root>/.hermes/bin/hermes.
+
+    Граница --print-runtime-command отвечает shim'ом: JSON-argv по шаблону
+    gens[HR_GEN] (интерпретатор поколения + запрошенный скрипт $5), либо
+    дефолт [настоящий python, -I, -c, BOOT, $5]. exit_code/stdout/fail_stderr
+    моделируют отказы; venv при этом НЕ создаётся (откат на него запрещён)."""
+    bindir = home / ".hermes" / "hermes-agent" / ".hermes" / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    if fail_stderr is not None:
+        body = [f'printf \'%s\\n\' "{fail_stderr}" >&2', f'exit "{exit_code}"', ""]
+    else:
+        body = [f'printf \'%s\\n\' "$*" >> "{argvlog.as_posix()}"']
+        if stdout:
+            body.append(f'printf \'%s\' "{stdout}"')
+        if gens:
+            body += [
+                'if [ "$1" = "--print-runtime-command" ]; then',
+                '  case "${HR_GEN-}" in']
+            for gen, py in gens.items():
+                body.append(
+                    f'    {gen}) printf \'["%s", "-I", "-c", "{gen}"]\\n\' '
+                    f'"{Path(py).as_posix()}" ;;')
+            body += ['  esac', '  exit "${HR_LAUNCH_RC:-0}"', 'fi']
+        else:
+            body += [
+                'if [ "$1" = "--print-runtime-command" ]; then',
+                f'  printf \'["%s", "-I", "-c", "BOOT"]\\n\' "{_HR_PY}"',
+                '  exit "${HR_LAUNCH_RC:-0}"',
+                'fi']
+        body += [f'exit "{exit_code}"', ""]
+    shim = bindir / "hermes"
+    shim.write_text("#!/bin/sh\n" + "\n".join(body), encoding="utf-8",
+                    newline="\n")
+    shim.chmod(0o755)
+
+
+def _hr_script(home: Path) -> Path:
+    """Безобидный целевой скрипт Argus для run-script (A1/A4)."""
+    return write(home / "scripts" / "target-script.py",
+                 "import sys\nprint('target-ok')\n")
+
+
+def probe_hr_adapter_legacy_layout(tmp: Path):
+    """A2: легаси-раскладка без опубликованного лаунчера — CLI и run-script
+    работают через in-tree venv; check честно зелёный."""
+    home = tmp / "hr-legacy-home"
+    argvlog = tmp / "hr-legacy-argv.log"
+    _hr_fake_legacy(home, argvlog=argvlog)
+    script = _hr_script(home)
+    r_cli = _hr_adapter_run(home, "hermes", "--version")
+    r_run = _hr_adapter_run(home, "run-script", str(script), "--flag")
+    r_check = _hr_adapter_run(home, "check")
+    recorded = argvlog.read_text(encoding="utf-8").splitlines() \
+        if argvlog.exists() else []
+    ok = (r_cli.returncode == 0 and "--version" in recorded
+          and r_run.returncode == 0 and "target-ok" in r_run.stdout
+          and f"{script.as_posix()} --flag" in recorded
+          and r_check.returncode == 0 and "legacy" in r_check.stdout)
+    check("hr_adapter_legacy_layout", ok,
+          f"rc=({r_cli.returncode},{r_run.returncode},{r_check.returncode}) "
+          f"recorded={recorded!r} run_err={r_run.stderr.strip()[:80]!r} "
+          f"check_out={r_check.stdout.strip()[:60]!r}")
+
+
+def probe_hr_adapter_managed_layout(tmp: Path):
+    """A1/A4: managed-раскладка — CLI и run-script идут через опубликованный
+    лаунчер; смена поколения между запусками переразрешается адаптером
+    (второй exec получает интерпретатор ДРУГОГО поколения; путь не
+    персистится — адаптер не пишет ничего на диск)."""
+    home = tmp / "hr-managed-home"
+    launcher_log = tmp / "hr-managed-launcher.log"
+    gen_log = {}
+    gens = {}
+    for gen in ("g1", "g2"):
+        log = tmp / f"hr-managed-{gen}.log"
+        gen_log[gen] = log
+        shim = write(tmp / f"hr-{gen}-py",
+                     f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{log.as_posix()}"\n')
+        shim.chmod(0o755)
+        gens[gen] = shim
+    _hr_fake_managed(home, argvlog=launcher_log, gens=gens)
+    script = _hr_script(home)
+    r1 = _hr_adapter_run(home, "run-script", str(script), extra_env={"HR_GEN": "g1"})
+    r2 = _hr_adapter_run(home, "run-script", str(script), extra_env={"HR_GEN": "g2"})
+    r_cli = _hr_adapter_run(home, "hermes", "--version", extra_env={"HR_GEN": "g1"})
+    queries = launcher_log.read_text(encoding="utf-8").splitlines() \
+        if launcher_log.exists() else []
+    e1 = gen_log["g1"].read_text(encoding="utf-8").splitlines() \
+        if gen_log["g1"].exists() else []
+    e2 = gen_log["g2"].read_text(encoding="utf-8").splitlines() \
+        if gen_log["g2"].exists() else []
+    # Граница вызывается БЕЗ --module runpy: реальные v0.22.5 runpy- argv
+    # трактует аргумент как ИМЯ модуля, поэтому адаптер резолвит интерпретатор
+    # дефолтным запросом и запускает скрипт компоновкой апстримовской формы:
+    # [interpreter, -I, -c, RUNNER, root, script] — с hermes_bootstrap.
+    ok = (r1.returncode == 0 and r2.returncode == 0 and r_cli.returncode == 0
+          and len([q for q in queries if "--print-runtime-command" in q]) == 2
+          and not any("--module" in q for q in queries)
+          and len(e1) == 1 and "-c" in e1[0]
+          and e1[0].endswith(script.as_posix())
+          and len(e2) == 1 and "-c" in e2[0]
+          and e2[0].endswith(script.as_posix())
+          and any("--version" in q for q in queries))
+    check("hr_adapter_managed_layout", ok,
+          f"rc=({r1.returncode},{r2.returncode},{r_cli.returncode}) "
+          f"queries={queries!r} e1={e1!r} e2={e2!r} err={r2.stderr.strip()[:80]!r}")
+
+
+def probe_hr_adapter_failures(tmp: Path):
+    """A3: отказ лаунчера — bounded, без сырого дампа ребёнка и БЕЗ отката на
+    протухший venv; таймаут границы ограничен."""
+    problems = []
+
+    # 1. Лаунчер завершился с ошибкой: код 2, причина классифицирована,
+    #    stderr ребёнка НЕ пересказан, venv НЕ использован.
+    home = tmp / "hr-fail-exit-home"
+    venv_log = tmp / "hr-fail-exit-venv.log"
+    _hr_fake_legacy(home, argvlog=venv_log)
+    _hr_fake_managed(home, argvlog=tmp / "hr-fail-exit-launcher.log",
+                     exit_code="7", fail_stderr="CHILD_DIAGNOSTIC_CANARY")
+    r = _hr_adapter_run(home, "run-script", str(_hr_script(home)))
+    if not (r.returncode == 2 and "7" in r.stderr
+            and "CHILD_DIAGNOSTIC_CANARY" not in (r.stdout + r.stderr)
+            and "Traceback" not in r.stderr):
+        problems.append(f"exit7: rc={r.returncode} err={r.stderr[-120:]!r}")
+    if venv_log.exists() and venv_log.read_text(encoding="utf-8").strip():
+        problems.append("exit7: произошёл откат на venv")
+
+    # 2. Лаунчер вернул не-JSON → код 3.
+    home = tmp / "hr-fail-garbage-home"
+    _hr_fake_managed(home, argvlog=tmp / "hr-fail-garbage-launcher.log",
+                     stdout="garbage-not-json\n")
+    r = _hr_adapter_run(home, "run-script", str(_hr_script(home)))
+    if not (r.returncode == 3 and "не-JSON" in r.stderr
+            and "Traceback" not in r.stderr):
+        problems.append(f"garbage: rc={r.returncode} err={r.stderr[-120:]!r}")
+
+    # 3. Лаунчер вернул JSON с несуществующим интерпретатором → код 3, и путь
+    #    из ответа лаунчера НЕ пересказывается в диагностике (A3, canary).
+    home = tmp / "hr-fail-missing-py-home"
+    _hr_fake_managed(home, argvlog=tmp / "hr-fail-mp-launcher.log",
+                     gens={"g1": tmp / "hr-no-such-interpreter"})
+    r = _hr_adapter_run(home, "run-script", str(_hr_script(home)),
+                        extra_env={"HR_GEN": "g1"})
+    if not (r.returncode == 3 and "Traceback" not in r.stderr
+            and "hr-no-such-interpreter" not in r.stderr
+            and "отсутствует" in r.stderr):
+        problems.append(f"missing-py: rc={r.returncode} err={r.stderr[-120:]!r}")
+
+    # 3b. Интерпретатор существует, но не исполняем → код 3, не exec-креш.
+    home = tmp / "hr-fail-noexec-py-home"
+    dead_py = write(tmp / "hr-dead-interpreter", "not an executable program\n")
+    dead_py.chmod(0o644)
+    _hr_fake_managed(home, argvlog=tmp / "hr-fail-nxpy-launcher.log",
+                     gens={"g1": dead_py})
+    r = _hr_adapter_run(home, "run-script", str(_hr_script(home)),
+                        extra_env={"HR_GEN": "g1"})
+    if not (r.returncode == 3 and "не исполняем" in r.stderr
+            and "Traceback" not in r.stderr):
+        problems.append(f"noexec-py: rc={r.returncode} err={r.stderr[-120:]!r}")
+
+    # 3c. Исполнимый, но не программируемый файл (exec ENOEXEC) → bounded
+    #     отказ кода 2, без traceback.
+    home = tmp / "hr-fail-enoexec-home"
+    junk = write(tmp / "hr-junk-interpreter", "\x7fELF-nope\n")
+    junk.chmod(0o755)
+    _hr_fake_managed(home, argvlog=tmp / "hr-fail-enoexec-launcher.log",
+                     gens={"g1": junk})
+    r = _hr_adapter_run(home, "run-script", str(_hr_script(home)),
+                        extra_env={"HR_GEN": "g1"})
+    if not (r.returncode == 2 and "Traceback" not in r.stderr):
+        problems.append(f"enoexec: rc={r.returncode} err={r.stderr[-120:]!r}")
+
+    # 3d. Висячая ссылка на лаунчер при живом легаси-venv — явный отказ,
+    #     откат на venv запрещён (A3).
+    home = tmp / "hr-fail-dangling-home"
+    venv_log = tmp / "hr-fail-dangling-venv.log"
+    _hr_fake_legacy(home, argvlog=venv_log)
+    launcher_path = (home / ".hermes" / "hermes-agent" / ".hermes" / "bin"
+                     / "hermes")
+    launcher_path.parent.mkdir(parents=True, exist_ok=True)
+    if launcher_path.exists() or launcher_path.is_symlink():
+        launcher_path.unlink()
+    launcher_path.symlink_to(tmp / "hr-no-such-launcher-target")
+    r = _hr_adapter_run(home, "hermes", "--version")
+    venv_used = (venv_log.exists()
+                 and venv_log.read_text(encoding="utf-8").strip())
+    if not (r.returncode == 2 and not venv_used
+            and "Traceback" not in r.stderr):
+        problems.append(f"dangling: rc={r.returncode} venv_used={bool(venv_used)} "
+                        f"err={r.stderr[-100:]!r}")
+
+    # 4. Лаунчер есть, но не исполняем; venv рабочий — отката быть не должно.
+    home = tmp / "hr-fail-noexec-home"
+    _hr_fake_managed(home, argvlog=tmp / "hr-fail-noexec-launcher.log")
+    (home / ".hermes" / "hermes-agent" / ".hermes" / "bin" / "hermes").chmod(0o644)
+    r = _hr_adapter_run(home, "hermes", "--version")
+    if not (r.returncode == 2 and "не исполняем" in r.stderr):
+        problems.append(f"noexec: rc={r.returncode} err={r.stderr[-120:]!r}")
+
+    # 5. Нет ни лаунчера, ни venv → явный отказ без traceback.
+    home = tmp / "hr-fail-empty-home"
+    (home / ".hermes" / "hermes-agent").mkdir(parents=True, exist_ok=True)
+    r = _hr_adapter_run(home, "hermes", "--version")
+    if not (r.returncode == 2 and "отсутствует" in r.stderr
+            and "Traceback" not in r.stderr):
+        problems.append(f"empty: rc={r.returncode} err={r.stderr[-120:]!r}")
+
+    # 6. Таймаут границы — bounded RuntimeUnavailable (в-process, лимит 1с).
+    hr = load_module("hermes-runtime")
+    home = tmp / "hr-fail-slow-home"
+    bindir = home / ".hermes" / "hermes-agent" / ".hermes" / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    shim = write(bindir / "hermes", "#!/bin/sh\nsleep 5\n")
+    shim.chmod(0o755)
+    old_hermes_dir = os.environ.get("HERMES_DIR")
+    os.environ["HERMES_DIR"] = (home / ".hermes").as_posix()
+    try:
+        with override_attr(hr, "LAUNCH_QUERY_TIMEOUT", 1):
+            try:
+                hr.resolve_runtime_interpreter(hr.hermes_root())
+                problems.append("slow: исключения не было")
+            except hr.RuntimeUnavailable:
+                pass
+            except Exception as exc:  # другой класс — нарушение границы
+                problems.append(f"slow: {exc.__class__.__name__}: {exc}")
+    finally:
+        if old_hermes_dir is None:
+            os.environ.pop("HERMES_DIR", None)
+        else:
+            os.environ["HERMES_DIR"] = old_hermes_dir
+
+    check("hr_adapter_failures", not problems, f"problems={problems}")
+
+
+def probe_hr_preflight_managed(tmp: Path):
+    """A1: deploy preflight (H3) принимает PM-раскладку без in-checkout venv
+    через НАСТОЯЩИЙ адаптер check; отказной лаунчер останавливает deploy
+    (fail closed, без «успешной» установки)."""
+    problems = []
+    # 1. Managed-раскладка, CORE=ON: preflight зелёный, деплой проходит.
+    home = tmp / "hr-preflight-managed-home"
+    shim = tmp / "hr-preflight-managed-shim"
+    shim.mkdir(parents=True, exist_ok=True)
+    _rr1b_host_shims(shim)
+    _hr_fake_managed(home, argvlog=tmp / "hr-preflight-managed-launcher.log")
+    r = _rr1b_deploy_env(tmp, "hr-managed", home, shim,
+                         _rr1b_modules(core=True), {})
+    if not (r.returncode == 0 and "✅ payload проверен" in r.stdout
+            and (home / "scripts" / "hermes-runtime.py").is_file()):
+        problems.append(f"managed: rc={r.returncode} "
+                        f"out={(r.stdout + r.stderr)[-200:]!r}")
+
+    # 2. Отказной лаунчер: deploy обязан остановиться ДО развёртки.
+    home = tmp / "hr-preflight-broken-home"
+    shim = tmp / "hr-preflight-broken-shim"
+    shim.mkdir(parents=True, exist_ok=True)
+    _rr1b_host_shims(shim)
+    _hr_fake_managed(home, argvlog=tmp / "hr-preflight-broken-launcher.log",
+                     exit_code="9", fail_stderr="BROKEN_LAUNCHER_CANARY")
+    r = _rr1b_deploy_env(tmp, "hr-broken", home, shim,
+                         _rr1b_modules(core=True), {})
+    out = r.stdout + r.stderr
+    if not (r.returncode != 0 and "Рантайм Hermes недоступен" in out
+            and "не устанавливает Hermes" in out):
+        problems.append(f"broken: rc={r.returncode} out={out[-200:]!r}")
+
+    check("hr_preflight_managed", not problems, f"problems={problems}")
+
+
+def probe_hr_payload_static_and_module_deploys(tmp: Path):
+    """A4/A5: в owned-скриптах и юнитах нет venv-путей и @HERMES_BIN@; юниты
+    идут через адаптер; каждый module-only деплой несёт адаптер рядом со
+    своими потребителями; существующий base-юнит Hermes не перезаписывается."""
+    problems = []
+    # 1. Статика.
+    offenders = []
+    for rel in ("deploy.sh", "scripts/webhook.py", "scripts/health-check-v2.py",
+                "scripts/hermes-gateway-pids.py", "scripts/check-updates.sh",
+                "modules/systemd/hermes-gateway.service",
+                "modules/systemd/hermes-dashboard.service",
+                "modules/systemd/monitoring-bot-poller.service"):
+        text = (REPO / rel).read_text(encoding="utf-8")
+        if "hermes-agent/venv" in text or "@HERMES_BIN@" in text:
+            offenders.append(rel)
+    if offenders:
+        problems.append(f"static offenders={offenders}")
+    for unit in ("hermes-gateway.service", "hermes-dashboard.service"):
+        text = (REPO / "modules" / "systemd" / unit).read_text(encoding="utf-8")
+        if "hermes-runtime.py" not in text:
+            problems.append(f"{unit}: ExecStart не через адаптер")
+        if 'Environment="HERMES_HOME=@HERMES_DIR@"' not in text:
+            problems.append(f"{unit}: нет привязки HERMES_HOME к выбранному корню")
+    # Poller stdlib-only: системный python3, без venv-путей и без адаптера.
+    poller = (REPO / "modules" / "systemd" / "monitoring-bot-poller.service") \
+        .read_text(encoding="utf-8")
+    if "ExecStart=/usr/bin/python3 %h/.hermes/scripts/monitoring-bot-poller.py" \
+            not in poller or "venv" in poller:
+        problems.append("monitoring-bot-poller.service: ExecStart не системный python3")
+
+    # 2. Module-only деплои (легаси-фикстура = A2-совместимый preflight).
+    #    TG-only добавляет curl-shim: register-commands.sh не ходит в сеть.
+    deploy_cases = [
+        ("core-only", _rr1b_modules(core=True), False,
+         [(("scripts", "hermes-runtime.py"), True),
+          ((".hermes", "scripts", "hermes-runtime.py"), False)]),
+        ("int-only", _rr1b_modules(integrations=True), False,
+         [(("scripts", "hermes-runtime.py"), True),
+          ((".hermes", "scripts", "hermes-runtime.py"), False)]),
+        ("tg-only", _rr1b_modules(tg_bot=True), True,
+         [((".hermes", "scripts", "hermes-runtime.py"), True),
+          (("scripts", "hermes-runtime.py"), True)]),
+    ]
+    for tag, modules, needs_curl_shim, expectations in deploy_cases:
+        home = tmp / f"rr1b-deploy-home-hr-{tag}"
+        shim = _rr1a_cron_shims(tmp, f"rr1b-hr-{tag}")
+        _rr1b_host_shims(shim)
+        if needs_curl_shim:
+            _write_argv_shim(shim, "curl", "exit 0\n")
+        _rr1b_fake_hermes(home)
+        config = write(tmp / f"rr1b-hr-{tag}-config.env", modules)
+        env = _probe_subprocess_env(home, {
+            "HOME": home.as_posix(),
+            "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+            "CRONTAB_FIXTURE": (tmp / f"rr1b-hr-{tag}-cron.txt").as_posix(),
+            "CRON_FILE": (tmp / f"rr1b-hr-{tag}-proposal.txt").as_posix()})
+        result = subprocess.run(
+            ["bash", (REPO / "deploy.sh").as_posix(), config.as_posix()],
+            cwd=REPO.as_posix(), env=env, capture_output=True, text=True,
+            timeout=180)
+        if result.returncode != 0:
+            problems.append(f"{tag}: deploy rc={result.returncode} "
+                            f"out={(result.stdout + result.stderr)[-160:]!r}")
+            continue
+        for rel, want in expectations:
+            got = home.joinpath(*rel).is_file()
+            if got is not want:
+                problems.append(f"{tag}: {'/'.join(rel)}={got} (want {want})")
+
+    # 3. Существующий base-юнит Hermes остаётся byte-identical (A5).
+    home = tmp / "rr1b-deploy-home-hr-base-skip"
+    shim = _rr1a_cron_shims(tmp, "rr1b-hr-base-skip")
+    _rr1b_host_shims(shim)
+    _rr1b_fake_hermes(home)
+    marker = "# HERMES-OWNED BASE UNIT — не трогать\nExecStart=native\n"
+    units = home / ".config" / "systemd" / "user"
+    units.mkdir(parents=True, exist_ok=True)
+    write(units / "hermes-gateway.service", marker)
+    config = write(tmp / "rr1b-hr-base-skip-config.env", _rr1b_modules(core=True))
+    env = _probe_subprocess_env(home, {
+        "HOME": home.as_posix(),
+        "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "CRONTAB_FIXTURE": (tmp / "rr1b-hr-base-skip-cron.txt").as_posix(),
+        "CRON_FILE": (tmp / "rr1b-hr-base-skip-proposal.txt").as_posix()})
+    subprocess.run(["bash", (REPO / "deploy.sh").as_posix(), config.as_posix()],
+                   cwd=REPO.as_posix(), env=env, capture_output=True,
+                   text=True, timeout=180)
+    if (units / "hermes-gateway.service").read_text(encoding="utf-8") != marker:
+        problems.append("base unit перезаписан")
+
+    check("hr_payload_static_and_module_deploys", not problems,
+          f"problems={problems}")
+
+
+def probe_hr_gateway_pids_adapter(tmp: Path):
+    """A3/A2: помощник матчера честен при сбое адаптера (rc 2 — «не проверил»,
+    не «мёртв») и не содержит активных venv-путей."""
+    problems = []
+    helper_src = (REPO / "scripts" / "hermes-gateway-pids.py").read_text(encoding="utf-8")
+    for line in helper_src.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if "venv/bin" in stripped or "VENV_PYTHON" in stripped:
+            problems.append(f"helper: активная venv-ссылка: {stripped[:70]}")
+
+    # 1. Адаптер отвечает отказом → честный rc 2, не 1 и не крах.
+    home = tmp / "hr-gwp-fail-home"
+    scripts = home / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(REPO / "scripts" / "hermes-gateway-pids.py",
+                    scripts / "hermes-gateway-pids.py")
+    adapter_shim = write(scripts / "hermes-runtime.py",
+                         "import sys\nsys.stderr.write('ADAPTER_FAIL_CANARY\\n')\nsys.exit(3)\n")
+    adapter_shim.chmod(0o755)
+    env = _probe_subprocess_env(home, {"HOME": home.as_posix()})
+    r = subprocess.run([sys.executable, str(scripts / "hermes-gateway-pids.py")],
+                       cwd=REPO.as_posix(), env=env, capture_output=True,
+                       text=True, timeout=60)
+    if not (r.returncode == 2 and "Traceback" not in r.stderr):
+        problems.append(f"adapter-fail: rc={r.returncode} err={r.stderr[-120:]!r}")
+
+    # 2. Помощник без адаптера и без checkout — честный rc 2 без ре-exec.
+    home2 = tmp / "hr-gwp-noop-home"
+    scripts2 = home2 / "scripts"
+    scripts2.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(REPO / "scripts" / "hermes-gateway-pids.py",
+                    scripts2 / "hermes-gateway-pids.py")
+    env2 = _probe_subprocess_env(home2, {"HOME": home2.as_posix()})
+    r2 = subprocess.run([sys.executable, str(scripts2 / "hermes-gateway-pids.py")],
+                        cwd=REPO.as_posix(), env=env2, capture_output=True,
+                        text=True, timeout=60)
+    if not (r2.returncode == 2 and "Traceback" not in r2.stderr
+            and "матчер недоступен" in r2.stderr):
+        problems.append(f"no-adapter: rc={r2.returncode} err={r2.stderr[-120:]!r}")
+
+    # 3. Ребёнок-рантайм погиб с кодом 1 БЕЗ подтверждения итога (креш python
+    #    до нашего кода) — НЕ ложное «не найден»: помощник отвечает 2.
+    home3 = tmp / "hr-gwp-crash1-home"
+    scripts3 = home3 / "scripts"
+    scripts3.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(REPO / "scripts" / "hermes-gateway-pids.py",
+                    scripts3 / "hermes-gateway-pids.py")
+    crash_shim = write(scripts3 / "hermes-runtime.py",
+                       "import sys\nsys.exit(1)\n")
+    crash_shim.chmod(0o755)
+    env3 = _probe_subprocess_env(home3, {"HOME": home3.as_posix()})
+    r3 = subprocess.run([sys.executable, str(scripts3 / "hermes-gateway-pids.py")],
+                        cwd=REPO.as_posix(), env=env3, capture_output=True,
+                        text=True, timeout=60)
+    if r3.returncode != 2:
+        problems.append(f"crash1: rc={r3.returncode} (ожидался 2, не ложная 1)")
+
+    # 4. Ошибка создания sentinel-файла — НЕ необработанный rc 1: помощник
+    #    падает до ложного «не найден» (возвращает False → matcher-None → 2).
+    gwp = load_module("hermes-gateway-pids")
+    home4 = tmp / "hr-gwp-mkstemp-home"
+    scripts4 = home4 / "scripts"
+    scripts4.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(REPO / "scripts" / "hermes-gateway-pids.py",
+                    scripts4 / "hermes-runtime.py")  # адаптер присутствует
+    real_mkstemp = gwp.tempfile.mkstemp
+
+    def _boom(*a, **k):
+        raise OSError("mkstemp canary failure")
+
+    gwp.tempfile.mkstemp = _boom
+    try:
+        fell_through = gwp._reexec_under_runtime() is False
+    except SystemExit:
+        fell_through = False
+    finally:
+        gwp.tempfile.mkstemp = real_mkstemp
+    if not fell_through:
+        problems.append("mkstemp-fail: не честный отказ до ложного ответа")
+
+    # 5. Нестандартный HERMES_DIR: помощник привязывается к выбранному корню
+    #    (та же цепочка, что адаптер), а не только к домашнему профилю.
+    home5 = tmp / "hr-gwp-hermesdir-home"
+    custom = tmp / "hr-custom-hermes-home"
+    scripts5 = home5 / "scripts"
+    scripts5.mkdir(parents=True, exist_ok=True)
+    env5 = _probe_subprocess_env(
+        home5, {"HOME": home5.as_posix(), "HERMES_DIR": custom.as_posix()})
+    r5 = subprocess.run([sys.executable, str(REPO / "scripts"
+                                                / "hermes-gateway-pids.py")],
+                        cwd=REPO.as_posix(), env=env5, capture_output=True,
+                        text=True, timeout=60)
+    if not (r5.returncode == 2
+            and (custom / "hermes-agent").as_posix() in r5.stderr):
+        problems.append(f"hermes-dir: rc={r5.returncode} "
+                        f"err={r5.stderr[-120:]!r}")
+
+    check("hr_gateway_pids_adapter", not problems, f"problems={problems}")
+
+
+def probe_hr_consumer_chains(hc, wh, tmp: Path):
+    """Полные цепочки потребителей через адаптер: MCP-check и kanban доходят
+    до CLI Hermes с правильным режимом (`hermes`), а не до rc 64 адаптера."""
+    problems = []
+    home = tmp / "hr-chains-home"
+    cli_log = tmp / "hr-chains-cli.log"
+    _hr_fake_legacy(home, argvlog=cli_log)
+    adapter = REPO / "scripts" / "hermes-runtime.py"
+
+    # 1. check_mcp через дефолтный адаптер: shim CLI получает ровно
+    #    `mcp test <name>` (режим `hermes` съеден адаптером), маркер парсится.
+    #    Shim-CLI печатает маркер подключения: подключаем это в сам shim.
+    bindir = home / ".hermes" / "hermes-agent" / "venv" / "bin"
+    write(bindir / "hermes",
+          f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{cli_log.as_posix()}"\n'
+          'printf "✓ Connected (7ms)\\n"\nexit 0\n')
+    bindir_hermes = bindir / "hermes"
+    bindir_hermes.chmod(0o755)
+    old_env = os.environ.get("HERMES_DIR")
+    os.environ["HERMES_DIR"] = (home / ".hermes").as_posix()
+    try:
+        ok, detail = hc.check_mcp(str(adapter), "probe-server")
+    finally:
+        if old_env is None:
+            os.environ.pop("HERMES_DIR", None)
+        else:
+            os.environ["HERMES_DIR"] = old_env
+    recorded = cli_log.read_text(encoding="utf-8").splitlines() \
+        if cli_log.exists() else []
+    if not (ok is True and "connected in 7ms" in detail
+            and "mcp test probe-server" in recorded
+            and "hermes mcp test" not in " ".join(recorded)):
+        problems.append(f"mcp-chain: ok={ok} detail={detail!r} recorded={recorded!r}")
+
+    # 2. kanban через адаптер: shim получает `kanban list`, вывод парсится.
+    write(bindir / "hermes",
+          f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{cli_log.as_posix()}"\n'
+          'printf "● task-one\\n"\nexit 0\n')
+    bindir_hermes.chmod(0o755)
+    cli_log.unlink(missing_ok=True)
+    old_bin, old_env = wh.HERMES_BIN, os.environ.get("HERMES_DIR")
+    wh.HERMES_BIN = str(adapter)
+    os.environ["HERMES_DIR"] = (home / ".hermes").as_posix()
+    try:
+        snapshot = wh.handle_kanban_snapshot()
+    finally:
+        wh.HERMES_BIN = old_bin
+        if old_env is None:
+            os.environ.pop("HERMES_DIR", None)
+        else:
+            os.environ["HERMES_DIR"] = old_env
+    recorded = cli_log.read_text(encoding="utf-8").splitlines() \
+        if cli_log.exists() else []
+    if not ("task-one" in snapshot
+            and "kanban list" in " ".join(recorded)
+            and "hermes kanban" not in " ".join(recorded)):
+        problems.append(f"kanban-chain: snap={snapshot[:60]!r} recorded={recorded!r}")
+
+    check("hr_consumer_chains", not problems, f"problems={problems}")
+
+
+def probe_hr_healthcheck_and_webhook_adapter(hc, wh):
+    """A1/A3: дефолт CLI — соседний адаптер; недоступный рантайм — bounded
+    fail, не крах движка; webhook зовёт CLI через соседний адаптер."""
+    problems = []
+    if hc.DEFAULT_HERMES_BIN.name != "hermes-runtime.py" \
+            or not hc.DEFAULT_HERMES_BIN.is_file():
+        problems.append(f"hc default={hc.DEFAULT_HERMES_BIN}")
+    ok, detail = hc.check_mcp(str(REPO / "scripts" / "no-such-adapter"), "x")
+    if not (ok is False and detail == "mcp: hermes runtime unavailable"):
+        problems.append(f"mcp missing-adapter: {ok}/{detail!r}")
+    expected = str(Path(wh.__file__).resolve().parent / "hermes-runtime.py")
+    if wh.HERMES_BIN != expected or not Path(wh.HERMES_BIN).is_file():
+        problems.append(f"webhook HERMES_BIN={wh.HERMES_BIN}")
+    check("hr_healthcheck_and_webhook_adapter", not problems,
+          f"problems={problems}")
+
+
+def probe_s1_alias_canonical(disc, tmp: Path):
+    """A6/A7: каноническая дедупликация фолбека — зеркало
+    fallback_config._entry_identity v0.22.5; несчитаемый источник — last-good
+    деградация provider_alias_source без ложных removed; неизвестный
+    провайдер остаётся lower(); содержимое конфига не утекает в отчёт."""
+    problems = []
+
+    ALIAS_SRC = (
+        "_ALIAS_GROUPS = {\n"
+        "    'opencode': ('opencode-zen', 'zen'),\n"
+        "    'zai': ('glm', 'zhipu'),\n"
+        "}\n")
+
+    def cfg_home(name: str, providers_py: str | None) -> Path:
+        home = tmp / name
+        home.mkdir(parents=True, exist_ok=True)
+        write(home / ".env", "")
+        if providers_py is not None:
+            write(home / "hermes-agent" / "hermes_cli" / "providers.py",
+                  providers_py)
+        return home
+
+    def run(home: Path, cfg_text: str, baseline: bool = True):
+        if cfg_text != "unused":
+            write(home / "config.yaml", cfg_text)
+        args = ["--baseline"] if baseline else []
+        env = dict(os.environ, HERMES_DIR=str(home), PYTHONIOENCODING="utf-8")
+        return subprocess.run(
+            ["python3", str(REPO / "scripts" / "integration-discover.py"), *args],
+            cwd=REPO.as_posix(), env=env, capture_output=True, text=True,
+            timeout=60)
+
+    def snap_of(home: Path) -> dict:
+        return json.loads((home / "state" / "integration-snapshot.json")
+                          .read_text(encoding="utf-8"))
+
+    def fallback_rows(snap):
+        return [k for k in snap["entities"] if k.startswith("model:fallback")]
+
+    # A6: пара алиасов одной модели/endpoint дедуплицируется; поля — от
+    # ПЕРВОГО вхождения; легаси fallback_model идёт после fallback_providers.
+    home = cfg_home("s1-pair", ALIAS_SRC)
+    cfg = (
+        "fallback_providers:\n"
+        "  - provider: opencode-zen\n"
+        "    model: glm-4.6\n"
+        "    base_url: https://opencode.test/zen/\n"
+        "    key_env: ZEN_KEY\n"
+        "  - provider: opencode\n"
+        "    model: glm-4.6\n"
+        "    base_url: https://opencode.test/zen\n"
+        "    key_env: OC_KEY\n"
+        "fallback_model:\n"
+        "  - provider: opencode\n"
+        "    model: glm-4.6\n"
+        "    base_url: https://opencode.test/zen\n"
+        "  - provider: zhipu\n"
+        "    model: glm-4.6\n"
+        "    base_url: https://zhipu.test\n")
+    r = run(home, cfg)
+    snap = snap_of(home)
+    rows = fallback_rows(snap)
+    first = snap["entities"].get("model:fallback", {})
+    if not (r.returncode == 0 and rows == ["model:fallback", "model:fallback:1"]
+            and first.get("provider") == "opencode-zen"
+            and first.get("key_env") == "ZEN_KEY"
+            and snap["entities"].get("model:fallback:1", {}).get("provider") == "zhipu"):
+        problems.append(f"pair: rc={r.returncode} rows={rows} first={first}")
+
+    # Разные endpoints остаются разными.
+    home = cfg_home("s1-distinct", ALIAS_SRC)
+    run(home,
+        "fallback_providers:\n"
+        "  - provider: opencode-zen\n    model: glm-4.6\n    base_url: https://a.test\n"
+        "  - provider: opencode\n    model: glm-4.6\n    base_url: https://b.test\n")
+    if fallback_rows(snap_of(home)) != ["model:fallback", "model:fallback:1"]:
+        problems.append(f"distinct: rows={fallback_rows(snap_of(home))}")
+
+    # A7: неизвестный провайдер остаётся lower() и НЕ схлопывается с каноном.
+    home = cfg_home("s1-unknown", ALIAS_SRC)
+    run(home,
+        "fallback_providers:\n"
+        "  - provider: Custom-X\n    model: m\n    base_url: https://c.test\n"
+        "  - provider: custom-x\n    model: m\n    base_url: https://c.test\n")
+    if fallback_rows(snap_of(home)) != ["model:fallback"]:
+        problems.append(f"unknown: rows={fallback_rows(snap_of(home))}")
+
+    # A7: malformed _ALIAS_GROUPS → деградация provider_alias_source,
+    # last-good заморожен (никаких ложных removed/переключений идентичности).
+    home = cfg_home("s1-broken", ALIAS_SRC)
+    run(home,
+        "fallback_providers:\n"
+        "  - provider: opencode-zen\n    model: m\n    base_url: https://a.test\n")
+    good = snap_of(home)
+    write(home / "hermes-agent" / "hermes_cli" / "providers.py",
+          "_ALIAS_GROUPS = ('not', 'a', 'dict')\n")
+    write(home / "config.yaml",
+          "fallback_providers:\n"
+          "  - provider: zhipu\n    model: m2\n    base_url: https://z.test\n")
+    r_bad = run(home, "unused", baseline=False)
+    bad = snap_of(home)
+    if not (r_bad.returncode == 2
+            and bad["discovery"]["status"] == "degraded"
+            and bad["discovery"]["reason_code"] == "provider_alias_source"
+            and bad["entities"] == good["entities"]
+            and bad["updated"] == good["updated"]):
+        problems.append(f"broken: rc={r_bad.returncode} "
+                        f"disc={bad.get('discovery')} "
+                        f"same_entities={bad['entities'] == good['entities']}")
+
+    # A7: источник отсутствует целиком → та же деградация, без утечек
+    # содержимого конфига в отчёт.
+    home = cfg_home("s1-missing", None)
+    canary = "S1_SECRET_CANARY_VALUE"
+    r = run(home,
+            f"fallback_providers:\n  - provider: {canary}\n    model: m\n")
+    report = r.stdout + r.stderr
+    if not (r.returncode == 2 and "provider_alias_source" in report
+            and canary not in report and "Traceback" not in r.stderr):
+        problems.append(f"missing: rc={r.returncode} canary_leak={canary in report}")
+
+    # Восстановление: починка источника → ok; переход degraded→ok отчётный.
+    home = cfg_home("s1-recover", "_ALIAS_GROUPS = ('broken',)\n")
+    run(home, "fallback_providers:\n  - provider: opencode\n    model: m\n")
+    write(home / "hermes-agent" / "hermes_cli" / "providers.py", ALIAS_SRC)
+    r2 = run(home, "unused", baseline=False)
+    snap2 = snap_of(home)
+    events2 = [e["event"] for e in json.loads(r2.stdout)["events"]]
+    if not (snap2["discovery"]["status"] == "ok"
+            and "discovery_recovered" in events2
+            and fallback_rows(snap2) == ["model:fallback"]):
+        problems.append(f"recover: disc={snap2['discovery']} events={events2}")
+
+    # Легаси-вызывающий (in-process, provider_aliases=None) — lower()-семантика:
+    # пара алиасов остаётся различимой без таблицы.
+    entities, _ = disc.extract_entities(
+        {"fallback_providers": [
+            {"provider": "opencode-zen", "model": "m", "base_url": "https://a"},
+            {"provider": "opencode", "model": "m", "base_url": "https://a"}]},
+        provider_aliases=None)
+    if len([k for k in entities if k.startswith("model:fallback")]) != 2:
+        problems.append("legacy-caller: пары не различимы без таблицы")
+
+    check("s1_alias_canonical", not problems, f"problems={problems}")
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="argus-probes-"))
     hc = load_module("health-check-v2")
@@ -7720,6 +8460,17 @@ def main() -> int:
     probe_gwmatcher_no_argv_substring(tmp)
     probe_gwmatcher_helper_present(tmp)
     probe_gwmatcher_rc2_not_death(tmp)
+
+    # Контракт A: адаптер запуска Hermes v0.22.5 + канонические алиасы фолбека
+    probe_hr_adapter_legacy_layout(tmp)
+    probe_hr_adapter_managed_layout(tmp)
+    probe_hr_adapter_failures(tmp)
+    probe_hr_preflight_managed(tmp)
+    probe_hr_payload_static_and_module_deploys(tmp)
+    probe_hr_gateway_pids_adapter(tmp)
+    probe_hr_consumer_chains(hc, wh, tmp)
+    probe_hr_healthcheck_and_webhook_adapter(hc, wh)
+    probe_s1_alias_canonical(disc, tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

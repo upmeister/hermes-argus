@@ -42,7 +42,10 @@ DEFAULT_REGISTRY = HERMES_DIR / "state" / "registry.yaml"
 DEFAULT_SNAPSHOT = HERMES_DIR / "state" / "integration-snapshot.json"
 DEFAULT_ENV = HERMES_DIR / ".env"
 DEFAULT_OUT = HERMES_DIR / "state" / "health-check-v2-report.json"
-DEFAULT_HERMES_BIN = HERMES_DIR / "hermes-agent" / "venv" / "bin" / "hermes"
+# Контракт A: CLI Hermes резолвится адаптером на каждый запуск (PM-установка
+# v0.22.5 не гарантирует in-checkout venv); `--hermes-bin` остаётся явным
+# override для оператора и фикстур. Сбой адаптера → без маркеров → fail, не green.
+DEFAULT_HERMES_BIN = Path(__file__).resolve().parent / "hermes-runtime.py"
 HONCHO_GLOBAL_CONFIG = Path.home() / ".honcho" / "config.json"
 
 HTTP_RETRIES = 3
@@ -371,9 +374,19 @@ def check_tcp(host: str, port: int) -> tuple[bool, str]:
         return False, f"tcp {host}:{port}: {e}"
 
 
+def cli_argv(hermes_bin: str, args: list[str]) -> list[str]:
+    """argv вызова CLI Hermes: адаптер hermes-runtime.py требует явный режим
+    `hermes` (это его первый позиционный аргумент), настоящий CLI Hermes — нет.
+    Различие по имени файла; явный `--hermes-bin` на реальный бинарь сохраняет
+    прежнюю семантику."""
+    if Path(hermes_bin).name == "hermes-runtime.py":
+        return [hermes_bin, "hermes", *args]
+    return [hermes_bin, *args]
+
+
 def check_mcp(hermes_bin: str, name: str) -> tuple[bool, str]:
     try:
-        r = subprocess.run([hermes_bin, "mcp", "test", name],
+        r = subprocess.run(cli_argv(hermes_bin, ["mcp", "test", name]),
                            capture_output=True, text=True, timeout=90)
         out = (r.stdout or "") + (r.stderr or "")
         # exit code is always 0 — parse stdout only (plan §10)
@@ -389,6 +402,10 @@ def check_mcp(hermes_bin: str, name: str) -> tuple[bool, str]:
         return True, detail
     except subprocess.TimeoutExpired:
         return False, "mcp: timeout 90s"
+    except OSError:
+        # Контракт A3: недоступный запускатель (нет адаптера/рантайма) —
+        # bounded fail с вердиктом, не крах движка и не ложный green.
+        return False, "mcp: hermes runtime unavailable"
 
 
 def parse_host_port(value: str) -> tuple[str, int] | None:
@@ -653,7 +670,9 @@ def run(argv: list[str] | None = None) -> int:
     ap.add_argument("--snapshot", type=Path, default=DEFAULT_SNAPSHOT)
     ap.add_argument("--env", type=Path, default=DEFAULT_ENV)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
-    ap.add_argument("--hermes-bin", default=str(DEFAULT_HERMES_BIN))
+    ap.add_argument("--hermes-bin", default=str(DEFAULT_HERMES_BIN),
+                    help="путь к CLI Hermes ИЛИ адаптеру hermes-runtime.py "
+                         "(режим `hermes` добавляется автоматически)")
     ap.add_argument("--skip", default="", help="comma-separated check ids to skip")
     args = ap.parse_args(argv)
 

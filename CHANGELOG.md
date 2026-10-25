@@ -72,6 +72,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retention, Hermes log ownership and unrelated `/var/log` files stay
   external.
 
+### Fixed
+
+- Argus no longer assumes the legacy in-checkout Hermes `venv/` (contract A).
+  Hermes' package manager, since v0.22.5, commits dependency generations into
+  its own store and retires the in-checkout `venv/`, publishing instead a
+  stable launcher at `<checkout>/.hermes/bin/hermes` that re-selects the
+  current generation at every start. Argus hardcoded
+  `hermes-agent/venv/bin/...` in the deploy preflight, the MCP client default,
+  the gateway matcher helper and the systemd fallback templates, so a valid
+  managed installation was rejected at deploy time or became unobservable. A
+  single new entrypoint, `scripts/hermes-runtime.py`, now binds every launch
+  to the configured installation root (`$HERMES_DIR`/`$HERMES_HOME`/
+  `~/.hermes`): CLI calls (`hermes --version`, `hermes mcp test`, `hermes
+  serve`, `hermes gateway run`, `kanban list`) go through the published
+  launcher, and the gateway matcher helper runs under the installation's
+  runtime interpreter with the checkout importable and `hermes_bootstrap`
+  activating the selected dependency generation — the same launch shape
+  upstream's own `venv_sync` builds. The runtime is resolved at each launch
+  and never persisted, so generated units contain no generation-specific paths
+  and survive environment switches. The stdlib-only Telegram poller moved to
+  the system `python3` (its Hermes surface is the CLI, reached through the
+  adapter by the webhook library). A legacy in-tree venv remains supported when
+  the launcher has not been published; a launcher that is present but unusable
+  (including a dangling launcher symlink or a non-executable resolved
+  interpreter) is an explicit bounded failure, not a silent fallback to stale
+  dependencies, and the gateway helper's 0/1/2 contract (environment failure is
+  not process death) is preserved: a crashed launch is distinguished from an
+  honest "not found" by a result sentinel, and no child output is ever
+  reflected into Argus diagnostics. Rehearsal finding recorded: the launcher's
+  `--print-runtime-command --module runpy` variant treats its trailing
+  argument as a module name (confirmed on real v0.22.5, python 3.14), so
+  script paths cannot ride it — hence the venv_sync-style composition for
+  scripts.
+- Fallback inventory deduplication now canonicalizes provider aliases the way
+  Hermes itself does (contract A). Hermes collapses entries like
+  `opencode-zen` and `opencode` for the same model and endpoint into one
+  fallback slot since v0.22.5, while Argus lowercased provider names and kept
+  both, duplicating inventory and shifting `model:fallback:<index>`
+  identities. Discovery reads the literal `_ALIAS_GROUPS` data from the
+  installed `hermes_cli/providers.py` with stdlib AST parsing — the runtime is
+  never imported and no provider roster is copied into Argus — and applies
+  the canonical identity only to dedupe, keeping the first entry's displayed
+  fields and the existing model/base-URL normalization. A missing, unreadable
+  or unrecognized alias source degrades discovery through the existing
+  last-good envelope with a stable non-secret reason (`provider_alias_source`)
+  instead of publishing an inventory whose dedupe identity cannot be
+  reproduced.
+
 ### Changed
 
 - The network guard is now an explicit opt-in instead of part of CORE (RR1b,

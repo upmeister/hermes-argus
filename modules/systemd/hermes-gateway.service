@@ -6,10 +6,13 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=@HERMES_DIR@/hermes-agent/venv/bin/python -m hermes_cli.main gateway run
+# Контракт A: запуск через адаптер hermes-runtime.py — PM-установка Hermes
+# v0.22.5 не гарантирует in-checkout venv; лаунчер резолвится на каждый старт,
+# в юните нет generation-specific путей. Форма `hermes gateway run` через
+# опубликованный лаунчер распознаётся каноническим матчером gateway.status.
+ExecStart=/usr/bin/python3 @HOME_DIR@/scripts/hermes-runtime.py hermes gateway run
 WorkingDirectory=@HERMES_DIR@
-Environment="PATH=@HERMES_DIR@/hermes-agent/venv/bin:@HERMES_DIR@/hermes-agent/node_modules/.bin:/usr/bin:@HOME_DIR@/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-Environment="VIRTUAL_ENV=@HERMES_DIR@/hermes-agent/venv"
+Environment="PATH=@HERMES_DIR@/hermes-agent/node_modules/.bin:/usr/bin:@HOME_DIR@/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="HERMES_HOME=@HERMES_DIR@"
 Restart=always
 RestartSec=5

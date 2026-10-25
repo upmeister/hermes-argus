@@ -57,7 +57,7 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> RR1a managed cron ownership                     DONE / PR #68
  -> RR1b module/runtime truth                         DONE / PR #71
  -> RR1b host readiness                          DONE / PR #75
- -> A Hermes 0.22.5 compatibility                SELECTED FIRST
+ -> A Hermes 0.22.5 compatibility        IMPLEMENTED, review pending
  -> B delivery/evidence correctness              QUEUED
  -> production reconciliation / authorized rollout
  -> C RR1c + RR1d versioned lifecycle            QUEUED

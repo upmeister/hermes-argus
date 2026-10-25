@@ -1,11 +1,14 @@
 # A — Hermes 0.22.5 launch and inventory compatibility
 
-Status: **selected first implementation contract**, after the
-[programme docs PR](2026-10-25-restart-through-rr1.md) merges.
+Status: **implemented on one task branch, Codex review pending**. Base:
+`11c7bcde7be569175fc969997d8a14afeb16f0d0` (main after the
+[programme docs PR](2026-10-25-restart-through-rr1.md) merged). One
+implementation PR covers both compatibility defects; this is not a general
+Hermes compatibility layer. v0.22.5 is not yet a supported-baseline claim:
+promotion travels with the merged PR after PASS.
 Production risk: **medium** (launch paths and discovery identity).
 Merge authority: **maintainer after Codex PASS**. Reviewer: **Codex**.
-No deployment is authorized. One implementation PR covers both compatibility
-defects; this is not a general Hermes compatibility layer.
+No deployment is authorized.
 
 ## Problem -> evidence -> smallest patch
 

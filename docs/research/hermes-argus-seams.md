@@ -25,7 +25,10 @@ where it lives in Hermes, and what to re-check on a watch pass.
 - **Re-check:** source-key order, mapping-vs-list handling, dedupe identity,
   base_url normalization.
 - **Status:** source order remains stable; v0.22.5 adds canonical provider
-  aliases to dedupe identity. Argus mismatch is [DEBT-025](../BACKLOG.md#debt-025), selected in A.
+  aliases to dedupe identity. Argus now mirrors that identity from the
+  installed `_ALIAS_GROUPS` literal (implemented, contract A review pending;
+  [DEBT-025](../BACKLOG.md#debt-025)). A re-check on a watch pass must still
+  verify the alias source path/symbol and the fallback_config identity.
 
 ## S2 — Scoped route-owner fallback
 
@@ -89,7 +92,19 @@ where it lives in Hermes, and what to re-check on a watch pass.
   `--print-runtime-command`; `pm/environments.py` owns environment selection.
 - **Re-check:** a managed install without legacy venv; commands after a
   generation change; no stale selected-interpreter path in installed templates.
-- **Status:** confirmed mismatch, [DEBT-024](../BACKLOG.md#debt-024), selected A.
+- **Status:** implemented (contract A review pending,
+  [DEBT-024](../BACKLOG.md#debt-024)): every launch consumer binds to the
+  configured installation root through `scripts/hermes-runtime.py` — the
+  published launcher for CLI calls; for Argus Python scripts the adapter
+  resolves the runtime interpreter via the machine boundary and launches them
+  in the upstream venv_sync shape (checkout on `sys.path` +
+  `hermes_bootstrap` activation + `runpy.run_path`), because the launcher's
+  runpy variant takes a module name, not a script path (confirmed on real
+  v0.22.5). Legacy in-tree venv remains the no-launcher fallback;
+  present-but-unusable launcher — including a dangling launcher symlink — is a
+  bounded failure, never a stale-venv fallback. A watch pass re-verifies the
+  launcher path, the `--print-runtime-command` argv shape and the module-only
+  deploy manifests.
 
 ## S8 — gateway identity and log routing
 

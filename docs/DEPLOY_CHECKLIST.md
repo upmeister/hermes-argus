@@ -122,10 +122,14 @@ check without a maintainer decision.
    (`sudo loginctl enable-linger "$USER"`) and re-run the deploy; without it
    the deploy refuses to install units it cannot promise to keep running.
 3. **Hermes home and target.** For modules that read Hermes-owned paths, read
-   back `~/.hermes/hermes-agent/venv/bin/{hermes,python}` and the configured
-   `HERMES_HOST` / `HERMES_PORT`. An explicitly empty `HERMES_HOST` or a
-   non-integer/out-of-range port is an error, not a silent fallback to
-   `127.0.0.1:9119`. ANALYZER does not use the Hermes venv but does require
+   back the launch boundary Argus actually uses: on a managed Hermes install
+   (v0.22.5+) the published launcher `~/.hermes/hermes-agent/.hermes/bin/hermes`
+   resolved by `~/scripts/hermes-runtime.py check`; on a legacy install the
+   in-tree `~/.hermes/hermes-agent/venv/bin/{hermes,python}`. Also read back
+   the configured `HERMES_HOST` / `HERMES_PORT`. An explicitly empty
+   `HERMES_HOST` or a non-integer/out-of-range port is an error, not a silent
+   fallback to `127.0.0.1:9119`. ANALYZER does not use the Hermes runtime but
+   does require
    the Hermes home directory to exist (it deploys into `~/.hermes/scripts` and
    reads `~/.hermes/logs`) and a system `python3` that actually executes a
    trivial run before anything is written — presence in `PATH` alone is not
