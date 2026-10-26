@@ -274,6 +274,24 @@ selected but not implemented; PR #80 is still open at this receipt.
 The earlier sections above are dated history, not current task pointers. This
 verifies the selected notes, not the whole vault or any runtime deployment.
 
+## 2026-10-26 ? readiness/observation source completion (PR #81)
+
+Contract PR #80 merged at `e0849ba`; implementation
+[PR #81](https://github.com/upmeister/hermes-argus/pull/81) carries G1?G4 source
+completion and the independent Codex/CI/merge receipts. The maintainer delegated
+merge after PASS and green CI. C and these corrections are not deployed;
+production payload remains `17b3975`. No next implementation is selected.
+
+Vault publication `952c4492222eeea8051175c84951861da9fef27e` changes exactly
+`projects/hermes-argus/README.md`, the canonical release roadmap and the backlog
+index. Server HEAD and GitHub's commit API confirm this publication. The real
+local vault `D:/agenda` fast-forwarded to the same commit; selected-note diffs
+against origin are empty and normalized MCP bodies match the intended content.
+Hashes of all 15 unrelated dirty/untracked local files were unchanged. No
+unrelated vault work was committed or overwritten. Notes link PR #81 for the
+review/CI/merge gate instead of asserting an unperformed merge or deployment.
+This receipt verifies those three notes, not whole-vault convergence or runtime.
+
 ## Future status-update procedure
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.

@@ -56,10 +56,12 @@ LAUNCH_QUERY_TIMEOUT = 60
 # hermes_bootstrap — штатный вход лаунчера: активирует выбранное поколение
 # зависимостей и закрепляет HERMES_HOME на каждый старт. Ничего из
 # внутренней кухни PM не копируется.
-RUNNER_CODE = (
+BOOTSTRAP_CODE = (
     "import sys, runpy; "
     "sys.path.insert(0, sys.argv.pop(1)); "
     "import hermes_bootstrap; "
+)
+RUNNER_CODE = BOOTSTRAP_CODE + (
     "script = sys.argv.pop(1); sys.argv[0] = script; "
     "runpy.run_path(script, run_name='__main__')"
 )
@@ -175,19 +177,30 @@ def resolve_runtime_interpreter(root: Path) -> str:
 
 
 def cmd_check(root: Path) -> int:
-    """Capability-проба preflight: резолв без побочных эффектов.
+    """Capability-проба preflight: без CLI/API, с активацией managed runtime.
 
     Managed: прогоняется реальная граница `--print-runtime-command` (это
-    выполняет код Hermes-лаунчера — то, чем и являются все запуски). Legacy:
+    выполняет код Hermes-лаунчера), затем штатный bootstrap. Legacy:
     существование+исполнимость venv-пар и безобидный `import sys`."""
     try:
         launcher = published_launcher(root)
         if launcher is not None:
-            # Граница прогоняется целиком: это выполняет код Hermes-лаунчера —
-            # ровно те шаги, что и у всех потребителей.
-            resolve_runtime_interpreter(root)
+            interpreter = resolve_runtime_interpreter(root)
+            try:
+                probe = subprocess.run(
+                    [interpreter, "-I", "-c", BOOTSTRAP_CODE +
+                     "print('argus-runtime-ready')", str(root)],
+                    capture_output=True, text=True, timeout=LAUNCH_QUERY_TIMEOUT,
+                    check=False)
+            except (subprocess.TimeoutExpired, OSError, UnicodeError) as exc:
+                raise RuntimeUnavailable(
+                    f"managed capability: {exc.__class__.__name__}") from None
+            if probe.returncode != 0:
+                raise RuntimeUnavailable(f"managed capability: код {probe.returncode}")
+            if "argus-runtime-ready" not in probe.stdout.splitlines():
+                raise RuntimeUnavailable("managed capability: выполнение не подтверждено")
             print(f"check: managed layout, launcher {launcher}, "
-                  f"runtime interpreter resolved")
+                  f"runtime capability verified (not API/login health)")
             return RC_OK
         venv_python = root / "venv" / "bin" / "python"
         _require_executable(venv_python, "интерпретатор Hermes venv")

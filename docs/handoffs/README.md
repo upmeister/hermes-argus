@@ -1,16 +1,18 @@
 # Handoffs and implementation contracts
 
-## Current task — readiness and observation correctness
+## Completed follow-up ? readiness and observation correctness
 
-The maintainer selected the first post-programme task on 2026-10-26:
-[readiness/observation contract](readiness-observation-correctness-contract.md).
-It groups DEBT-030, DEBT-028, DEBT-022 and the DEBT-031 recovery recipe into
-one implementation PR. Builder starts after its docs PR merges; reviewer is
-**Codex**, production risk medium, maintainer merge after PASS.
+The [readiness/observation contract](readiness-observation-correctness-contract.md)
+is source-complete in this implementation: DEBT-030 managed capability,
+DEBT-028 process observations/caller evidence, DEBT-022 rollback truth and
+DEBT-031's manual recovery recipe/rehearsal. The contract PR #80 merged at
+`e0849ba`; implementation uses that exact base. Independent reviewer: **Codex**.
+The maintainer delegated merge after PASS and green CI on 2026-10-26.
 
-Use local Ubuntu 24.04 WSL/VMware first. A final production trial requires
-separate authorization for an exact SHA/action list; destructive fault cases
-and uninstall are local-only. No production action is authorized by this pointer.
+No next implementation is selected. Stop after this receipt. C and these
+corrections are not deployed; production remains the separately authorized
+`17b3975` payload. A future trial requires an exact merged SHA/action list
+and separate authorization; failure injection and uninstall remain local.
 
 ## Completed programme — 2026-10-25 selection
 

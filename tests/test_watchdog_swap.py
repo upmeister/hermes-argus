@@ -183,6 +183,45 @@ class WatchdogSwapTests(unittest.TestCase):
             timeout=20,
         )
 
+    def test_gateway_unknown_preserves_prior_evidence(self):
+        state = self.hermes / 'logs/auto-remediate-state/watchdog-alerts.state'
+        state.parent.mkdir(exist_ok=True)
+        helper = self.home / 'scripts/hermes-gateway-pids.py'
+        for alerted in (0, 1):
+            prior = f'gateway_proc\t{alerted}\t4\t1\tGateway\n'
+            for unavailable in ('import sys; sys.exit(2)\n', None):
+                state.write_text(prior)
+                if unavailable is None:
+                    helper.unlink(missing_ok=True)
+                else:
+                    helper.write_text(unavailable)
+                r = self._run_watchdog()
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn(prior.strip(), state.read_text())
+                self.assertNotIn('Gateway восстанов', r.stdout)
+                self.assertFalse((self.root / 'sudo-called').exists())
+            helper.write_text('print(1234)\n')
+            r = self._run_watchdog()
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn('gateway_proc', state.read_text())
+        helper.write_text('import sys; sys.exit(1)\n')
+        r = self._run_watchdog()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('gateway_proc\t1\t1\t0\tGateway', state.read_text())
+
+    def test_liveness_unknown_does_not_restart_or_recover(self):
+        state = self.hermes / 'state/gateway-liveness.alerted'
+        state.parent.mkdir(exist_ok=True)
+        state.write_text('prior incident\n')
+        (self.home / 'scripts/hermes-gateway-pids.py').write_text('import sys; sys.exit(2)\n')
+        env = {**os.environ, 'HOME': str(self.home), 'PATH': f"{self.bin}:{os.environ['PATH']}"}
+        r = subprocess.run(['bash', str(REPO / 'scripts/gateway-liveness.sh')],
+                           env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(state.read_text(), 'prior incident\n')
+        self.assertEqual(r.stdout, '')
+        self.assertIn('rc=2', (self.hermes / 'logs/gateway-liveness.log').read_text())
+
     def _run_watchdog_health(
         self,
         *,

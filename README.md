@@ -20,9 +20,10 @@ trying to become a second Hermes runtime.
 
 Current source includes RR1a, both RR1b slices and restart A/B/C (through PR #79).
 The [restart programme](docs/handoffs/2026-10-25-restart-through-rr1.md)
-is source-complete. The next selected task is
+is source-complete. The follow-up
 [readiness and observation correctness](docs/handoffs/readiness-observation-correctness-contract.md),
-with local Ubuntu 24.04 WSL/VMware tests before any separately authorized trial.
+is source-complete in this implementation, with local Ubuntu 24.04 evidence.
+No next task is selected; a production trial needs separate authorization.
 Hermes v0.22.5 is the accepted stable authority. The separately authorized
 October 26 [Ops receipt](docs/DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
 records deployment of `17b3975`; C is merged in

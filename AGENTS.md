@@ -289,13 +289,14 @@ PR #79 on 2026-10-26 at `fd947a06bccc8af60a9ad90f3515c7d91d9b2ed3`
 (reviewed head `76a48db`, base `5551579`); **C has not been deployed**.
 The earlier programme remains a historical contract/receipt, not a live task.
 
-The maintainer selected the first follow-up on 2026-10-26. For implementation
-or review, read `docs/handoffs/readiness-observation-correctness-contract.md`:
-one PR for managed capability (DEBT-030), pgrep observation/caller evidence
-(DEBT-028), truthful rollback reporting (DEBT-022), and a documented/rehearsed
-manual update recovery (DEBT-031). No general lifecycle redesign is admitted.
-Codex is the focused reviewer; production risk is medium and runtime merge is
-maintainer-owned after PASS. Start from main after the docs contract merges.
+The first follow-up is source-complete in this implementation. Its receipt is
+`docs/handoffs/readiness-observation-correctness-contract.md`:
+Managed capability (DEBT-030), pgrep observation/caller evidence (DEBT-028),
+truthful rollback reporting (DEBT-022) and a rehearsed manual update recovery
+(DEBT-031) are delivered together. No new task is selected. The maintainer
+delegated this implementation merge after independent Codex PASS and green
+CI on 2026-10-26; production risk remains medium. C and these corrections
+have not been deployed. Stop after the implementation receipt.
 
 Linux testing is local first: supported Ubuntu 24.04 on WSL or VMware with
 native Linux filesystem and isolated fixtures. Ubuntu 26.04 evidence is

@@ -123,6 +123,10 @@ def _load_matcher():
     return looks_like_gateway_command_line
 
 
+class ObservationUnavailable(Exception):
+    """Candidate enumeration failed; absence has not been observed."""
+
+
 def live_gateway_pids(matcher) -> list[int]:
     """PID'ы процессов, чья полная cmdline — настоящий `gateway run`.
 
@@ -141,11 +145,24 @@ def live_gateway_pids(matcher) -> list[int]:
             ["pgrep", "-f", "gateway"],
             capture_output=True, text=True, timeout=10,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
+        raise ObservationUnavailable(f"pgrep: {exc.__class__.__name__}") from None
+    if found.returncode == 1 and not found.stdout.strip():
         return []
+    if found.returncode != 0:
+        raise ObservationUnavailable(f"pgrep: rc={found.returncode}")
     # pgrep может найти и нас самих (в cmdline есть слово 'gateway') —
     # это не страшно: решение всё равно принимает матчер.
-    candidates = [int(tok) for tok in found.stdout.split() if tok.isdigit()]
+    tokens = found.stdout.split()
+    if not tokens or any(not tok.isascii() or not tok.isdecimal()
+                         for tok in tokens):
+        raise ObservationUnavailable("pgrep: invalid PID output")
+    try:
+        candidates = [int(tok) for tok in tokens]
+    except ValueError:
+        raise ObservationUnavailable("pgrep: invalid PID output") from None
+    if any(pid <= 0 for pid in candidates):
+        raise ObservationUnavailable("pgrep: invalid PID output")
 
     pids: list[int] = []
     for pid in candidates:
@@ -173,7 +190,12 @@ def main(argv: list[str]) -> int:
             )
             _mark_result(2)
             return 2
-        pids = live_gateway_pids(matcher)
+        try:
+            pids = live_gateway_pids(matcher)
+        except ObservationUnavailable as exc:
+            print(f"gateway-pids: {exc}", file=sys.stderr)
+            _mark_result(2)
+            return 2
         rc = 0 if pids else 1
         _mark_result(rc)
         if "--count" in argv:
