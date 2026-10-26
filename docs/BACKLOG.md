@@ -31,6 +31,16 @@ maintainer read an incomplete project state.
 
 ## All findings at a glance
 
+Contract C lifecycle implementation is on `feat/restart-c-versioned-lifecycle`
+(base `5551579`), PR #79, awaiting the maintainer gate; Codex review receipt
+is in the PR. Not deployed.
+Its ownership refusal deliberately leaves [DEBT-004](#debt-004)'s full checker,
+legacy/modified artifacts, private data and external resources in place. It
+also retains both shared Hermes launch adapters so preserved fallback base
+units remain restartable; this closes the C6 focused-review blocker locally.
+It does not resolve [DEBT-028](#debt-028) (pgrep observation errors) or
+[DEBT-029](#debt-029) (registry refresh); both remain separate maintenance.
+
 | ID | Problem | Status | Next action |
 | --- | --- | --- | --- |
 | [DEBT-001](#debt-001) | MCP probe assumes obsolete exit codes | Deferred | Correct the comment; separately decide exit-code adoption. |

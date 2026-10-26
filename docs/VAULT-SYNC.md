@@ -209,6 +209,43 @@ merges imported the Argus updates. That unrelated commit/merge history was not
 pushed. Three unrelated dirty files retained their exact before hashes. This
 receipt establishes selected-note equality, not whole-vault history equality.
 
+## 2026-10-26 — contract C implemented, focused review pending
+
+The maintainer started C after the completed Ops checkpoint. Implementation is
+on `feat/restart-c-versioned-lifecycle` from `5551579`: exact stable/edge/tag
+selection, selected-tree bootstrap, old-source ownership checks and a bounded
+uninstall plan/apply. Reviewer remains **Codex**, merge is maintainer-owned.
+No C deployment, uninstall, tag or release was performed. The existing Ops
+runtime source remains `17b3975`; this is source work, not a new rollout.
+
+The project card, canonical release roadmap and backlog index were updated
+through Obsidian MCP and published as server vault commit
+`95c5613972f481eee72e07536bf3dc54ab176a6f`. The commit changes exactly those
+three Argus notes and is pushed to GitHub. MCP read-back matches the intended
+note bodies; the local vault fetched/merged that commit and its selected-note
+diff against `origin/master` is empty. Unrelated local commits and dirty files
+were retained (dirty-file before/after hashes matched), and their history was
+not pushed. As with the Ops receipt, selected-note equality does not imply
+equal whole-vault heads.
+
+## 2026-10-26 — C6 review remediation, maintainer gate pending
+
+Codex reviewed exact C head `9ee3531` (PR #79) and returned REMEDIATE for one
+P1/C6 blocker: uninstall removed an adapter referenced by preserved Hermes
+fallback base units. The one local remediation retains both shared adapter
+copies and adds a fixture executing both retained units' actual ExecStart argv
+through a stub CLI after plan/apply/repeat. No new out-of-scope finding was
+reported. Final focused-review evidence belongs to PR #79; the maintainer gate
+remains pending, with no C merge/deployment/uninstall/release claim.
+
+The same three selected vault notes now name PR #79, the pending maintainer
+gate and this retention rule. Server publication
+`95865db1e0b523c87f6b44862b5d4c1eb598c007` changes only those notes and is pushed
+to GitHub. MCP read-back matches intended bodies; the local vault fetched and
+merged it, and its three-note diff against `origin/master` is empty. Unrelated
+local commits and dirty content were retained without publication; tracked
+dirty-file hashes matched before/after. Whole-vault heads need not be equal.
+
 ## Future status-update procedure
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.

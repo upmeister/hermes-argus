@@ -60,7 +60,7 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> A Hermes 0.22.5 compatibility        DONE / PR #77
  -> B delivery/evidence correctness        DONE / PR #78
  -> production reconciliation / authorized rollout    DONE / 2026-10-26
- -> C RR1c + RR1d versioned lifecycle            NEXT / eligible
+ -> C RR1c + RR1d versioned lifecycle            IMPLEMENTED / maintainer gate pending
  -> RR2 runtime i18n (English + Russian)
  -> RR3 clean-install/upgrade/uninstall acceptance
  -> v0.1.0-rc.1
@@ -216,8 +216,11 @@ The maintainer-selected sequence is:
    earlier 404 is no longer planned after a config update (not recovered),
    and registry refresh is recorded separately.
 6. **C — RR1c/RR1d combined**, versioned install/update and bounded uninstall.
-   One lifecycle PR follows A+B and the checkpoint (or explicit maintainer
-   rollout deferral). This is the selected programme's stopping point.
+   Implemented in PR #79 from `5551579`, pending the maintainer gate; the Codex
+   review receipt is in the PR. The installer selects exact stable/edge/tag
+   source and checks old rendered ownership before switching; uninstall plans
+   first and retains ambiguous/external resources. No C deployment occurred.
+   Its authorized merge is the selected programme's stopping point.
 
 Netdata, operator proxy infrastructure, Telegram/Discord accounts, external
 heartbeat policy and the Hermes L3 job have independent setup owners. The
@@ -300,7 +303,7 @@ RR0c: closed (PR #65); maintainer reports deployment
 RR1: current distribution gate; RR1a closed (PR #68)
 RR1b module/runtime truth: merged PR #71; deployed/read back 2026-10-26
 RR1b host readiness: merged PR #75; deployed/read back 2026-10-26
-selected programme: A+B+Ops complete -> C (RR1c/d) next, then stop
+selected programme: A+B+Ops complete -> C (RR1c/d) maintainer gate pending, then stop
 distribution contract: incomplete
 public RC: gated by RR1/RR2/RR3
 ```

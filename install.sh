@@ -1,29 +1,42 @@
 #!/bin/bash
-# ============================================================================
-# install.sh — bootstrap hermes-argus on a CLEAN Ubuntu 24.04 (C6).
-#
-# Usage (as a sudo-capable user, NOT root):
-#   bash install.sh
-#
-# What it does: installs dependencies -> clones the repo -> creates config.env
-# -> runs deploy.sh -> enables the config watcher -> runs post-deploy gates.
-# Idempotent: safe to re-run after filling config.env.
-# ============================================================================
+# Versioned hermes-argus install/update; stable by default.
 set -euo pipefail
 
+# ARGUS_LIFECYCLE_V1 — selected revisions must implement this protocol.
 REPO_URL="https://github.com/upmeister/hermes-argus.git"
 REPO_DIR="$HOME/hermes-argus"
 
-echo "🦾 hermes-argus bootstrap"
-echo "   Host: $(hostname) · user: ${USER:-$(whoami)} · $(lsb_release -ds 2>/dev/null || echo 'linux')"
+usage() {
+    echo 'Usage: bash install.sh [--channel stable|edge | --version TAG]'
+    echo 'Default: stable. Repeat --version for an RC; channel is not persisted.'
+}
+CHANNEL=stable
+VERSION=""
+SELECTOR_SET=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --help|-h) usage; exit 0 ;;
+        --channel|--version)
+            [ "$SELECTOR_SET" -eq 0 ] && [ "$#" -ge 2 ] || { usage >&2; exit 1; }
+            SELECTOR_SET=1
+            if [ "$1" = --version ]; then VERSION="$2"; CHANNEL=tag
+            else CHANNEL="$2"; [[ "$CHANNEL" = stable || "$CHANNEL" = edge ]] || { usage >&2; exit 1; }; fi
+            shift 2 ;;
+        *) usage >&2; exit 1 ;;
+    esac
+done
 
-# ── 1. Dependencies ─────────────────────────────────────────────────────────
-# C6 F5 (review 2026-09-11): sudo-гейт ПОСЛЕ dpkg-проверки и только для
-# реально недостающих пакетов; probe — scoped apt-get, не sudo -n true
-# (NOPASSWD-scoped установки проходят честно).
-# B3 (RR1b): python3-venv — преrequisит изолированного интерпретатора бота
-# (discord-bot.service запускается ~/.hermes/discord-venv/bin/python); без
-# него `python3 -m venv` в deploy падает с ensurepip-ошибкой.
+install_stop() { echo "install: $*; no deployment performed" >&2; exit 1; }
+
+for cmd in git curl python3; do
+    command -v "$cmd" >/dev/null 2>&1 || install_stop "version selection requires git, curl and python3; install these prerequisites first"
+done
+
+if [ "${ARGUS_INSTALL_REEXEC:-}" = 1 ]; then
+    [[ "${ARGUS_INSTALL_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || install_stop 'invalid selected-tree transition'
+    [ "$(git -C "$REPO_DIR" rev-parse HEAD)" = "$ARGUS_INSTALL_SHA" ] || install_stop 'selected checkout changed'
+    echo "Selected tree: $ARGUS_INSTALL_SHA"
+    unset ARGUS_INSTALL_REEXEC ARGUS_INSTALL_SHA
 NEED=()
 for pkg in git curl python3 python3-yaml python3-venv cron; do
     dpkg -s "$pkg" >/dev/null 2>&1 || NEED+=("$pkg")
@@ -47,21 +60,116 @@ else
 fi
 
 # ── 2. Repo ─────────────────────────────────────────────────────────────────
-if [ -d "$REPO_DIR/.git" ]; then
-    echo "📥 Репо уже склонировано — обновляю..."
-    git -C "$REPO_DIR" pull -q --ff-only
+
+
 else
-    echo "📥 Клонирую репо..."
-    git clone -q --depth 1 "$REPO_URL" "$REPO_DIR"
+    if [ "$CHANNEL" = stable ]; then
+        # Public release metadata only. No credential header or fallback to main.
+        if ! VERSION=$(curl --fail --silent --show-error --max-time 20 \
+            https://api.github.com/repos/upmeister/hermes-argus/releases/latest | python3 -c '
+import json,re,sys
+try:
+    d=json.load(sys.stdin)
+    assert d.get("draft") is False and d.get("prerelease") is False
+    tag=d["tag_name"]
+    assert isinstance(tag,str) and tag and tag.strip()==tag
+    assert not re.fullmatch(r"v?\d+\.\d+\.\d+-[^+]+(?:\+.*)?",tag)
+    print(tag)
+except (ValueError,KeyError,TypeError,AssertionError):
+    sys.exit(1)
+'); then install_stop 'stable release unavailable or malformed'; fi
+    fi
+    if [ "$CHANNEL" != edge ]; then
+        git check-ref-format "refs/tags/$VERSION" >/dev/null 2>&1 || install_stop 'invalid release tag'
+    fi
+    FRESH=0
+    if [ ! -e "$REPO_DIR" ]; then
+        git clone --quiet "$REPO_URL" "$REPO_DIR" || install_stop 'clone failed'
+        FRESH=1
+    fi
+    git -C "$REPO_DIR" rev-parse --git-dir >/dev/null 2>&1 || install_stop 'destination is not a Git checkout'
+    [ "$(git -C "$REPO_DIR" remote get-url origin)" = "$REPO_URL" ] || install_stop 'unexpected origin remote'
+    if [ "$FRESH" -eq 0 ]; then
+        SOURCE_STATUS=$(git -C "$REPO_DIR" status --porcelain --untracked-files=no) || install_stop 'cannot read checkout status'
+        [ -z "$SOURCE_STATUS" ] || install_stop 'tracked local changes'
+    fi
+    OLD_SHA=$(git -C "$REPO_DIR" rev-parse HEAD)
+    git -C "$REPO_DIR" fetch --quiet origin main || install_stop 'origin/main unavailable'
+    if git -C "$REPO_DIR" symbolic-ref -q HEAD >/dev/null \
+        || [ -z "$(git -C "$REPO_DIR" tag --points-at HEAD)" ]; then
+        git -C "$REPO_DIR" merge-base --is-ancestor "$OLD_SHA" origin/main \
+            || install_stop 'local branch diverges from origin/main'
+    fi
+    if [ "$CHANNEL" = edge ]; then
+        SELECTED_SHA=$(git -C "$REPO_DIR" rev-parse 'origin/main^{commit}')
+    else
+        git -C "$REPO_DIR" fetch --quiet origin "refs/tags/$VERSION:refs/tags/$VERSION" \
+            || install_stop 'release tag unavailable'
+        SELECTED_SHA=$(git -C "$REPO_DIR" rev-parse "refs/tags/$VERSION^{commit}") \
+            || install_stop 'release tag is not a commit'
+    fi
+    echo "Selected $CHANNEL${VERSION:+ ($VERSION)}: $SELECTED_SHA"
+    git -C "$REPO_DIR" show "$SELECTED_SHA:install.sh" | grep '^# ARGUS_LIFECYCLE_V1 ' >/dev/null \
+        || install_stop 'target predates the supported lifecycle contract'
+    git -C "$REPO_DIR" cat-file -e "$SELECTED_SHA:uninstall.sh" \
+        || install_stop 'target has no bounded uninstall'
+    STAGED_TREE=$(mktemp -d)
+    # A temporary Git worktree exposes target code before changing the installed
+    # source. No install-state database, copied secrets or speculative history.
+    rmdir "$STAGED_TREE"
+    cleanup_selected_tree() {
+        [ -z "${OWN_LOG:-}" ] || rm -f -- "$OWN_LOG"
+        git -C "$REPO_DIR" worktree remove "$STAGED_TREE" >/dev/null 2>&1 || {
+            echo "install: temporary selected tree retained at $STAGED_TREE; cleanup required" >&2
+            return 1
+        }
+    }
+    trap cleanup_selected_tree EXIT
+    git -C "$REPO_DIR" worktree add --quiet --detach "$STAGED_TREE" "$SELECTED_SHA" \
+        || install_stop 'cannot stage selected tree'
+    OWN_CONFIG=""
+    if [ -e "$REPO_DIR/config.env" ] || [ -L "$REPO_DIR/config.env" ]; then OWN_CONFIG="$REPO_DIR/config.env"; fi
+    OWN_REV="$OLD_SHA"
+    [ "$FRESH" -eq 0 ] || OWN_REV="$SELECTED_SHA"
+    OWN_LOG=$(mktemp)
+    if ! bash "$STAGED_TREE/deploy.sh" --check-ownership "$OWN_CONFIG" "$REPO_DIR" "$OWN_REV" >"$OWN_LOG" 2>&1; then
+        cat "$OWN_LOG"
+        install_stop 'installed ownership differs or cannot be established; reconcile before updating'
+    fi
+    cat "$OWN_LOG"
+    CURRENT_TAGS=$(git -C "$REPO_DIR" tag --points-at HEAD)
+    if grep -q "^MATCH " "$OWN_LOG" && [ "$FRESH" -eq 0 ] && [ -n "$CURRENT_TAGS" ] && [ "$OLD_SHA" != "$SELECTED_SHA" ]; then
+        TARGET_TAG="${VERSION:-$(git -C "$REPO_DIR" tag --points-at "$SELECTED_SHA")}"
+        ORDER=$(python3 - "$CURRENT_TAGS" "$TARGET_TAG" <<'PY'
+import re,sys
+def key(tag):
+    m=re.fullmatch(r'v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?',tag)
+    if not m: return None
+    pre=m[4]
+    return (tuple(map(int,m.group(1,2,3))),pre is None,
+            tuple((0,int(p)) if p.isdigit() else (1,p) for p in (pre or '').split('.')))
+a=[k for t in sys.argv[1].splitlines() if (k:=key(t)) is not None]
+b=[k for t in sys.argv[2].splitlines() if (k:=key(t)) is not None]
+print('older' if a and b and max(b)<max(a) else 'other')
+PY
+)
+        # Git ancestry supplies the conservative fallback for non-semver tags.
+        if [ "$ORDER" = older ] || ! git -C "$REPO_DIR" merge-base --is-ancestor "$OLD_SHA" "$SELECTED_SHA"; then
+            [ "$CHANNEL" = tag ] || install_stop 'implicit downgrade or incomparable tagged revision'
+            echo 'Intentional downgrade/revision change requested by --version.'
+        fi
+    fi
+    cleanup_selected_tree || install_stop 'temporary worktree cleanup failed'
+    trap - EXIT
+    git -C "$REPO_DIR" checkout --quiet --no-overwrite-ignore --detach "$SELECTED_SHA" \
+        || install_stop 'checkout refused (including untracked/ignored collision); user work retained'
+    # Exactly one transition: the selected installer's dependency/config/deploy
+    # logic executes, never an old in-memory bootstrap over a different tree.
+    exec env ARGUS_INSTALL_REEXEC=1 ARGUS_INSTALL_SHA="$SELECTED_SHA" \
+        bash "$REPO_DIR/install.sh"
 fi
 cd "$REPO_DIR"
 
-# ── 3. Config ───────────────────────────────────────────────────────────────
-# H1 (RR1b, host-readiness): конфиг несёт секреты (WATCHDOG_BOT_TOKEN). .gitignore
-# удерживает его только от Git — права доступа он не проверяет. Создаём файл под
-# umask 077 (сразу 0600), существующий — проверяем ДО чтения. Проверка
-# намеренно продублирована из deploy.sh: общий файл-хелпер означал бы новый
-# production-файл и новый вход, а правило здесь и там должно быть одно и то же.
 assert_private_config() {
     local cfg="$1" owner mode
     # H1 (ремедиация ревью PR #75): симлинк — не обычный файл; `[ -f ]` следует
@@ -148,11 +256,14 @@ echo "🚀 Деплой..."
 # pipefail в шелле уже включён: сбой deploy.sh обрывает установку здесь.
 DEPLOY_LOG="$(mktemp)"
 trap 'rm -f "$DEPLOY_LOG"' EXIT
-bash deploy.sh config.env 2>&1 | tee "$DEPLOY_LOG"
+if ! bash deploy.sh config.env 2>&1 | tee "$DEPLOY_LOG"; then
+    echo 'install: deploy failed; checkout is selected, runtime may be partial; no completion or rollback claimed' >&2
+    exit 1
+fi
 DEPLOY_OUT="$(cat "$DEPLOY_LOG")"
 
 # ── 5. Watcher ──────────────────────────────────────────────────────────────
-systemctl --user daemon-reload
+systemctl --user daemon-reload || { echo 'install: deployment applied, daemon-reload failed; manual read-back required' >&2; exit 1; }
 # RR0c (B3): ровно один активный producer. Legacy-юнит, который включён ИЛИ
 # фактически активен (active-but-not-enabled: ручной старт, транзиентный
 # запуск), не переключается автоматически — оператор делает хэндофф вручную.
@@ -161,7 +272,7 @@ if systemctl --user is-enabled hermes-vps-kit-config.path >/dev/null 2>&1 \
     echo "📡 Discover-вотчер: живой legacy hermes-vps-kit-config.path — оставляю его;"
     echo "   хэндофф на hermes-argus-config.path — вручную (см. вывод deploy.sh)."
 elif systemctl --user list-unit-files | grep -q hermes-argus-config.path; then
-    systemctl --user enable --now hermes-argus-config.path
+    systemctl --user enable --now hermes-argus-config.path || { echo 'install: deployment applied, watcher activation failed' >&2; exit 1; }
     echo "📡 Discover-вотчер config.yaml включён (path unit + cron-страховка)."
 fi
 

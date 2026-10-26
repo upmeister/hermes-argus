@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Version-selected installation/update and a bounded uninstall (restart C,
+  implemented in PR #79; maintainer gate pending, Codex receipt in PR).
+  `install.sh` defaults to a published
+  stable release, or accepts explicit edge/tag selection, prints its SHA and
+  executes selected-tree logic. Missing/invalid selections never fall back.
+  Updates refuse changed/unprovable installed ownership and preserve user work;
+  explicit supported downgrades are labelled. `uninstall.sh` defaults to a plan
+  and removes only matching Argus resources with `--apply`, preserving Hermes
+  services, their shared launch adapters, private/operator data and the uncertain full checker. Ambiguity
+  stops apply before mutations. No new install-state database or purge exists.
+
 - The bootstrap now refuses to complete on a host it cannot honestly support
   (RR1b, host-readiness). `deploy.sh` runs a fail-closed preflight before it
   writes anything, and reports each outcome as an actionable stop rather than a

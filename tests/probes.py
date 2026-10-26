@@ -3245,7 +3245,7 @@ def probe_rr0c_install_single_active_producer(tmp: Path):
     _rr1b_host_shims(shim)
     _rr1b_fake_hermes(home)
     _write_argv_shim(shim, "dpkg", "exit 0\n")
-    _write_argv_shim(shim, "git", "exit 0\n")
+    _write_argv_shim(shim, "git", "printf '" + "a" * 40 + "\\n'\n")
     _write_argv_shim(shim, "crontab",
                      'case "$1" in\n'
                      '  -l) printf "" ;;\n'
@@ -3276,6 +3276,8 @@ def probe_rr0c_install_single_active_producer(tmp: Path):
         call_log.unlink(missing_ok=True)
         env = _path_shim_env(home, {
             "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+            "ARGUS_INSTALL_REEXEC": "1",
+            "ARGUS_INSTALL_SHA": "a" * 40,
             "CRON_FILE": str(cron_file),
             "SYSTEMCTL_CALL_LOG": str(call_log),
             "LEGACY_ENABLED": "0",
@@ -7377,7 +7379,7 @@ def _rr1b_install_fixture(tmp: Path, tag: str, config_body: str,
     _rr1b_host_shims(shim)
     _rr1b_fake_hermes(home)
     _write_argv_shim(shim, "dpkg", "exit 0\n")
-    _write_argv_shim(shim, "git", "exit 0\n")
+    _write_argv_shim(shim, "git", "printf '" + "a" * 40 + "\\n'\n")
     _write_argv_shim(shim, "crontab",
                      'case "$1" in\n'
                      '  -l) printf "" ;;\n'
@@ -7411,6 +7413,8 @@ def _rr1b_install_fixture(tmp: Path, tag: str, config_body: str,
         "HOME": home.as_posix(),
         "USERPROFILE": str(home),
         "PATH": str(shim) + os.pathsep + os.environ.get("PATH", ""),
+        "ARGUS_INSTALL_REEXEC": "1",
+        "ARGUS_INSTALL_SHA": "a" * 40,
         "CRONTAB_FIXTURE": (tmp / f"rr1b-install-cron-{tag}.txt").as_posix(),
         "CRON_FILE": str(tmp / f"rr1b-install-proposal-{tag}.txt"),
         "RR1B_DEPLOY_MODE": deploy_mode,
