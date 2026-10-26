@@ -108,7 +108,10 @@ account/setup automation, L3 job creation, new heartbeat backend semantics,
 OAuth health, multi-profile coverage, plugin inventory expansion, OTLP backend,
 gateway-liveness redesign, network policy changes and unrelated cleanup.
 
-## Assignment text
+## Historical assignment text — programme complete
+
+These prompts record the completed A/B/C assignments. Use the new
+readiness/observation contract for current work, not the prompts below.
 
 Builder: "Implement contract A (then B/C only after their start gates), using
 this merged programme as authority. Refresh origin/main, record the base SHA,

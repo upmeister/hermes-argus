@@ -255,12 +255,13 @@ for Analyzer trends, not the source of native watchdog resource metrics.
 quick-check/UI optionality assumptions in source; [DEBT-007](BACKLOG.md#debt-007)
 has deployment read-back in the October 26 Ops receipt.
 
-### Restart scope selected on 2026-10-25
+### Completed restart scope selected on 2026-10-25
 
-The [programme](handoffs/2026-10-25-restart-through-rr1.md) owns the next
-three implementation contracts and their sequencing. The old RR1b task pointer
-is closed. Public setup, L3 recipe, RR2 and RR3 remain later; no public release
-or production operation is authorized by this documentation decision.
+The [programme](handoffs/2026-10-25-restart-through-rr1.md) records the completed
+A/B/C contracts and their historical sequencing. The old RR1b and A/B/C task
+pointers are closed; the readiness/observation contract above is current.
+Public setup, L3 recipe, RR2 and RR3 remain later; no public release or production
+operation is authorized by this documentation decision.
 
 Native Cronping Telegram through the provider bot remains selected, without
 an Argus receiver or external-VPS prerequisite. Setup/delivery verification
