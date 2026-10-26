@@ -1,6 +1,8 @@
 # C — versioned installation/update and bounded uninstall (RR1c + RR1d)
 
-Status: **queued after A+B and the Ops checkpoint or explicit rollout deferral**.
+Status: **next eligible contract; implementation not started**. A+B are merged
+and the authorized October 26 [Ops checkpoint](../DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
+is complete at deployed source `17b3975`.
 Authority: [restart programme](2026-10-25-restart-through-rr1.md).
 Production risk: **high** (installed resource lifecycle).
 Merge authority: **maintainer after Codex PASS**. Reviewer: **Codex**.

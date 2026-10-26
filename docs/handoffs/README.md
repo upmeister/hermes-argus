@@ -9,10 +9,10 @@ This replaces the old RR1b active pointer. PR #75 is already merged.
 
 | Order | Contract | State |
 | --- | --- | --- |
-| A | [Hermes 0.22.5 compatibility](restart-a-hermes-compatibility-contract.md) | **DONE / PR #77**, merged 2026-10-26 (exact head `64eca82b`, Codex GO/PASS); production convergence unverified |
-| B | [Delivery/evidence correctness](restart-b-delivery-evidence-contract.md) | **DONE / PR #78**, merged 2026-10-26 (exact head `d396399`, Codex GO/PASS); production convergence unverified |
-| Ops | [Production checkpoint](2026-10-25-restart-through-rr1.md#operations-checkpoint) | Separate exact-SHA authorization; not implied by this plan |
-| C | [RR1c/d versioned lifecycle](restart-c-versioned-lifecycle-contract.md) | After A+B and Ops receipt or explicit rollout deferral |
+| A | [Hermes 0.22.5 compatibility](restart-a-hermes-compatibility-contract.md) | **DONE / PR #77**, deployed 2026-10-26 at `17b3975`; Codex GO/PASS on `64eca82b` |
+| B | [Delivery/evidence correctness](restart-b-delivery-evidence-contract.md) | **DONE / PR #78**, deployed 2026-10-26 at `17b3975`; Codex GO/PASS on `d396399` |
+| Ops | [Production checkpoint](../DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26) | **DONE**, separately authorized deploy/read-back of `17b3975`; diagnosed integration failures retained |
+| C | [RR1c/d versioned lifecycle](restart-c-versioned-lifecycle-contract.md) | **NEXT / eligible**: A+B and Ops receipt complete; implementation not started |
 
 Builder: maintainer-assigned coder. Focused reviewer: **Codex**.
 Implementation risk: A/B medium, C high; **maintainer merge after PASS**.
@@ -32,8 +32,8 @@ Old contract presence does not grant new implementation scope.
 - Refresh `origin/main` before each task; record the actual baseline.
 - Read-only October 25 production inspection found PR #65 checkout `2588581`,
   matching core Python payloads, an existing marked cron block, and a modified
-  quick checker. RR1a/b convergence is unverified; do not infer a deployment
-  date or permission to overwrite customized files.
+  quick checker. This is historical: the October 26 authorized rollout
+  reconciled those artifacts at `17b3975`; see the linked Ops receipt.
 - Hermes installed and latest published stable: v0.22.5 / `bf0203a`.
   Accepted stable authority since the contract A merge (PR #77): v0.22.5 /
   `bf0203a`. See the
@@ -57,11 +57,11 @@ Completed:
 - RR0b dead/duplicate runtime removal — **DONE / PR #63**
 - RR0c public defaults/naming migration — **DONE / PR #65**
 - RR1a managed cron ownership — **DONE / PR #68**
-- RR1b module dependency truth and payload completeness — **DONE / PR #71; production convergence unverified**
+- RR1b module dependency truth and payload completeness — **DONE / PR #71; deployed and read back 2026-10-26**
 - MCP disabled-server reporting — **DONE / PR #59**
 - canonical gateway matcher maintenance fix — **DONE / PR #60**
 
-- RR1b host readiness — **DONE / PR #75**, merged 2026-10-06; production convergence unverified
+- RR1b host readiness — **DONE / PR #75**, merged 2026-10-06; deployed and read back 2026-10-26
 
 ## Later and upstream-gated
 

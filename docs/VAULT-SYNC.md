@@ -179,6 +179,32 @@ selected notes, not the entire vault; production convergence remains
 unverified and separately authorized. Unrelated uncommitted changes in the
 local vault (other projects) were left untouched.
 
+## 2026-10-26 — authorized production rollout and Ops checkpoint complete
+
+Maintainer-authorized deploy/device tests installed source
+`17b3975927cec11783a314f68e614e7a4d12bb1c` at 02:05:10 UTC. The
+[Ops receipt](DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26) records template,
+cron, host and service read-back plus real schedule survival. Repository status
+surfaces name C as next eligible, not started. Mixed artifacts
+[DEBT-026](BACKLOG.md#debt-026) are closed; catalog failures
+[DEBT-027](BACKLOG.md#debt-027) are diagnosed/deferred, not healthy. New
+[DEBT-029](BACKLOG.md#debt-029) records stale bundled registry metadata/content
+without changing the 52 checks for the current inventory.
+
+Exactly three vault notes were updated through Obsidian MCP: project card,
+canonical release roadmap and backlog index. Server commits `7907faf` and
+`62c9f62161ee1870b628f026d56abeb1f7b3da70` contain only these paths; the
+server tree is clean and its HEAD equals GitHub `origin/master` at `62c9f62`.
+MCP read-back matches all three intended note bodies. The local vault fetched
+and merged those changes; `git diff origin/master -- <the three paths>` is
+empty, confirming the same selected notes in all three copies.
+
+Local vault HEAD is `9adddcb769c1a75927ba9797b9b063a43fb36940`, not the
+server SHA: a pre-existing unrelated local commit was retained, and two normal
+merges imported the Argus updates. That unrelated commit/merge history was not
+pushed. Three unrelated dirty files retained their exact before hashes. This
+receipt establishes selected-note equality, not whole-vault history equality.
+
 ## Future status-update procedure
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.

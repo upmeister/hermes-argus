@@ -6,7 +6,85 @@ the resident Pytna agent through the Peetna MCP, because it has the production
 runtime context. A local SSH/Linux deployment is a fallback for the
 maintainer.
 
-## Restart checkpoint — 2026-10-25
+## Ops receipt — 2026-10-26
+
+**Checkpoint complete.** The maintainer authorized device tests and deployment
+after PR #78. Codex selected current merged `origin/main`
+`17b3975927cec11783a314f68e614e7a4d12bb1c`, with successful
+[main CI](https://github.com/upmeister/hermes-argus/actions/runs/40255461991).
+The resident agent performed the initial inspection. Its deployment run was
+cancelled while waiting for a model response, before any deployment command;
+Codex then deployed over SSH at **02:05:10 UTC**.
+
+Production risk: **high**, separately authorized by the maintainer. This
+documentation receipt has no additional runtime effect. The target contains
+RR1a, both RR1b slices and contracts A/B; it is not an authorization to start C.
+Here device tests mean checks on the production host; no separate peripheral
+device was identified or tested.
+
+- **Before/backup:** old checkout `2588581`; protected backup and before-values
+  at `~/.hermes/cache/scratch/argus-ops-20261026T020459Z/` (owner-only).
+  It contains exact prior file copies with directory hierarchy, hashes/modes,
+  crontab, deploy config, unit properties and the old logrotate policies.
+  Private configuration and raw outputs remain on the host, outside Git.
+- **Configuration/ownership:** deploy config changed from `664` to `600`.
+  CORE, INTEGRATIONS, TG_BOT, DISCORD_BOT, ANALYZER, HEARTBEAT and LOCAL_SERVICES
+  retain ON; NETWORK_GUARD was made explicitly ON to preserve the existing
+  operational dependency. GH_HEARTBEAT module stays OFF. No Hermes update,
+  credential mutation, linger/sudoers change or network-policy change occurred.
+  The quick-checker customization was the already-merged removal of the global
+  cron-count heuristic; the target retains it. Canonical discovery watcher was
+  already active; the inactive legacy watcher needed no migration.
+- **Payload:** `deploy.sh` exited 0 and validated 41 deployment writes (including
+  repeated shared payloads). An independent comparison matched **35 distinct
+  script/unit artifacts** to rendered templates, plus the installed registry
+  byte-for-byte to repository `registry.yaml`; no unresolved markers remained.
+  Existing Hermes gateway/dashboard base units were preserved.
+- **Host/services:** user manager reachable, `Linger=yes`, actual adapter check,
+  CLI version and gateway matcher all return 0 on installed Hermes v0.22.5 /
+  `bf0203a`. The selected launch path is the published managed launcher
+  `~/.hermes/hermes-agent/.hermes/bin/hermes`; legacy venv binaries also remain
+  installed but are not the adapter's selected boundary. `daemon-reload`
+  completed; Telegram poller and Discord bot restarted
+  at 02:05:10 UTC and remained active with zero restarts. Gateway/dashboard PIDs
+  were unchanged, memory limits were read back, `NeedDaemonReload=no`, and the
+  configured dashboard `/health` returned 200.
+- **Log rotation:** the new Argus policy owns 20 explicit paths. Only those
+  exact overlapping path lines were removed from the backed-up operator policy;
+  its 18 unrelated paths and their policy remain. Individual and global
+  `logrotate --debug` checks exit 0; the host logrotate timer is active. No live
+  log rotation was forced.
+- **Inventory/Analyzer:** discovery exits 0 with status `ok` and 40 entities;
+  collector is executable, Analyzer `--update` exits 0 and advances `last_check`.
+  The deployed `/watchdog` handler renders Analyzer freshness as `fresh`.
+  This does not prove a separately configured Hermes L3 analysis/delivery job.
+- **Bounded integration smoke:** no MCP process checks or auth refreshes;
+  49 checks: 40 healthy, 2 failed, 2 unconfigured, 5 skipped. Two Telegram
+  read-only `getMe` checks pass through the configured route. The same cached
+  catalog failures persist: authentication rejection (401) and absent catalog
+  routes (404). They remain failures, with configuration/endpoint remediation
+  deferred under [DEBT-027](BACKLOG.md#debt-027); no inference about model-call
+  success or OAuth runtime health is made.
+- **Registry comparison:** the generated v0.22.5 registry has 153 upstream + 9
+  kit entries; repository/runtime registry has 154 upstream entries. All 52
+  checks built for the current inventory are identical with either registry.
+  Source/runtime deployment equality passes; broader registry refresh remains
+  a non-blocking source finding [DEBT-029](BACKLOG.md#debt-029).
+- **Schedule survival:** one managed block; outside-block bytes match the
+  protected before-copy. Real 02:10 and 02:15 UTC ticks advanced fallback and
+  heartbeat artifacts; local-services refreshed on both ticks, discovery at
+  02:10, and the
+  network guard continued its two-minute schedule. The installed cron hash
+  remained unchanged across read-backs. Analyzer's hourly producer was exercised
+  manually; two hourly ticks are not claimed. Heartbeat acceptance and
+  notification delivery remain separate claims: no intentional outage or
+  notification send test occurred.
+
+The rollout closes the mixed-artifact checkpoint
+[DEBT-026](BACKLOG.md#debt-026). The diagnostic part of DEBT-027 is complete;
+its two integrations are not declared healthy. C's admission gate is open.
+
+## Historical restart checkpoint — 2026-10-25
 
 RR1a and both RR1b slices are merged through PR #75. The read-only October 25
 inspection found an older PR #65 checkout with mixed runtime artifacts, not a

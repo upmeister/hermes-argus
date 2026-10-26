@@ -59,8 +59,8 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> RR1b host readiness                          DONE / PR #75
  -> A Hermes 0.22.5 compatibility        DONE / PR #77
  -> B delivery/evidence correctness        DONE / PR #78
- -> production reconciliation / authorized rollout
- -> C RR1c + RR1d versioned lifecycle            QUEUED
+ -> production reconciliation / authorized rollout    DONE / 2026-10-26
+ -> C RR1c + RR1d versioned lifecycle            NEXT / eligible
  -> RR2 runtime i18n (English + Russian)
  -> RR3 clean-install/upgrade/uninstall acceptance
  -> v0.1.0-rc.1
@@ -201,18 +201,19 @@ The maintainer-selected sequence is:
    expectation-aware optional Netdata/GitHub reporting, one canonical Analyzer
    collector with honest failure semantics, shared bot handler payload owned
    independently of TG_BOT with an interpreter import check, and a
-   module-neutral installer post-deploy gate. It is not deployed yet.
+   module-neutral installer post-deploy gate. Deployed and read back October 26.
 3. **RR1b host readiness — DONE / PR #75**, merged October 6. Private
    config, user-manager/Hermes preflight, explicit network guard and bounded
-   Argus log rotation are source-complete. Production convergence remains
-   unverified; the October 25 audit found the older PR #65 checkout plus
-   customized runtime artifacts.
+   Argus log rotation are deployed and read back October 26. The older PR #65
+   checkout/customized artifacts found October 25 have been reconciled.
 4. **A/B restart compatibility and reliability.** The maintainer selected
    [the programme through RR1](handoffs/2026-10-25-restart-through-rr1.md):
    A adapts Hermes launching and fallback aliases for v0.22.5; B fixes existing
    heartbeat secret channels, proxy propagation and stale Analyzer evidence.
-5. **Production checkpoint**, separately authorized. Resolve custom runtime
-   differences and verify the accumulated source changes before claiming rollout.
+5. **Production checkpoint — DONE, October 26**, separately authorized at
+   `17b3975`. [Receipt](DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26): payload,
+   cron, guard, rotation, host and service read-back; two catalog failures
+   diagnosed/deferred and registry refresh recorded separately.
 6. **C — RR1c/RR1d combined**, versioned install/update and bounded uninstall.
    One lifecycle PR follows A+B and the checkpoint (or explicit maintainer
    rollout deferral). This is the selected programme's stopping point.
@@ -223,15 +224,15 @@ current public baseline must not silently require the maintainer's complete
 host stack. These later choices need focused contracts; RR1a installs none of
 that infrastructure.
 
-RR1a is merged. Its production convergence remains unverified: the October 25
-audit found a marked cron block but the old PR #65 source checkout. The marked
-block alone does not prove the RR1a reconciler was deployed.
+RR1a is merged and deployed at the authorized October 26 target `17b3975`.
+Outside-block operator cron was preserved and the managed block read back.
+The earlier October 25 marked block alone was not deployment evidence.
 
 Accepted clarification: **Netdata remains an optional external enhancement**
 for Analyzer trends, not the source of native watchdog resource metrics.
 [Monitoring-source map](monitoring-sources.md). PR #71 resolved the known
 quick-check/UI optionality assumptions in source; [DEBT-007](BACKLOG.md#debt-007)
-still requires deployment read-back.
+has deployment read-back in the October 26 Ops receipt.
 
 ### Restart scope selected on 2026-10-25
 
@@ -276,10 +277,10 @@ The accepted historical authority is `v2026.9.24 / v0.21.5` at
 `f97608f178d1ffeca59860195ab7da295f7c8e5f`.
 
 The October 25 watch found published and installed Hermes `v0.22.5` at
-`bf0203a794a07aac3ff764972ab9087baa4e4f4e`. Contract A verifies this target
-before a support promotion. Managed environment paths and fallback alias
-deduplication need adaptation; current MCP markers, disabled-server semantics
-and fallback log identities still match. OA2 remains upstream-gated.
+`bf0203a794a07aac3ff764972ab9087baa4e4f4e`. Contract A passed and promoted
+this target at PR #77 merge; its launcher and alias changes were deployed
+October 26. MCP markers, disabled-server semantics and fallback log identities
+remain supported. OA2 remains upstream-gated.
 
 [Current watch](research/2026-10-25-hermes-upstream-watch.md),
 [seam inventory](research/hermes-argus-seams.md), and
@@ -296,9 +297,9 @@ R2c.1: closed (PR #49) and confirmed against stable v0.21.5
 RR0a/RR0b: closed (PR #51 / PR #63)
 RR0c: closed (PR #65); maintainer reports deployment
 RR1: current distribution gate; RR1a closed (PR #68)
-RR1b module/runtime truth: merged PR #71; deployment pending
-RR1b host readiness: merged PR #75; production convergence unverified
-selected programme: A -> B -> Ops checkpoint -> C (RR1c/d), then stop
+RR1b module/runtime truth: merged PR #71; deployed/read back 2026-10-26
+RR1b host readiness: merged PR #75; deployed/read back 2026-10-26
+selected programme: A+B+Ops complete -> C (RR1c/d) next, then stop
 distribution contract: incomplete
 public RC: gated by RR1/RR2/RR3
 ```

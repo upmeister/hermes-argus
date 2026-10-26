@@ -263,11 +263,14 @@ RR1a (PR #68), RR1b module/runtime truth (PR #71), RR1b host readiness
 (PR #75, merged 2026-10-06), restart contract A (PR #77, merged
 2026-10-26 at exact head `64eca82b`, Codex GO/PASS) and restart contract B
 (PR #78, merged 2026-10-26 at exact head `d396399`, Codex GO/PASS) are
-complete in source.
-Main at the restart audit is `f433c531bff935d869e2dd75beaf2a5bfdd200d8`.
-Production inspection on 2026-10-25 found the older PR #65 checkout and mixed
-installed artifacts; RR1 convergence is not verified. Never equate merged
-source with deployment.
+complete in source and deployed at `17b3975927cec11783a314f68e614e7a4d12bb1c`
+on 2026-10-26, following the maintainer's separate deployment/test authorization.
+The [Ops receipt](docs/DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
+records payload, cron, service and host-prerequisite read-back. Network guard
+remains explicitly ON. Two catalog failures remain diagnosed, not resolved
+([DEBT-027](docs/BACKLOG.md#debt-027)); registry refresh is a non-blocking
+source finding ([DEBT-029](docs/BACKLOG.md#debt-029)). Deployment convergence
+does not mean every integration is healthy or notification delivery is proven.
 
 The maintainer selected the restart programme through RR1c/RR1d on 2026-10-25:
 
@@ -282,8 +285,9 @@ A Hermes 0.22.5 launch + fallback inventory compatibility
 
 When implementing or reviewing this programme, read
 `docs/handoffs/2026-10-25-restart-through-rr1.md`, then exactly its current
-A/B/C contract. A (PR #77) and B (PR #78) are merged; **C requires the Ops
-checkpoint or an explicit maintainer rollout deferral** before implementation. Three outcome PRs are intended; do not split
+A/B/C contract. A (PR #77) and B (PR #78) are merged; **the Ops checkpoint is
+complete and C is the next eligible contract**. This receipt does not start C.
+Three outcome PRs are intended; do not split
 every finding into its own PR or combine the whole queue. Codex is the
 focused reviewer. Runtime merges and every production action remain
 maintainer-controlled.
@@ -327,8 +331,9 @@ maintainer merge (PR #77, 2026-10-26, merge commit `4adcd8f`). The promotion
 receipt is the Linux evidence attached to that PR — the fixture suite re-run
 on a clean ext4 Ubuntu 24.04 by review, plus the isolated rehearsal on an
 intentionally installed real v0.22.5 checkout/launcher. Merged source is
-still not deployment: production convergence stays with the separately
-authorized Ops checkpoint.
+still distinct from deployment: the separately authorized October 26
+[Ops receipt](docs/DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26) establishes the
+production read-back and its limits.
 
 Stable authority wins. Upstream `main` is a warning/research source only.
 

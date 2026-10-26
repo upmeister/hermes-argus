@@ -1,9 +1,11 @@
 # Restart programme through RR1
 
-Status: **maintainer-selected scope; this docs PR is the contract publication**.
+Status: **A+B merged and deployed; Ops complete; C next, not started**.
 The maintainer accepted reconnaissance steps 1–5 on 2026-10-25 and assigned
 architecture/docs-PR preparation to Codex, asking for useful-sized PRs.
-Runtime implementation has not started. This document supersedes the stale
+Contracts A/B landed as PR #77/#78. The separately authorized October 26
+[Ops receipt](../DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26) records deployment
+of `17b3975`. This document supersedes the stale
 RR1b selected-task pointer, not its completed acceptance record.
 
 Production risk: **low for this documentation PR** (no executable/config
@@ -46,11 +48,17 @@ Baseline at publication: Argus main `f433c531bff935d869e2dd75beaf2a5bfdd200d8`.
 Each builder records the actual refreshed main SHA. Research:
 [project reconstruction](../research/2026-10-25-project-reconnaissance.md),
 [upstream watch](../research/2026-10-25-hermes-upstream-watch.md).
-Hermes v0.22.5 at `bf0203a794a07aac3ff764972ab9087baa4e4f4e` is A's
-compatibility target, **not yet a passed support claim**. The old accepted
-authority remains recorded until A's evidence supports its promotion.
+Hermes v0.22.5 at `bf0203a794a07aac3ff764972ab9087baa4e4f4e` became the
+accepted stable authority at the contract A merge (PR #77). The October 26
+Ops receipt verifies this host's deployed behavior without expanding support.
 
 ## Operations checkpoint
+
+**Completed 2026-10-26** after the maintainer authorized deployment and device
+tests. Exact deployed source: `17b3975927cec11783a314f68e614e7a4d12bb1c`.
+See the [receipt](../DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26), including
+diagnosed catalog failures and the non-blocking registry refresh finding.
+The requirements below remain the procedure for future rollouts.
 
 Prepare a sanitized before/after plan using [DEPLOY_CHECKLIST](../DEPLOY_CHECKLIST.md).
 Resolve installed `health-check-integrations.sh` differences from templates;

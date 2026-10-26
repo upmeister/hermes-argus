@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Planning
 
+- Deployed the merged RR1a/RR1b and restart A/B source at `17b3975` on
+  2026-10-26 after maintainer authorization. Read-back confirms payload,
+  preserved operator cron, explicit network guard, log rotation and live bot
+  services. The Ops checkpoint is complete; C is next. Two catalog failures
+  remain diagnosed/deferred, and the bundled registry needs a separate refresh;
+  this is not an all-green integration or notification-delivery claim.
+
 - Reconciled RR1b host readiness with merged PR #75 and recorded the October 25
   production/upstream reconnaissance. Selected three implementation contracts:
   Hermes 0.22.5 compatibility, existing delivery/evidence fixes, and combined
