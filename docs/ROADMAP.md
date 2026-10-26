@@ -61,7 +61,7 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> B delivery/evidence correctness        DONE / PR #78
  -> production reconciliation / authorized rollout    DONE / 2026-10-26
  -> C RR1c + RR1d versioned lifecycle            DONE / PR #79; not deployed
- -> readiness / observation correctness         SELECTED, local Linux first
+ -> readiness / observation correctness         DONE in source; not deployed
  -> C rollout and public operating setup        LATER / separate authorization
  -> RR2 runtime i18n (English + Russian)
  -> RR3 clean-install/upgrade/uninstall acceptance
@@ -231,7 +231,10 @@ and selected its first task on 2026-10-26. The
 [single implementation contract](handoffs/readiness-observation-correctness-contract.md)
 covers DEBT-030 managed capability, DEBT-028 process observations/caller evidence,
 DEBT-022 rollback truth and DEBT-031 manual recovery documentation/rehearsal.
-It does not reopen C implementation or authorize its deployment.
+These corrections and the recovery recipe are source-complete in this
+implementation; neither they nor C have been deployed. Independent Codex
+review and required CI gate the maintainer-delegated merge. No next task is
+selected; stop after this receipt.
 
 Local WSL/VMware on supported Ubuntu 24.04 precedes any production trial;
 failure injections and uninstall stay local. A concrete exact-SHA production
@@ -322,7 +325,8 @@ RR1: current distribution gate; RR1a closed (PR #68)
 RR1b module/runtime truth: merged PR #71; deployed/read back 2026-10-26
 RR1b host readiness: merged PR #75; deployed/read back 2026-10-26
 restart programme: A+B+Ops+C source complete; C not deployed; STOP reached
-current selected task: readiness/observation correctness and manual recovery recipe
+readiness/observation correctness and manual recovery recipe: source complete
+current selected task: none
 distribution contract: incomplete
 public RC: gated by RR1/RR2/RR3
 ```

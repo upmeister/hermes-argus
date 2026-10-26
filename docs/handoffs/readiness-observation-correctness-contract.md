@@ -1,13 +1,16 @@
 # Readiness and observation correctness
 
-Status: **maintainer-selected next task**, 2026-10-26; implementation starts
-after this docs PR merges. One implementation PR covers the local fixes and
+Status: **source-complete implementation receipt**, 2026-10-26. Contract
+PR #80 merged at `e0849baf60341d027425fe903dc673bd3098d934`; this is the
+implementation base. One implementation PR covers the local fixes and
 recovery documentation below. The earlier A/B/C programme is source-complete
 through PR #79 (`fd947a0`); C remains not deployed.
 
 Production risk: **medium** — preflight decisions, process observation and
 existing network-remediation reporting; no network-policy change.
-Merge authority: **maintainer after Codex PASS**.
+Merge authority: **delegated by maintainer on 2026-10-26 after independent
+Codex PASS and green required CI at the exact reviewed head**. This supersedes
+the original maintainer-only merge gate for this implementation.
 Builder: maintainer-assigned coder. Focused reviewer: **Codex**.
 This contract authorizes isolated implementation/testing, not production deploy,
 restart, route/DNS changes or real notifications. Refresh `origin/main` and

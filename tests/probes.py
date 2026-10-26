@@ -7552,6 +7552,7 @@ def _hr_fake_managed(home: Path, *, argvlog: Path, gens: dict | None = None,
     моделируют отказы; venv при этом НЕ создаётся (откат на него запрещён)."""
     bindir = home / ".hermes" / "hermes-agent" / ".hermes" / "bin"
     bindir.mkdir(parents=True, exist_ok=True)
+    write(bindir.parents[2] / "hermes_bootstrap.py", "# managed fixture bootstrap\n")
     if fail_stderr is not None:
         body = [f'printf \'%s\\n\' "{fail_stderr}" >&2', f'exit "{exit_code}"', ""]
     else:
@@ -7578,6 +7579,156 @@ def _hr_fake_managed(home: Path, *, argvlog: Path, gens: dict | None = None,
     shim.write_text("#!/bin/sh\n" + "\n".join(body), encoding="utf-8",
                     newline="\n")
     shim.chmod(0o755)
+
+
+def probe_readiness_capability(tmp: Path):
+    """G1: managed check must execute the bootstrap, not just resolve argv."""
+    from unittest.mock import patch
+    hr = load_module("hermes-runtime")
+    problems = []
+    home = tmp / "capability-home"
+    _hr_fake_managed(home, argvlog=tmp / "capability-launch.log")
+    _hr_fake_legacy(home)  # deliberately stale: never a managed fallback
+    root = home / ".hermes/hermes-agent"
+    bootstrap = write(root / "hermes_bootstrap.py", "import os\nos.environ['ARGUS_ACTIVATED']='yes'\n")
+    for label, body in (
+        ("healthy", bootstrap.read_text()),
+        ("bootstrap-failure", "raise RuntimeError('CAPABILITY_SECRET_CANARY')\n"),
+    ):
+        bootstrap.write_text(body)
+        r = _hr_adapter_run(home, "check")
+        if (r.returncode == 0) != (label == "healthy") or "CAPABILITY_SECRET_CANARY" in r.stdout + r.stderr:
+            problems.append(f"{label}: rc={r.returncode}")
+    launcher = root / ".hermes/bin/hermes"
+    launcher.write_text('#!/bin/sh\nprintf \'["/bin/false","-I","-c","BOOT"]\\n\'\n')
+    r = _hr_adapter_run(home, "check")
+    if r.returncode != 2:
+        problems.append(f"executable-failure: rc={r.returncode}")
+    # Shorten only the fixture deadline; production retains the existing 60s.
+    with patch.object(hr, "LAUNCH_QUERY_TIMEOUT", 0.05), \
+         patch.object(hr, "resolve_runtime_interpreter", return_value=sys.executable):
+        bootstrap.write_text("import time\ntime.sleep(1)\n")
+        if hr.cmd_check(root) != 2:
+            problems.append("capability timeout passed")
+    # Actual deploy preflight, all host/system operations stubbed.
+    shim = tmp / "capability-bin"
+    shim.mkdir()
+    _rr1b_host_shims(shim)
+    r = _rr1b_deploy_env(tmp, "capability", home, shim, _rr1b_modules(core=True), {})
+    if r.returncode == 0 or (home / "scripts/hermes-watchdog.sh").exists() \
+            or (home / ".config/systemd/user/hermes-gateway.service").exists():
+        problems.append("failed capability wrote runtime")
+    check("readiness_capability", not problems, f"problems={problems}")
+
+
+def probe_observation_pgrep(tmp: Path):
+    """G2: direct/reexec and count/quiet all preserve unavailable scans."""
+    problems = []
+    home = tmp / "observation-home"
+    _hr_fake_managed(home, argvlog=tmp / "observation-launch.log")
+    root = home / ".hermes/hermes-agent"
+    write(root / "hermes_bootstrap.py", "# fixture activation\n")
+    write(root / "gateway/__init__.py", "")
+    write(root / "gateway/status.py", """import os
+def looks_like_gateway_command_line(cmd): return 'gateway run' in cmd
+def _read_process_cmdline(pid):
+    if pid == 999999: return ''  # normal enumeration/read race
+    return os.environ['HERMES_DIR'] + '/hermes-agent gateway run' if pid == 888888 else 'other'
+""")
+    shim = tmp / "observation-bin"
+    shim.mkdir()
+    for label, body, expected in (
+        ("match", "echo 888888", 0), ("filtered", "echo 777777", 1),
+        ("disappeared", "echo 999999", 1), ("none", "exit 1", 1),
+        ("error2", "echo OBS_SECRET_CANARY >&2; exit 2", 2),
+        ("error3", "exit 3", 2), ("signal", "kill -TERM $$", 2),
+        ("empty", "exit 0", 2), ("malformed", "echo '888888 bad'", 2),
+        ("zero", "echo 0", 2), ("contradiction", "echo 888888; exit 1", 2),
+        ("missing", None, 2),
+    ):
+        pg = shim / "pgrep"
+        if pg.exists(): pg.unlink()
+        if body is not None:
+            _write_argv_shim(shim, "pgrep", body + "\n")
+        for direct in (True, False):
+            for mode in ([], ["--count"], ["--quiet"]):
+                env = _hr_env(home, {"PATH": str(shim), "HERMES_GATEWAY_PIDS_REEXEC": "1"} if direct else {"PATH": str(shim)})
+                env["PYTHONPATH"] = str(root)
+                r = subprocess.run([sys.executable, str(REPO / "scripts/hermes-gateway-pids.py"), *mode],
+                                   env=env, capture_output=True, text=True, timeout=15)
+                if r.returncode != expected or (expected == 2 and r.stdout) \
+                        or "OBS_SECRET_CANARY" in r.stdout + r.stderr:
+                    problems.append(f"{label}/{direct}/{mode}: rc={r.returncode} stdout={r.stdout!r}")
+    # Exercise timeout/exec exceptions without ten real seconds per case.
+    from unittest.mock import patch
+    import importlib.util
+    with patch.dict(os.environ, {"HERMES_DIR": str(home / '.hermes')}):
+        gw = load_module("hermes-gateway-pids")
+    with patch.dict(sys.modules):
+        sys.path.insert(0, str(root))
+        try:
+            import gateway.status
+            for error in (subprocess.TimeoutExpired('pgrep', 10), OSError('OBS_SECRET_CANARY')):
+                with patch.object(gw, "_reexec_under_runtime", return_value=False), \
+                     patch.object(gw.subprocess, "run", side_effect=error):
+                    if gw.main(["--count"]) != 2:
+                        problems.append(type(error).__name__)
+        finally:
+            sys.path.remove(str(root))
+    check("observation_pgrep", not problems, f"problems={problems}")
+
+
+def probe_rollback_results(tmp: Path):
+    """G3: run the guard with all DNS/route/sudo/transport surfaces stubbed."""
+    problems = []
+    source = (REPO / "scripts/network-guard.sh").read_text()
+    for failed in ("none", "dns", "flush", "rule", "all"):
+        for remains in (False, True):
+            home = tmp / f"guard-{failed}-{remains}"
+            state = home / ".hermes/state/network-guard"
+            state.mkdir(parents=True)
+            write(state / "baseline-iprule.txt", "from all lookup main\n")
+            write(home / ".hermes/logs/network-guard.log", "")
+            # Only replace observation/transport functions; rollback and main are verbatim.
+            script = source.replace("mkdir -p \"$STATE_DIR\"", '''
+check_dns() { [ -f "$STATE_DIR/acted" ] && [ "$TEST_REMAINS" = 0 ] || echo fixture0; }
+check_rules() { [ -f "$STATE_DIR/acted" ] && [ "$TEST_REMAINS" = 0 ] || echo 'from all lookup 123'; }
+send_alert() { printf '%s\\n' "$1" >> "$HOME/alerts"; }
+curl() { printf 200; }
+sudo() {
+  printf '%s\\n' "$*" >> "$HOME/commands"
+  touch "$STATE_DIR/acted"
+  local kind=rule
+  [ "$2" != resolvectl ] || kind=dns
+  [ "$3" != route ] || kind=flush
+  if [ "$TEST_FAIL" = "$kind" ] || [ "$TEST_FAIL" = all ]; then
+    echo ROLLBACK_SECRET_CANARY >&2; return 9
+  fi
+  return 0
+}
+mkdir -p "$STATE_DIR"''', 1)
+            path = write(home / "guard.sh", script)
+            env = {**os.environ, "HOME": str(home), "TEST_FAIL": failed, "TEST_REMAINS": str(int(remains))}
+            for cycle in (1, 2, 3):
+                (state / "acted").unlink(missing_ok=True)
+                r = subprocess.run(["bash", str(path)], env=env, capture_output=True, text=True, timeout=20)
+                data = json.loads((state / "state.json").read_text())
+                alerts = (home / "alerts").read_text()
+                log = (home / ".hermes/logs/network-guard.log").read_text()
+                calls = (home / "commands").read_text().splitlines()
+                expected = "yes" if failed == "none" and not remains else "no"
+                if r.returncode or data['rolled_back'] != expected or data['actions_hour'] != min(cycle, 2) \
+                        or len(calls) != min(cycle, 2) * 3 or "ROLLBACK_SECRET_CANARY" in log + alerts + r.stderr:
+                    problems.append(f"{failed}/{remains}/{cycle}: state={data} calls={len(calls)}")
+                if failed != "none" and ("FAILED" not in log or "с ошибками" not in alerts):
+                    problems.append(f"{failed}: missing failure report")
+                if failed in ("dns", "all") and "ROLLBACK DNS: revert" in log:
+                    problems.append("false DNS success")
+                if failed in ("flush", "all") and "ROLLBACK: flushed table" in log:
+                    problems.append("false flush success")
+                if failed in ("rule", "all") and "ROLLBACK: ip rule del" in log:
+                    problems.append("false rule success")
+    check("rollback_results", not problems, f"problems={problems}")
 
 
 def _hr_script(home: Path) -> Path:
@@ -8912,6 +9063,10 @@ def main() -> int:
     probe_b1_heartbeat_stdin(tmp)
     probe_b2_proxy_senders(tmp)
     probe_b4_analyzer_freshness(wh, tmp)
+
+    probe_readiness_capability(tmp)
+    probe_observation_pgrep(tmp)
+    probe_rollback_results(tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

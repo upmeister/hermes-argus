@@ -399,6 +399,58 @@ esac
         self.assertNotIn('Uninstall complete', result.stdout)
         self.assertEqual(self.runtime(), before)
 
+    def test_g4_documented_prewrite_update_recovery(self):
+        self.bootstrap()
+        private = self.config().read_bytes()
+        operator = self.home / '.hermes/operator-data'
+        operator.write_text('private fixture retained\n')
+        before = self.runtime()
+        failed = self.install('--version', 'v0.2.0-rc.1', env={**self.env, 'LC_FAIL_UNIT': '1'})
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(self.git(self.checkout, 'rev-parse', 'HEAD').stdout.strip(), self.v2)
+        self.assertEqual(self.runtime(), before)
+        retry = self.install('--version', 'v0.2.0-rc.1')
+        self.assertNotEqual(retry.returncode, 0)
+        self.assertIn('ownership differs', retry.stderr)
+        # Exact published procedure: prove old ownership, non-forcing source
+        # restore, then execute TARGET installer from its separate worktree.
+        target = self.root / 'reviewed-target'
+        self.git(self.checkout, 'worktree', 'add', '--detach', str(target), self.v2)
+        def ownership():
+            return subprocess.run(['bash', str(target / 'deploy.sh'), '--check-ownership',
+                                   str(self.checkout / 'config.env'), str(self.checkout), self.v1],
+                                  env=self.env, capture_output=True, text=True, timeout=60)
+        proof = ownership()
+        self.assertEqual(proof.returncode, 0, proof.stdout + proof.stderr)
+        payload = self.home / '.hermes/scripts/health_patterns.py'
+        old_bytes = payload.read_bytes()
+        payload.write_bytes(old_bytes + b'\n# custom/mixed runtime\n')
+        self.assertNotEqual(ownership().returncode, 0)
+        payload.write_bytes(old_bytes)
+        unknown = subprocess.run(['bash', str(target / 'deploy.sh'), '--check-ownership',
+                                  str(self.checkout / 'config.env'), str(self.checkout), 'unknown-old'],
+                                 env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(unknown.returncode, 0)
+        tracked = self.checkout / 'scripts/health_patterns.py'
+        tracked_bytes = tracked.read_bytes()
+        tracked.write_bytes(tracked_bytes + b'\n# operator edit\n')
+        self.assertTrue(self.git(self.checkout, 'status', '--porcelain', '--untracked-files=no').stdout)
+        self.assertNotEqual(self.git(self.checkout, 'checkout', '--no-overwrite-ignore', '--detach', self.v1, check=False).returncode, 0)
+        self.assertEqual(tracked.read_bytes(), tracked_bytes + b'\n# operator edit\n')
+        tracked.write_bytes(tracked_bytes)  # remove only this fixture injection
+        self.assertEqual(self.git(self.checkout, 'status', '--porcelain', '--untracked-files=no').stdout, '')
+        self.git(self.checkout, 'checkout', '--no-overwrite-ignore', '--detach', self.v1)
+        recovered = subprocess.run(['bash', str(target / 'install.sh'), '--version', 'v0.2.0-rc.1'],
+                                   env=self.env, capture_output=True, text=True, timeout=180)
+        self.assertEqual(recovered.returncode, 0, recovered.stdout + recovered.stderr)
+        self.assertIn('C_SELECTED_TREE_V2', recovered.stdout)
+        self.assertEqual(self.git(self.checkout, 'rev-parse', 'HEAD').stdout.strip(), self.v2)
+        self.assertIn('selected-tree-v2', payload.read_text())
+        self.assertEqual((self.checkout / 'config.env').read_bytes(), private)
+        self.assertEqual(operator.read_text(), 'private fixture retained\n')
+        self.assertIn('3 * * * * /operator-job', self.cron.read_text())
+        self.git(self.checkout, 'worktree', 'remove', str(target))
+
     def test_c8_checkout_and_deploy_failure_are_not_completion(self):
         self.bootstrap()
         before = self.runtime()

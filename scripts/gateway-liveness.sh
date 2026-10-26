@@ -41,7 +41,7 @@ if GATEWAY_PIDS=$(python3 "$HOME/scripts/hermes-gateway-pids.py" 2>/dev/null); t
 else
   rc=$?
   if [ "$rc" -eq 2 ]; then
-    echo "$(date -Is) ПРОПУСК: матчер gateway недоступен (rc=2) — живость не проверена" >> "$LOG"
+    echo "$(date -Is) ПРОПУСК: наблюдение gateway недоступно (rc=2) — живость не проверена" >> "$LOG"
     exit 0
   fi
   exit 0

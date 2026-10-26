@@ -225,22 +225,27 @@ log "🔍 Проверка процесса gateway..."
 GW_HELPER="$HOME_DIR/scripts/hermes-gateway-pids.py"
 # if/else, а не `&& GW_STATE=alive || GW_STATE=$?`: в цепочке &&/|| $?
 # относится к выражению целиком, и "alive" не совпало бы с 0.
-if [ -f "$GW_HELPER" ] && GATEWAY_PIDS=$(python3 "$GW_HELPER" 2>/dev/null); then
+GW_RC=2
+if [ -f "$GW_HELPER" ]; then
+    if GATEWAY_PIDS=$(python3 "$GW_HELPER" 2>/dev/null); then GW_RC=0
+    else GW_RC=$?; fi
+fi
+if [ "$GW_RC" -eq 0 ]; then
     PID_COUNT=$(echo "$GATEWAY_PIDS" | grep -c . )
     OKS+=("✅ Gateway: ${PID_COUNT} процесс(ов)")
     log "✅ Gateway процесс(ов): ${PID_COUNT}"
 else
-    GW_RC=$?
-    if [ "$GW_RC" -eq 2 ]; then
-        log "⚠️ Проверка gateway невозможна (матчер недоступен) — НЕ считаю процесс мёртвым"
-        OKS+=("⚠️ Gateway: проверка невозможна (матчер недоступен)")
-    elif [ "$GW_RC" -eq 1 ]; then
+    if [ "$GW_RC" -eq 1 ]; then
         track_problem "gateway_proc" "Gateway" "❌ <b>Gateway процесс НЕ НАЙДЕН!</b> Hermes gateway не запущен" 1
         log "❌ Gateway процесс не найден"
     else
-        # helper отсутствует (rc 127) или не исполняем — это НЕ «мёртв»
-        log "⚠️ Матчер gateway недоступен ($GW_HELPER) — НЕ считаю процесс мёртвым"
-        OKS+=("⚠️ Gateway: матчер недоступен ($GW_HELPER)")
+        log "⚠️ Проверка gateway недоступна (rc=$GW_RC) — состояние неизвестно"
+        OKS+=("⚠️ Gateway: проверка недоступна")
+        # Unknown is neither a new failure nor a clean recovery sample.
+        # Mark only existing gateway evidence seen, without track_problem().
+        if [ -n "${ST_STREAK[gateway_proc]+present}" ]; then
+            SEEN[gateway_proc]=1
+        fi
     fi
 fi
 

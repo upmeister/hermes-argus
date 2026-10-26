@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Managed Hermes readiness executes a bounded harmless bootstrap activation
+  before deployment; executable presence alone is insufficient. Child output
+  stays private and a broken published launcher never falls back to old venv.
+- Gateway enumeration failures and malformed pgrep results remain unknown
+  (rc 2); watchdog preserves prior gateway counters without false recovery.
+- Network guard records individual failed commands and mixed remediation
+  results truthfully. `rolled_back=yes` requires successful commands and clear
+  post-checks; failed attempts still count toward the unchanged breaker.
+- Documented and locally rehearsed manual recovery for a proven pre-write
+  V1/V2 update interruption. Mixed/custom/unknown runtime still stops.
+
+These corrections and C are source-only; production remains at `17b3975`.
+
 ### Planning
 
 - Closed the A/B/C source programme at merged PR #79; C remains not deployed.
@@ -15,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manual update-recovery recipe. Tests run locally on Ubuntu 24.04 in WSL or
   VMware first; a possible production trial remains separately authorized.
   Recorded the independent assessment and corrected A's accepted launch design.
-  These follow-up fixes are planned, not shipped by this documentation change.
+  The follow-up corrections are delivered by the implementation receipt above.
 
 - Deployed the merged RR1a/RR1b and restart A/B source at `17b3975` on
   2026-10-26 after maintainer authorization. Read-back confirms payload,

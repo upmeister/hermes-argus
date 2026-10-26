@@ -34,8 +34,8 @@ jobs:
 
       - name: Run static checks
         run: |
-          python -m py_compile scripts/health-check-v2.py scripts/gen-registry.py tests/probes.py scripts/local_services_check.py
-          bash -n install.sh deploy.sh uninstall.sh scripts/health-check-v2-wrapper.sh scripts/hermes-watchdog.sh scripts/auto-remediate.sh scripts/heartbeat.sh
+          python -m py_compile scripts/health-check-v2.py scripts/gen-registry.py tests/probes.py scripts/local_services_check.py scripts/hermes-runtime.py scripts/hermes-gateway-pids.py tests/test_lifecycle.py tests/test_watchdog_swap.py
+          bash -n install.sh deploy.sh uninstall.sh scripts/health-check-v2-wrapper.sh scripts/hermes-watchdog.sh scripts/auto-remediate.sh scripts/heartbeat.sh scripts/network-guard.sh scripts/gateway-liveness.sh
 
       - name: Run regression probes
         run: |

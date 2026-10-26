@@ -12,7 +12,7 @@
 #
 # Откат ТОЛЬКО при нарушении инвариантов. Внешняя деградация (РКН-волна) —
 # не наш случай: guard молчит, её мониторят heartbeat/health-check.
-# Circuit breaker: >=2 отката/час → стоп на час + алерт.
+# Circuit breaker: >=2 попытки отката/час → стоп на час + алерт.
 # ============================================================================
 
 set -u
@@ -21,7 +21,7 @@ STATE_DIR="$HOME/.hermes/state/network-guard"
 BASELINE="$STATE_DIR/baseline-iprule.txt"
 STATE="$STATE_DIR/state.json"
 LOG="$HOME/.hermes/logs/network-guard.log"
-BREAKER_MAX=2           # откатов в час
+BREAKER_MAX=2           # попыток отката в час
 BREAKER_WINDOW=3600     # секунд
 CHECK_TIMEOUT=5
 
@@ -82,24 +82,38 @@ check_rules() {
 
 # --- Откат: DNS --------------------------------------------------------------
 rollback_dns() {
+    local rc
     for iface in $1; do
-        sudo -n resolvectl revert "$iface" 2>/dev/null
-        log "ROLLBACK DNS: revert $iface"
+        if sudo -n resolvectl revert "$iface" 2>/dev/null; then
+            log "ROLLBACK DNS: revert $iface"
+        else
+            rc=$?; ACTIONS_FAILED=1
+            log "ROLLBACK FAILED: resolvectl revert rc=$rc"
+        fi
     done
 }
 
 # --- Откат: ip rules ---------------------------------------------------------
 rollback_rules() {
+    local rc
     while IFS= read -r rule; do
         [ -z "$rule" ] && continue
         # таблицы, на которые ссылается правило
         for tbl in $(echo "$rule" | grep -oE 'lookup [0-9]+' | awk '{print $2}'); do
-            sudo -n ip route flush table "$tbl" 2>/dev/null
-            log "ROLLBACK: flushed table $tbl"
+            if sudo -n ip route flush table "$tbl" 2>/dev/null; then
+                log "ROLLBACK: flushed table $tbl"
+            else
+                rc=$?; ACTIONS_FAILED=1
+                log "ROLLBACK FAILED: ip route flush table rc=$rc"
+            fi
         done
         # само правило (без суффикса pref, ip rule del сам найдёт)
-        sudo -n ip rule del $rule 2>/dev/null
-        log "ROLLBACK: ip rule del $rule"
+        if sudo -n ip rule del $rule 2>/dev/null; then
+            log "ROLLBACK: ip rule del $rule"
+        else
+            rc=$?; ACTIONS_FAILED=1
+            log "ROLLBACK FAILED: ip rule del rc=$rc"
+        fi
     done <<< "$1"
 }
 
@@ -142,6 +156,7 @@ fi
 
 # --- Нарушения: откат --------------------------------------------------------
 log "VIOLATIONS: dns=[$DNS_BAD] rules=[$RULES_BAD]"
+ACTIONS_FAILED=0
 [ -n "$DNS_BAD" ] && rollback_dns "$DNS_BAD"
 [ -n "$RULES_BAD" ] && rollback_rules "$RULES_BAD"
 
@@ -149,8 +164,10 @@ log "VIOLATIONS: dns=[$DNS_BAD] rules=[$RULES_BAD]"
 DNS_BAD_AFTER=$(check_dns)
 RULES_BAD_AFTER=$(check_rules)
 OK_AFTER="no"
+COMMAND_RESULT="все команды успешны"
+[ "$ACTIONS_FAILED" -eq 0 ] || COMMAND_RESULT="завершено с ошибками"
 if [ -z "$DNS_BAD_AFTER" ] && [ -z "$RULES_BAD_AFTER" ]; then
-    OK_AFTER="yes"
+    [ "$ACTIONS_FAILED" -ne 0 ] || OK_AFTER="yes"
 fi
 
 # Circuit breaker
@@ -163,12 +180,14 @@ ACTIONS_HOUR=$((ACTIONS_HOUR + 1))
 BREAKER=0
 if [ "$ACTIONS_HOUR" -ge "$BREAKER_MAX" ]; then
     BREAKER=$((NOW + BREAKER_WINDOW))
-    send_alert "🛑 Network Guard: $BREAKER_MAX отката за час — circuit breaker на 1ч. Возможны легитимные изменения сети (проверить вручную)."
+    send_alert "🛑 Network Guard: $BREAKER_MAX попытки отката за час — circuit breaker на 1ч. Возможны легитимные изменения сети (проверить вручную)."
 fi
 
-send_alert "🛠 Network Guard откатил сетевые нарушения:
+send_alert "🛠 Network Guard: выполнена попытка отката сетевых нарушений:
 DNS-захват: [$DNS_BAD]
 Чужие правила: [$RULES_BAD]
+Результат команд: $COMMAND_RESULT
+Нарушения после проверки: DNS=[$DNS_BAD_AFTER] rules=[$RULES_BAD_AFTER]
 Откат успешен: $OK_AFTER
 E2E (opencode/github): $E2E"
 

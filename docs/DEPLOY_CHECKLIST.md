@@ -20,11 +20,72 @@ positive checks. The maintainer's suggestion to try production at the end does
 not choose or authorize those operations. Deploy/restart/notification tests
 still require separate approval of that concrete plan.
 
-The builder must add and rehearse the DEBT-031 manual recovery procedure here:
-known V1 runtime / selected V2 checkout after a pre-write failure, source
-reconciliation without forced Git operations, target-installer execution, and
-preserved private/operator files. Until that evidence exists, stop on an
-ownership refusal; do not treat a generic retry or uninstall as recovery.
+The bounded DEBT-031 recovery below is rehearsed in
+`LifecycleTests.test_g4_documented_prewrite_update_recovery`. This is local
+fixture evidence; any production use still requires authorization.
+
+### Manual recovery of a proven pre-write interrupted update
+
+Use this only when a recorded old source V1 still owns the complete runtime,
+selection moved the checkout to V2, and the recorded failure was the
+user-manager preflight **before runtime writes**. A plain retry compares the
+V1 runtime against V2 and correctly refuses. Do not use uninstall as repair.
+
+1. Preserve a protected operator receipt/backup of config, cron, units and
+   payload hashes/modes. Obtain the **old SHA and selected SHA/tag** from the
+   prior successful install and failed selection receipts/Git history. Current
+   HEAD alone does not establish the installed revision. If provenance or the
+   failed phase is unknown, stop. If there were partial runtime writes, stop
+   and report the exact mixed artifacts needing manual reconciliation.
+2. In the installed checkout, inspect `git status --porcelain` and ignored
+   files (`git status --short --ignored`). Stop on tracked operator edits or
+   untracked/ignored collisions; retain the private `config.env` in place.
+   Do not stash, force checkout, clean, reset or overwrite custom files.
+3. Set these shell variables to the recorded, reviewed values; the example
+   deliberately supplies no deployable revision or default edge selection:
+
+   ```bash
+   ARGUS_SOURCE="$HOME/hermes-argus"
+   # Set OLD_SHA, TARGET_SHA and TARGET_TAG from the protected receipts.
+   git -C "$ARGUS_SOURCE" cat-file -e "$OLD_SHA^{commit}" || exit 1
+   git -C "$ARGUS_SOURCE" cat-file -e "$TARGET_SHA^{commit}" || exit 1
+   test "$(git -C "$ARGUS_SOURCE" rev-parse "refs/tags/$TARGET_TAG^{commit}")" = "$TARGET_SHA" || exit 1
+   TARGET_TREE=$(mktemp -d)
+   rmdir "$TARGET_TREE"
+   git -C "$ARGUS_SOURCE" worktree add --detach "$TARGET_TREE" "$TARGET_SHA" || exit 1
+   bash "$TARGET_TREE/deploy.sh" --check-ownership \
+       "$ARGUS_SOURCE/config.env" "$ARGUS_SOURCE" "$OLD_SHA" || exit 1
+   ```
+
+   Read every ownership result against V1, including expected payloads,
+   cron, units and policy. Unknown/custom differences are a stop; the proof
+   must match the protected pre-failure inventory too, including any expected
+   file that is now missing. The ownership gate permits absent files for
+   installation, so its exit code alone cannot prove a complete old runtime.
+4. Only after that proof, restore the **source checkout only**, then execute
+   the **target** lifecycle installer (not the old V1 installer):
+
+   ```bash
+   test -z "$(git -C "$ARGUS_SOURCE" status --porcelain --untracked-files=no)" || exit 1
+   git -C "$ARGUS_SOURCE" checkout --no-overwrite-ignore --detach "$OLD_SHA" || exit 1
+   bash "$TARGET_TREE/install.sh" --version "$TARGET_TAG" || exit 1
+   test "$(git -C "$ARGUS_SOURCE" rev-parse HEAD)" = "$TARGET_SHA" || exit 1
+   git -C "$ARGUS_SOURCE" worktree remove "$TARGET_TREE" || exit 1
+   ```
+
+   An explicitly authorized edge update can use `--channel edge` instead,
+   only after verifying `origin/main` still equals the reviewed `TARGET_SHA`.
+   Stop on drift. A tag selector is used in the runnable fixture.
+5. Complete the regular payload/unit/cron read-back below against V2. Compare
+   protected private config, outside-block operator cron and operator files
+   with their before-values. A new failure is a new reconciliation decision;
+   no general mixed-installation recovery or automatic rollback is promised.
+
+The fixture installs V1, fails V2's user-manager gate, proves byte/mode-equal
+old runtime and refused retry, and performs these exact worktree/checkout/tag
+steps successfully. It verifies V2 execution/payload and preserved private
+config/operator data/cron; custom runtime, unknown old source and conflicting
+tracked edits stop. Host manager, cron and package/network commands are stubs.
 
 ## Contract C lifecycle read-back (source merged; not deployed)
 
