@@ -29,7 +29,9 @@ import tempfile
 import re
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
@@ -8228,6 +8230,436 @@ def probe_s1_alias_canonical(disc, tmp: Path):
     check("s1_alias_canonical", not problems, f"problems={problems}")
 
 
+# ── Контракт B: доставка и достоверность (DEBT-013/014/019) ─────────────────
+
+_B_CRON = "ARGUS_CANARY_B_CRON"
+_B_DMS = "ARGUS_CANARY_B_DMS"
+_B_TOKEN = "ARGUS_CANARY_B_TOK"
+_B_CHAT = "ARGUS_CHAT_B"
+_B_PROXY = "socks5h://127.0.0.1:19999"
+
+
+def _b_render_script(tmp: Path, tag: str, substitutions: dict) -> Path:
+    """Рендер шаблона с @MARKER@ в одноразовый исполняемый файл."""
+    import re as _re
+    name = substitutions.pop("_NAME")
+    text = (REPO / "scripts" / name).read_text(encoding="utf-8")
+    for key, val in substitutions.items():
+        text = text.replace(key, val)
+    leftovers = _re.findall(r"@[A-Z_]+@", text)
+    if leftovers:
+        raise AssertionError(f"{name}: unresolved markers {leftovers}")
+    return write(tmp / f"{tag}.sh", text)
+
+
+def _b_curl_capture_shim(shim: Path, argv_log: Path, stdin_log: Path,
+                         body: str = "") -> None:
+    """curl-shim: argv и stdin фиксируются раздельно; опциональное поведение."""
+    _write_argv_shim(shim, "curl",
+                     f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
+                     f'{{ echo "--CALL--"; cat; }} >> "{stdin_log.as_posix()}"\n'
+                     + (body or "exit 0\n"))
+
+
+def _b_x_arg(argv: str, marker: str) -> str | None:
+    """Значение флага -x из строки argv, содержащей marker (None — строки нет)."""
+    for line in argv.splitlines():
+        if marker in line:
+            m = re.search(r"(?:^| )-x (\S*)", line)
+            return m.group(1) if m else None
+    return None
+
+
+def probe_b1_heartbeat_stdin(tmp: Path):
+    """B1/B3 (DEBT-014): Cronping/DMS URL идут только через stdin-curl config;
+    канарейки отсутствуют в argv/stdout/логах; метод/таймаут/семантика отказов
+    и выбор бэкендов сохранены."""
+    problems = []
+
+    def run_heartbeat(tag: str, env_text: str, curl_body: str):
+        home = tmp / f"b1-{tag}-home"
+        (home / ".hermes" / ".env").parent.mkdir(parents=True, exist_ok=True)
+        write(home / ".hermes" / ".env", env_text)
+        shim = tmp / f"b1-{tag}-shim"
+        shim.mkdir(parents=True, exist_ok=True)
+        argv_log = tmp / f"b1-{tag}-argv.log"
+        stdin_log = tmp / f"b1-{tag}-stdin.log"
+        _b_curl_capture_shim(shim, argv_log, stdin_log, curl_body)
+        script = _b_render_script(tmp, f"b1-{tag}", {
+            "_NAME": "heartbeat.sh", "@HERMES_DIR@": (home / ".hermes").as_posix()})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=_path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                                     + os.environ.get("PATH", "")}),
+                           capture_output=True, text=True, timeout=60)
+        return (r, argv_log.read_text(encoding="utf-8") if argv_log.exists() else "",
+                stdin_log.read_text(encoding="utf-8") if stdin_log.exists() else "",
+                home)
+
+    # 1. Успех обоих бэкендов: канарейки только в stdin, argv/лог чисты.
+    r, argv, stdin, home = run_heartbeat(
+        "ok", f"CRONPING_TOKEN={_B_CRON}\nDMS_SNITCH={_B_DMS}\n", "")
+    log = (home / ".hermes" / "logs" / "heartbeat.log")
+    log_text = log.read_text(encoding="utf-8") if log.exists() else ""
+    ok = (r.returncode == 0
+          and _B_CRON not in argv and _B_DMS not in argv
+          and _B_CRON not in log_text and _B_DMS not in log_text
+          and _B_CRON not in r.stdout and _B_CRON not in r.stderr
+          and _B_DMS not in r.stdout and _B_DMS not in r.stderr
+          and f"url = https://ping.cronping.com/{_B_CRON}" in stdin
+          and f"url = https://nosnch.in/{_B_DMS}" in stdin
+          and "-K" in argv and "-m 10" in argv and "-X" not in argv)
+    if not ok:
+        problems.append(f"ok: rc={r.returncode} argv={argv[:120]!r} "
+                        f"stdin_has_urls={_B_CRON in stdin and _B_DMS in stdin}")
+    if "FAILED" in log_text:
+        problems.append(f"ok: ложный FAILED в логе: {log_text[-160:]!r}")
+
+    # 2. Отказ обоих бэкендов виден в логе, канарейки по-прежнему вне argv.
+    r, argv, stdin, home = run_heartbeat(
+        "fail", f"CRONPING_TOKEN={_B_CRON}\nDMS_SNITCH={_B_DMS}\n", "exit 7\n")
+    log = (home / ".hermes" / "logs" / "heartbeat.log")
+    log_text = log.read_text(encoding="utf-8") if log.exists() else ""
+    out_channels = r.stdout + r.stderr
+    ok = (r.returncode == 0
+          and "cronping ping FAILED" in log_text and "dms ping FAILED" in log_text
+          and _B_CRON not in argv and _B_DMS not in argv
+          and _B_CRON not in log_text and _B_DMS not in log_text
+          and _B_CRON not in out_channels and _B_DMS not in out_channels)
+    if not ok:
+        problems.append(f"fail: rc={r.returncode} log={log_text[-160:]!r} "
+                        f"out={out_channels[:80]!r}")
+
+    # 3. Выбор бэкендов: без токенов — ни одного curl-вызова; DMS=change_me —
+    #    только cronping.
+    r, argv, stdin, home = run_heartbeat("none", "WATCHDOG_CHAT_ID=x\n", "")
+    if stdin:
+        problems.append(f"none: неожиданные вызовы curl: {stdin[:80]!r}")
+    r, argv, stdin, home = run_heartbeat(
+        "guard", f"CRONPING_TOKEN={_B_CRON}\nDMS_SNITCH=change_me\n", "")
+    if not (f"https://ping.cronping.com/{_B_CRON}" in stdin
+            and "nosnch.in" not in stdin):
+        problems.append(f"guard: stdin={stdin[:120]!r}")
+
+    check("b1_heartbeat_stdin", not problems, f"problems={problems}")
+
+
+def probe_b2_proxy_senders(tmp: Path):
+    """B2/B3 (DEBT-013): настроенный TELEGRAM_PROXY из .env доходит до
+    alert/recovery отправок liveness-сендеров и еженедельного отчёта при
+    cron-пустом окружении; без proxy — прямой режим; кавычки снимаются по
+    конвенции RR0c. Канарейка токена отсутствует в argv/stdout/stderr/логах
+    И на успехе, И на отказе отправки (curl != 0)."""
+    problems = []
+    sys_exe = sys.executable
+
+    def systemd_shim(shim: Path) -> None:
+        _write_argv_shim(shim, "systemctl",
+                         'case "$3" in LoadState) echo not-found; exit 0;; esac\n'
+                         'case "$*" in *is-active*) echo active;; *) : ;; esac\nexit 0\n')
+
+    def curl_shim(shim: Path, argv_log: Path, stdin_log: Path,
+                  fail_send: bool = False, dash_probe: str | None = None,
+                  tag: str = "") -> None:
+        # Send-вызов имеет -K в argv; опциональный отказ не трогает счётчик probe.
+        body = 'case "$*" in *-K*) exit 7;; esac\n' if fail_send else ""
+        if dash_probe == "stateful":
+            body += (f'cnt_file="{tmp.as_posix()}/dash-curl-{tag}.count"\n'
+                     'cnt=$(cat "$cnt_file" 2>/dev/null || echo 0)\n'
+                     'cnt=$((cnt + 1)); echo "$cnt" > "$cnt_file"\n'
+                     'if [ "$cnt" -le 3 ]; then exit 0; fi\n'
+                     'echo "200"\n')
+        elif dash_probe == "ok":
+            body += 'echo "200"\n'
+        body += "exit 0\n"
+        _b_curl_capture_shim(shim, argv_log, stdin_log, body)
+
+    def gateway_env(home: Path, fresh: bool, state: bool) -> None:
+        hermes = home / ".hermes"
+        (hermes / "logs").mkdir(parents=True, exist_ok=True)
+        (hermes / "state").mkdir(parents=True, exist_ok=True)
+        # Локальное время: age_sec парсит метку через `date -d` в локальной зоне.
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        stale = "2001-01-01 00:00:00"
+        write(hermes / "logs" / "agent.log",
+              f"{now if fresh else stale} +00:00 hermes: memory trim: "
+              f"reason=messaging gateway housekeeping\n")
+        if state:
+            write(hermes / "state" / "gateway-liveness.alerted", "fixture\n")
+
+    def prepare(tag: str) -> tuple:
+        home = tmp / f"b2-{tag}-home"
+        shim = tmp / f"b2-{tag}-shim"
+        shim.mkdir(parents=True, exist_ok=True)
+        return home, shim
+
+    def read_logs(argv_log: Path, stdin_log: Path) -> tuple:
+        argv = argv_log.read_text(encoding="utf-8") if argv_log.exists() else ""
+        stdin = stdin_log.read_text(encoding="utf-8") if stdin_log.exists() else ""
+        return argv, stdin
+
+    def assert_no_canary(tag: str, r, argv: str, log_home: Path, log_name: str) -> None:
+        log = log_home / log_name
+        log_text = log.read_text(encoding="utf-8") if log.exists() else ""
+        if _B_TOKEN in (r.stdout + r.stderr + log_text + argv):
+            problems.append(f"{tag}: канарейка токена в канале вывода/лога")
+
+    proxy_env = (f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n"
+                 f"TELEGRAM_PROXY={_B_PROXY}\n")
+    quoted_env = (f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n"
+                  f'TELEGRAM_PROXY="{_B_PROXY}"\n')
+    direct_env = f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n"
+
+    # 1. Gateway ALERT: cron-пустое окружение, proxy из .env; matcher жив.
+    for fail_send in (False, True):
+        tag = f"gw-alert{'-fail' if fail_send else ''}"
+        home, shim = prepare(tag)
+        argv_log = tmp / f"b2-{tag}-argv.log"
+        stdin_log = tmp / f"b2-{tag}-stdin.log"
+        _write_argv_shim(shim, "python3",
+                         'case "$*" in *hermes-gateway-pids*) echo 111 222; '
+                         f'exit 0;; esac\nexec "{sys_exe}" "$@"\n')
+        curl_shim(shim, argv_log, stdin_log, fail_send=fail_send)
+        systemd_shim(shim)
+        _write_argv_shim(shim, "crontab", "exit 0\n")
+        gateway_env(home, fresh=False, state=False)
+        write(home / ".hermes" / ".env", proxy_env)
+        script = _b_render_script(tmp, f"b2-{tag}", {
+            "_NAME": "gateway-liveness.sh", "@WATCHDOG_CHAT_ID@": _B_CHAT})
+        env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                    + os.environ.get("PATH", "")})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=env, capture_output=True, text=True, timeout=120)
+        argv, stdin = read_logs(argv_log, stdin_log)
+        x_arg = _b_x_arg(argv, _B_CHAT)
+        ok = (r.returncode == 0 and _B_TOKEN not in argv
+              and _B_TOKEN in stdin and x_arg == _B_PROXY
+              and "завис" in r.stdout)
+        if not ok:
+            problems.append(f"{tag}: rc={r.returncode} x_arg={x_arg!r} "
+                            f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:50]!r}")
+        assert_no_canary(tag, r, argv, home / ".hermes" / "logs",
+                         "gateway-liveness.log")
+
+    # 2. Gateway RECOVERY: свежий housekeeping + файл дедупа; кавычки в .env.
+    for fail_send in (False, True):
+        tag = f"gw-rec{'-fail' if fail_send else ''}"
+        home, shim = prepare(tag)
+        argv_log = tmp / f"b2-{tag}-argv.log"
+        stdin_log = tmp / f"b2-{tag}-stdin.log"
+        _write_argv_shim(shim, "python3",
+                         'case "$*" in *hermes-gateway-pids*) echo 111 222; '
+                         f'exit 0;; esac\nexec "{sys_exe}" "$@"\n')
+        curl_shim(shim, argv_log, stdin_log, fail_send=fail_send)
+        gateway_env(home, fresh=True, state=True)
+        write(home / ".hermes" / ".env", quoted_env)
+        script = _b_render_script(tmp, f"b2-{tag}", {
+            "_NAME": "gateway-liveness.sh", "@WATCHDOG_CHAT_ID@": _B_CHAT})
+        env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                    + os.environ.get("PATH", "")})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=env, capture_output=True, text=True, timeout=60)
+        argv, stdin = read_logs(argv_log, stdin_log)
+        x_arg = _b_x_arg(argv, _B_CHAT)
+        ok = (r.returncode == 0 and "восстановился" in r.stdout
+              and _B_TOKEN not in argv and _B_TOKEN in stdin
+              and x_arg == _B_PROXY)
+        if not ok:
+            problems.append(f"{tag}: rc={r.returncode} x_arg={x_arg!r} "
+                            f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:50]!r}")
+        assert_no_canary(tag, r, argv, home / ".hermes" / "logs",
+                         "gateway-liveness.log")
+
+    # 3. Dashboard ALERT: proxy НЕ настроен → прямой режим (-x с пустым
+    #    значением); stateful curl: три зонда 000, после рестарта 200.
+    for fail_send in (False, True):
+        tag = f"dash-alert{'-fail' if fail_send else ''}"
+        home, shim = prepare(tag)
+        argv_log = tmp / f"b2-{tag}-argv.log"
+        stdin_log = tmp / f"b2-{tag}-stdin.log"
+        curl_shim(shim, argv_log, stdin_log, fail_send=fail_send,
+                  dash_probe="stateful", tag=tag)
+        _write_argv_shim(shim, "ss",
+                         "echo 'LISTEN 0 511 127.0.0.1:9119 0.0.0.0:*'\nexit 0\n")
+        systemd_shim(shim)
+        (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
+        (home / ".hermes" / "state").mkdir(parents=True, exist_ok=True)
+        write(home / ".hermes" / ".env", direct_env)
+        script = _b_render_script(tmp, f"b2-{tag}", {
+            "_NAME": "dashboard-liveness.sh", "@HERMES_HOST@": "127.0.0.1",
+            "@HERMES_PORT@": "9119", "@WATCHDOG_CHAT_ID@": _B_CHAT})
+        env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                    + os.environ.get("PATH", "")})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=env, capture_output=True, text=True, timeout=120)
+        argv, stdin = read_logs(argv_log, stdin_log)
+        x_arg = _b_x_arg(argv, _B_CHAT)
+        ok = (r.returncode == 0 and _B_TOKEN not in argv and _B_TOKEN in stdin
+              and x_arg == "" and _B_PROXY not in argv and "завис" in r.stdout)
+        if not ok:
+            problems.append(f"{tag}: rc={r.returncode} x_arg={x_arg!r} "
+                            f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:50]!r}")
+        assert_no_canary(tag, r, argv, home / ".hermes" / "logs",
+                         "dashboard-liveness.log")
+
+    # 4. Dashboard RECOVERY с кавычками в .env — значение снимается.
+    for fail_send in (False, True):
+        tag = f"dash-rec{'-fail' if fail_send else ''}"
+        home, shim = prepare(tag)
+        argv_log = tmp / f"b2-{tag}-argv.log"
+        stdin_log = tmp / f"b2-{tag}-stdin.log"
+        curl_shim(shim, argv_log, stdin_log, fail_send=fail_send,
+                  dash_probe="ok")
+        _write_argv_shim(shim, "ss",
+                         "echo 'LISTEN 0 511 127.0.0.1:9119 0.0.0.0:*'\nexit 0\n")
+        (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
+        (home / ".hermes" / "state").mkdir(parents=True, exist_ok=True)
+        write(home / ".hermes" / "state" / "dashboard-liveness.alerted", "fixture\n")
+        write(home / ".hermes" / ".env", quoted_env)
+        script = _b_render_script(tmp, f"b2-{tag}", {
+            "_NAME": "dashboard-liveness.sh", "@HERMES_HOST@": "127.0.0.1",
+            "@HERMES_PORT@": "9119", "@WATCHDOG_CHAT_ID@": _B_CHAT})
+        env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                    + os.environ.get("PATH", "")})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=env, capture_output=True, text=True, timeout=60)
+        argv, stdin = read_logs(argv_log, stdin_log)
+        x_arg = _b_x_arg(argv, _B_CHAT)
+        ok = (r.returncode == 0 and "восстановился" in r.stdout
+              and _B_TOKEN not in argv and _B_TOKEN in stdin
+              and x_arg == _B_PROXY)
+        if not ok:
+            problems.append(f"{tag}: rc={r.returncode} x_arg={x_arg!r} "
+                            f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:50]!r}")
+        assert_no_canary(tag, r, argv, home / ".hermes" / "logs",
+                         "dashboard-liveness.log")
+
+    # 5. check-updates: отчёт уходит через -x proxy; токен не в каналах.
+    for fail_send in (False, True):
+        tag = f"upd{'-fail' if fail_send else ''}"
+        home, shim = prepare(tag)
+        argv_log = tmp / f"b2-{tag}-argv.log"
+        stdin_log = tmp / f"b2-{tag}-stdin.log"
+        curl_shim(shim, argv_log, stdin_log, fail_send=fail_send)
+        scripts_dir = home / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
+        write(scripts_dir / "hermes-runtime.py", 'print("v0.0.0-fixture")\n')
+        (scripts_dir / "hermes-runtime.py").chmod(0o755)
+        write(home / ".hermes" / ".env", proxy_env)
+        script = _b_render_script(tmp, f"b2-{tag}", {
+            "_NAME": "check-updates.sh",
+            "@HERMES_DIR@": (home / ".hermes").as_posix()})
+        env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                    + os.environ.get("PATH", "")})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=env, capture_output=True, text=True, timeout=120)
+        argv, stdin = read_logs(argv_log, stdin_log)
+        x_arg = _b_x_arg(argv, _B_CHAT)
+        ok = ((r.returncode == 0 or (fail_send and r.returncode != 0))
+              and x_arg == _B_PROXY and "sendMessage" in stdin)
+        if not ok:
+            problems.append(f"{tag}: rc={r.returncode} x_arg={x_arg!r} "
+                            f"tok_in_stdin={_B_TOKEN in stdin}")
+        assert_no_canary(tag, r, argv, home / ".hermes" / "logs",
+                         "update-check.log")
+
+    check("b2_proxy_senders", not problems, f"problems={problems}")
+
+
+def probe_b4_analyzer_freshness(wh, tmp: Path):
+    """B4/B5 (DEBT-019): свежесть Analyzer по времени успешного сбора, не по
+    mtime; границы 0/7199/7200/7201; будущее/наивное/битое/нулевое время —
+    не зелёные; отсутствующий файл/модуль — прежнее поведение."""
+    problems = []
+    now = 1800000000.0
+    home = tmp / "b4-home"
+    hermes = home / ".hermes"
+    (hermes / "scripts").mkdir(parents=True, exist_ok=True)
+    (hermes / "logs").mkdir(parents=True, exist_ok=True)
+    write(hermes / "scripts" / "health-analyzer.py", "# fixture marker\n")
+    shim = tmp / "b4-shim"
+    shim.mkdir(parents=True, exist_ok=True)
+    _write_argv_shim(shim, "systemctl",
+                     'case "$3" in LoadState) echo not-found; exit 0;; esac\n'
+                     'case "$*" in *is-active*) echo active;; *) : ;; esac\nexit 0\n')
+    _write_argv_shim(shim, "crontab", "echo 'hermes-watchdog'\nexit 0\n")
+    _write_argv_shim(shim, "curl", "echo -n 000\nexit 0\n")
+
+    def render(last_check, issues=None, write_file: bool = True):
+        if write_file:
+            state = {"version": 1, "last_check": last_check,
+                     "issues": issues or {}}
+            write(hermes / "logs" / "health-state.json",
+                  json.dumps(state, ensure_ascii=False))
+        with override_attr(wh, "_time", SimpleNamespace(time=lambda: now)):
+            old_home, old_path = os.environ.get("HOME"), os.environ.get("PATH")
+            os.environ["HOME"] = home.as_posix()
+            os.environ["PATH"] = str(shim) + os.pathsep + (old_path or "")
+            try:
+                return wh.handle_watchdog_status()
+            finally:
+                if old_home is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = old_home
+                if old_path is None:
+                    os.environ.pop("PATH", None)
+                else:
+                    os.environ["PATH"] = old_path
+
+    def analyzer_line(text: str) -> str:
+        for ln in text.splitlines():
+            if "Analyzer" in ln:
+                return ln
+        return ""
+
+    def iso(age: float) -> str:
+        return datetime.fromtimestamp(now - age, tz=timezone.utc).isoformat()
+
+    # Свежие: 0, 7199, 7200 — зелёные; формат Z и продюсерский +00:00.
+    for age in (0, 7199, 7200):
+        ln = analyzer_line(render(iso(age).replace("+00:00", "Z") if age == 0
+                                  else iso(age)))
+        if not ln.startswith("✅") or "Analyzer (last: " not in ln:
+            problems.append(f"fresh age={age}: {ln!r}")
+    # Граница 7201 и «потрогали файл, время старое» — устаревшее, не зелёное.
+    stale_path = hermes / "logs" / "health-state.json"
+    ln = analyzer_line(render(iso(7201), {"fs": {"status": "active"}}))
+    if not (ln.startswith("⚠️") and "устарел" in ln):
+        problems.append(f"stale 7201: {ln!r}")
+    # mtime-ловушка: свежий mtime при старом времени сбора. После utime файл
+    # НЕ перезаписывается (write_file=False) — иначе utime сбрасывается и
+    # ловушка мертва; mtime = фиксированные «сейчас».
+    render(iso(7201))
+    os.utime(stale_path, (now, now))
+    ln_touched = analyzer_line(render(iso(7201), write_file=False))
+    if not ln_touched.startswith("⚠️"):
+        problems.append(f"touched-stale: {ln_touched!r}")
+    # Проблемы активные сохраняются в устаревшей строке-контексте.
+    full = render(iso(7201), {"fs": {"status": "active"}})
+    if "Issues: fs" not in full:
+        problems.append("stale: пропала строка активных проблем")
+    # Не зелёные: будущее, наивное, битое, null.
+    for label, bad in (("future", iso(-1)), ("naive", iso(10).replace("+00:00", "")),
+                       ("garbage", "not-a-time"), ("null", None)):
+        ln = analyzer_line(render(bad))
+        if ln.startswith("✅"):
+            problems.append(f"{label}: зелёный при некорректном времени: {ln!r}")
+        if not ln.startswith("⚠️"):
+            problems.append(f"{label}: нет явного статуса: {ln!r}")
+    # Отсутствующий файл и отсутствующий модуль — прежнее поведение.
+    (hermes / "logs" / "health-state.json").unlink()
+    ln = analyzer_line(render(None, write_file=False))
+    if not ln.startswith("❌"):
+        problems.append(f"absent-file: {ln!r}")
+    (hermes / "scripts" / "health-analyzer.py").unlink()
+    ln = analyzer_line(render(None, write_file=False))
+    if not ln.startswith("⚪"):
+        problems.append(f"absent-module: {ln!r}")
+
+    check("b4_analyzer_freshness", not problems, f"problems={problems}")
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="argus-probes-"))
     hc = load_module("health-check-v2")
@@ -8471,6 +8903,11 @@ def main() -> int:
     probe_hr_consumer_chains(hc, wh, tmp)
     probe_hr_healthcheck_and_webhook_adapter(hc, wh)
     probe_s1_alias_canonical(disc, tmp)
+
+    # Контракт B: доставка и достоверность (DEBT-013/014/019)
+    probe_b1_heartbeat_stdin(tmp)
+    probe_b2_proxy_senders(tmp)
+    probe_b4_analyzer_freshness(wh, tmp)
 
     print(f"\nprobes: {len(PASS)} pass, {len(FAIL)} fail")
     if FAIL:

@@ -319,6 +319,38 @@ _CHECK = "✅"
 _CROSS = "❌"
 _WARN = "⚠️"
 
+# B4 (DEBT-019): UI-свежесть Analyzer = успешный сбор, а не читаемость файла.
+# Граница — существующий порог watchdog (7200 с), без новой настройки.
+_ANALYZER_FRESH_S = 7200
+
+
+def _analyzer_freshness(last_check) -> tuple[str, str]:
+    """Решение свежести по времени успешного сбора (последний успешный
+    last_check из health-state.json). Возвращает (метка, пояснение).
+
+    age = now_utc - last_check_utc (принимается ISO с Z/офсетом);
+    0 <= age <= 7200 — свежо; age > 7200 — устарело; отрицательный age,
+    часовой пояс отсутствует или таймстамп не читается — недоступно/некорректно.
+    Зелёная метка описывает свежесть сбора, а не отсутствие активных проблем.
+    """
+    if not isinstance(last_check, str) or not last_check.strip():
+        return "invalid", "время последнего сбора недоступно"
+    raw = last_check.strip()
+    if raw.endswith(("Z", "z")):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return "invalid", "время последнего сбора некорректно"
+    if dt.tzinfo is None:
+        return "invalid", "время последнего сбора без часового пояса"
+    age = _time.time() - dt.timestamp()
+    if age < 0:
+        return "invalid", "время последнего сбора в будущем"
+    if age <= _ANALYZER_FRESH_S:
+        return "fresh", ""
+    return "stale", f"сбор устарел ({int(age)}s)"
+
 def _silence_remaining() -> int:
     """Сколько секунд осталось тишины."""
     sf = os.path.expanduser("~/.hermes/logs/auto-remediate-state/silence-until.txt")
@@ -384,9 +416,15 @@ def handle_watchdog_status() -> str:
         try:
             with open(os.path.join(h, "logs", "health-state.json"), encoding="utf-8") as f:
                 hs = json.load(f)
-            last = hs.get("last_check", "?")[:19]
+            last = str(hs.get("last_check") or "?")[:19]
             active = [k for k, v in hs.get("issues", {}).items() if v.get("status") == "active"]
-            lines.append(f"{_CHECK} Analyzer (last: {last})")
+            # B4 (DEBT-019): свежесть по времени успешного сбора, не по mtime
+            # файла; устаревшее/некорректное состояние не рисуется зелёным.
+            state, note = _analyzer_freshness(hs.get("last_check"))
+            if state == "fresh":
+                lines.append(f"{_CHECK} Analyzer (last: {last})")
+            else:
+                lines.append(f"{_WARN} Analyzer (last: {last} — {note})")
             if active:
                 lines.append(f"{_WARN} Issues: {', '.join(active)}")
         except Exception:

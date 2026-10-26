@@ -44,13 +44,13 @@ maintainer read an incomplete project state.
 | [DEBT-009](#debt-009) | L3 analysis job is external to ANALYZER | Open | Publish a generic Hermes job/model/delivery recipe. |
 | [DEBT-011](#debt-011) | Global cron restore/count removed | Merged; deploy pending | Deploy RR1a separately and read back preserved operator cron. |
 | [DEBT-012](#debt-012) | Provisioning and notification claims need correction | Open | Describe actual external setup and verification. |
-| [DEBT-013](#debt-013) | Some cron senders ignore configured proxy | Selected B | Load/apply the existing Telegram proxy in affected senders. |
-| [DEBT-014](#debt-014) | Heartbeat credentials exposed in curl arguments | Selected B | Correct the stdin channel under the restart contract. |
+| [DEBT-013](#debt-013) | Some cron senders ignore configured proxy | Resolved in source (B, review pending) | Codex review, maintainer merge; deployment verification at Ops. |
+| [DEBT-014](#debt-014) | Heartbeat credentials exposed in curl arguments | Resolved in source (B, review pending) | Codex review, maintainer merge; disposition before RC. |
 | [DEBT-015](#debt-015) | Empty-crontab detection is locale-sensitive | Deferred | Make empty/read-error detection locale-independent. |
 | [DEBT-016](#debt-016) | Heartbeat selection follows credentials | Needs decision | Choose explicit backend selection and compatibility migration. |
 | [DEBT-017](#debt-017) | Native Cronping Telegram setup | Native route selected; setup pending | Publish provider-bot instructions and verify delivery separately from pings. |
 | [DEBT-018](#debt-018) | Public GitHub workflow differs from production | Needs decision | Choose public timing/dedup/recovery/pin behavior. |
-| [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Selected B | Apply the existing 7200-second freshness bound to the UI consumer. |
+| [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Resolved in source (B, review pending) | Codex review, maintainer merge; deployment verification at Ops. |
 | [DEBT-020](#debt-020) | Discord deepcheck calls a TG_BOT-owned executable | Open | Maintainer decides payload ownership vs. unsupported-module reporting. |
 | [DEBT-010](#debt-010) | Host lifecycle/privilege assumptions unadmitted | Resolved in RR1b source | Deploy and read back; production still needs its own preflight verification. |
 | [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Resolved in RR1b source | Deploy and read back the installer config gate. |
@@ -344,14 +344,20 @@ maintainer read an incomplete project state.
 
 ### DEBT-013 — explicit Telegram proxy is not loaded by every cron sender
 
-- **Current assignment (2026-10-25):** Selected in restart contract B; existing senders only. See [contract B](handoffs/restart-b-delivery-evidence-contract.md). Earlier next-action text below is historical context.
+- **Current assignment (2026-10-25):** Resolved in source by contract B (one
+  implementation PR, Codex review pending); deployment verification stays at
+  the Ops checkpoint.
 
 - **Operator impact:** Different senders can use different delivery paths.
 - **Next action / responsible roles:** Load/apply the existing Telegram proxy in affected senders. Maintainer selects; architect scopes; builder after contract.
 - **Closure evidence:** Direct/proxy fixtures cover affected senders with secret-safe argv.
 - **Release disposition:** Configured-delivery prerequisite.
 
-- **Status:** RR1b delivery/config prerequisite
+- **Status:** resolved in source (B) — liveness senders read `TELEGRAM_PROXY`
+  from `~/.hermes/.env` when the environment does not set it (environment
+  keeps priority; RR0c quote stripping), `check-updates.sh` applies its
+  already-sourced proxy to the report send; direct mode preserved when
+  unconfigured
 - **Source:** production audit D6; gateway/dashboard liveness and weekly updates
 - **Evidence:** liveness reads bot/chat from `.env` but only inherits
   `TELEGRAM_PROXY`; generated cron does not source it. Weekly updates load
@@ -366,14 +372,18 @@ maintainer read an incomplete project state.
 
 ### DEBT-014 — external heartbeat secret URLs remain in curl argv
 
-- **Current assignment (2026-10-25):** Selected in restart contract B; ping/backend semantics preserved. See [contract B](handoffs/restart-b-delivery-evidence-contract.md). Earlier next-action text below is historical context.
+- **Current assignment (2026-10-25):** Resolved in source by contract B (one
+  implementation PR, Codex review pending); release disposition before RC.
 
 - **Operator impact:** Secret URLs can appear in process listings.
 - **Next action / responsible roles:** Contract the bounded stdin-channel correction. Maintainer selects; architect scopes; builder after contract.
 - **Closure evidence:** Argv canary absent while unchanged ping request is delivered.
 - **Release disposition:** Secret invariant; disposition before RC.
 
-- **Status:** separate secret-handling maintenance; release disposition required
+- **Status:** resolved in source (B) — both heartbeat ping backends deliver
+  the token-bearing URL through the stdin curl config (`-K -`), preserving
+  method, timeout, failure logging and backend selection; argv canary probe
+  covers success, failure and backend-selection paths
 - **Source:** production audit D6; `heartbeat.sh` Cronping and DMS backends
 - **Evidence:** token-bearing ping URLs are passed as curl arguments, unlike
   the existing stdin configuration pattern used for Telegram.
@@ -463,7 +473,9 @@ maintainer read an incomplete project state.
 
 ### DEBT-019 — Analyzer UI marks old state healthy without a freshness decision
 
-- **Current assignment (2026-10-25):** Selected in restart contract B; architect specifies the existing 7200-second bound and invalid/future handling for review. See [contract B](handoffs/restart-b-delivery-evidence-contract.md). Earlier next-action text below is historical context.
+- **Current assignment (2026-10-25):** Resolved in source by contract B (one
+  implementation PR, Codex review pending); deployment verification stays at
+  the Ops checkpoint.
 
 - **Operator impact:** after collection failures, `/watchdog` can keep a green
   Analyzer line indefinitely while showing an old last-check timestamp.
@@ -475,7 +487,11 @@ maintainer read an incomplete project state.
   malformed/absent state stays visible.
 - **Release disposition:** does not block RR1b; decide before RR3.
 
-- **Status:** open, outside RR1b.
+- **Status:** resolved in source (B) — freshness decision in the shared
+  `/watchdog` renderer: age since the successful-collection timestamp within
+  the existing 7200-second watchdog bound renders green, older renders an
+  explicit stale warning keeping timestamp and issues, and future/naive/
+  unparsable/missing timestamps never render green; mtime is not consulted.
 - **Source:** RR1b focused review at `4dfc6ed`;
   `scripts/webhook.py` renders a check mark whenever the stored JSON is
   readable, without checking age.

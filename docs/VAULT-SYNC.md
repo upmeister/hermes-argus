@@ -131,6 +131,26 @@ unverified: merged source is not a deployment, and the Ops checkpoint stays
 separately authorized. An unrelated nail-bot note modified in the local
 vault was left uncommitted, out of this synchronization.
 
+## 2026-10-26 — contract B implemented, review pending
+
+Contract B (delivery/evidence correctness) is implemented on task branch
+`feat/restart-b-delivery-evidence` from base `f30ef67` (main after the PR #77
+merge): heartbeat ping tokens moved to the stdin curl config, the configured
+`TELEGRAM_PROXY` applied by the liveness senders and the weekly report, and
+the `/watchdog` Analyzer freshness decision (7200 s). New probes b1/b2/b4 are
+green on the candidate and RED on the baseline scripts; full suite 263 pass /
+2 fail (the two known drvfs artifacts). Neither merge nor deployment has
+happened.
+
+Vault publication: local vault commit
+`900fdca0c9bf749b5e393051679423217e1aee59` ("hermes-argus: контракт B
+реализован на ветке") changes exactly the three Argus notes and is pushed to
+the GitHub vault remote. The connected-server fast-forward is NOT yet
+verified for this receipt — the Peetna MCP lane was unreachable at sync
+time; the server copy must catch up at the next vault-sync before any
+production work assumes vault convergence. The notes keep review pending and
+production convergence unverified.
+
 ## Future status-update procedure
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.

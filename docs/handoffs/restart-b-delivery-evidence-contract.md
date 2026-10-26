@@ -1,8 +1,9 @@
 # B — existing delivery and evidence correctness
 
-Status: **queued after A merges** in the
-[restart programme](2026-10-25-restart-through-rr1.md).
-Production risk: **medium** (existing delivery paths and operator verdicts).
+Status: **implemented on one task branch, Codex review pending**. Base:
+`f30ef67de81eaf3c162be002a38e0b37a7b31e70` (main after the contract A
+merge). Production risk: **medium** (existing delivery paths and operator
+verdicts).
 Merge authority: **maintainer after Codex PASS**. Reviewer: **Codex**.
 One PR, three local fixes; no deployment or live notification tests.
 

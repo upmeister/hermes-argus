@@ -18,6 +18,18 @@ STALE_AFTER="${STALE_AFTER:-180}" # секунд без housekeeping → под�
 case "$STALE_AFTER" in ''|*[!0-9]*) STALE_AFTER=180;; esac
 CHECK_INTERVAL=20 # пауза между двумя проверками (анти-ложные срабатывания)
 
+# B2 (DEBT-013): cron не источает .env — достаём настроенный TELEGRAM_PROXY
+# сами. Приоритет у наследованного окружения; конвенция RR0c — снять кавычки.
+tg_proxy() {
+  local prx="${TELEGRAM_PROXY:-}"
+  if [ -z "$prx" ] && [ -f "$H/.env" ]; then
+    prx=$(grep -E '^TELEGRAM_PROXY=' "$H/.env" | tail -1 | cut -d= -f2-)
+    prx="${prx%\"}"; prx="${prx#\"}"
+    prx="${prx%\'}"; prx="${prx#\'}"
+  fi
+  printf '%s' "$prx"
+}
+
 # Процесс мёртв → systemd Restart=always сам разберётся (крэш, а не зависание)
 # 2026-09-30: был pgrep -f "hermes_cli.main gateway run" — argv-подстрока.
 # После апдейта Hermes (форма запуска → runpy) паттерн перестал совпадать, и
@@ -62,7 +74,7 @@ send_recovery() {
   btok=$(grep -E '^WATCHDOG_BOT_TOKEN=' "$H/.env" | cut -d= -f2-)
   chtok=$(grep -E '^WATCHDOG_CHAT_ID=' "$H/.env" | cut -d= -f2-)
   [ -z "$chtok" ] && chtok=@WATCHDOG_CHAT_ID@
-  prx="${TELEGRAM_PROXY:-}"
+  prx=$(tg_proxy)
   # Токен не в argv: URL уходит в curl через -K - (config на stdin)
   printf 'url = %s\n' "https://api.telegram.org/bot${btok}/sendMessage" | \
     curl -s -m 20 -x "$prx" -K - -X POST \
@@ -128,7 +140,7 @@ if [ -f "$STATE_FILE" ]; then
 fi
 date -Is > "$STATE_FILE"
 # Прямой api.telegram.org мёртв при РКН-волнах — только через telegram-smart-proxy
-proxy="${TELEGRAM_PROXY:-}"
+proxy=$(tg_proxy)
 # Токен не в argv: URL уходит в curl через -K - (config на stdin)
 printf 'url = %s\n' "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" | \
   curl -s -m 20 -x "$proxy" -K - -X POST \
