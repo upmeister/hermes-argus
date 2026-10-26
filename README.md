@@ -23,8 +23,9 @@ Current source includes RR1a, both RR1b slices and restart A/B (through PR #78).
 now covers Hermes 0.22.5 compatibility, delivery/evidence fixes and RR1c/RR1d.
 Hermes v0.22.5 is the accepted stable authority. The separately authorized
 October 26 [Ops receipt](docs/DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
-records deployment of `17b3975`; C is implemented on a task branch, pending
-Codex review and maintainer merge. One catalog authorization failure
+records deployment of `17b3975`; C is implemented in
+[PR #79](https://github.com/upmeister/hermes-argus/pull/79), pending the maintainer
+gate (Codex review receipt in that PR). One catalog authorization failure
 remains, and notification delivery has not been tested by this rollout.
 
 ## Why this exists
@@ -229,7 +230,9 @@ bash uninstall.sh --apply   # bounded removal after successful ownership checks
 
 Uninstall uses all declared modules, including previously enabled ones. It
 preserves Hermes base services/running state, private config, state/logs, bot
-venv, heartbeat repositories and shared directories. Only matching Argus
+venv, heartbeat repositories and shared directories. Both shared Hermes launch
+adapter copies remain too, because preserved base units can require them on
+restart. Only matching Argus
 payloads, units/drop-ins, logrotate copies and the one well-formed managed
 cron block are eligible. Modified/ambiguous artifacts or outside-block
 references stop apply before changes and report retained resources. The
@@ -318,7 +321,7 @@ R1c  Authorization headers out of child argv — DONE
  -> A  Hermes 0.22.5 launch and inventory compatibility — DONE / PR #77
  -> B  existing delivery and evidence correctness — DONE / PR #78
  -> production reconciliation / authorized rollout — DONE / 2026-10-26
- -> C  RR1c/RR1d versioned lifecycle and bounded uninstall — IMPLEMENTED / review pending
+ -> C  RR1c/RR1d versioned lifecycle and bounded uninstall — IMPLEMENTED / maintainer gate pending
  -> RR2  runtime i18n: English + Russian
  -> RR3  clean install / upgrade / uninstall acceptance
  -> v0.1.0-rc.1

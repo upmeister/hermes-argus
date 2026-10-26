@@ -228,6 +228,24 @@ were retained (dirty-file before/after hashes matched), and their history was
 not pushed. As with the Ops receipt, selected-note equality does not imply
 equal whole-vault heads.
 
+## 2026-10-26 — C6 review remediation, maintainer gate pending
+
+Codex reviewed exact C head `9ee3531` (PR #79) and returned REMEDIATE for one
+P1/C6 blocker: uninstall removed an adapter referenced by preserved Hermes
+fallback base units. The one local remediation retains both shared adapter
+copies and adds a fixture executing both retained units' actual ExecStart argv
+through a stub CLI after plan/apply/repeat. No new out-of-scope finding was
+reported. Final focused-review evidence belongs to PR #79; the maintainer gate
+remains pending, with no C merge/deployment/uninstall/release claim.
+
+The same three selected vault notes now name PR #79, the pending maintainer
+gate and this retention rule. Server publication
+`95865db1e0b523c87f6b44862b5d4c1eb598c007` changes only those notes and is pushed
+to GitHub. MCP read-back matches intended bodies; the local vault fetched and
+merged it, and its three-note diff against `origin/master` is empty. Unrelated
+local commits and dirty content were retained without publication; tracked
+dirty-file hashes matched before/after. Whole-vault heads need not be equal.
+
 ## Future status-update procedure
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.

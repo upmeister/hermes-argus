@@ -964,6 +964,13 @@ lifecycle_resources() {
                 fi
                 [ -z "${seen[$root/$name]:-}" ] || continue
                 seen[$root/$name]=1
+                # Shared launch boundary: preserved Hermes base units (including
+                # fallback units installed by Argus) can still execute this file.
+                # Retain both declared copies rather than infer a systemd graph.
+                if [ "$LIFECYCLE_ACTION" != --check-ownership ] && [ "$name" = hermes-runtime.py ]; then
+                    echo "RETAIN shared Hermes launch adapter: $root/$name"
+                    continue
+                fi
                 LC_SRC+=("$source/$name"); LC_DST+=("$root/$name")
                 LC_KIND+=("$suffix")
             done

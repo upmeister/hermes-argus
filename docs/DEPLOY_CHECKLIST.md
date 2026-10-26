@@ -6,7 +6,7 @@ the resident Pytna agent through the Peetna MCP, because it has the production
 runtime context. A local SSH/Linux deployment is a fallback for the
 maintainer.
 
-## Contract C lifecycle read-back (implementation/review pending)
+## Contract C lifecycle read-back (implementation; maintainer gate pending)
 
 These commands require source containing contract C. No C production rollout,
 uninstall, release or test tag is authorized by its implementation PR.
@@ -34,6 +34,9 @@ uninstall, release or test tag is authorized by its implementation PR.
    outside cron bytes, Hermes base-unit hashes/running state, retained private
    config/auth/state/logs/venvs, heartbeat Git history and external services.
    Keep the uncertain full checker for DEBT-004; do not remove shared directories.
+   Both shared `hermes-runtime.py` adapter copies are intentionally retained:
+   preserved Hermes fallback base units may execute them after restart/reboot.
+   Read back those dependencies as well as the unchanged base-unit files.
 5. Confirm units were stopped/disabled only when their matching files were
    eligible; reload after removals, never restart Hermes as part of uninstall.
    A second apply is a no-op. Step failures must exit nonzero with partial-state

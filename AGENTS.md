@@ -287,8 +287,9 @@ A Hermes 0.22.5 launch + fallback inventory compatibility
 When implementing or reviewing this programme, read
 `docs/handoffs/2026-10-25-restart-through-rr1.md`, then exactly its current
 A/B/C contract. A (PR #77) and B (PR #78) are merged; **the Ops checkpoint is
-complete and C is implemented on `feat/restart-c-versioned-lifecycle`, pending
-Codex review and maintainer merge**. Its base is `5551579`; nothing from C has
+complete and C is implemented in PR #79 on `feat/restart-c-versioned-lifecycle`,
+pending the maintainer gate (Codex review receipt in the PR)**. Its base is
+`5551579`; nothing from C has
 been deployed. After its authorized merge, mark RR1c/d source complete and
 STOP this programme; RR2/RR3 are not admitted by this assignment.
 Three outcome PRs are intended; do not split

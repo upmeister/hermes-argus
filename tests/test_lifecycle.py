@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,8 @@ class LifecycleTests(unittest.TestCase):
         self.scheduler = self.root / 'logrotate.d'
         self.scheduler.mkdir()
         self.env = {**os.environ, 'HOME': str(self.home), 'USERPROFILE': str(self.home),
+                    'HERMES_DIR': str(self.home / '.hermes'),
+                    'HERMES_HOME': str(self.home / '.hermes'),
                     'PATH': str(self.shim) + os.pathsep + os.environ['PATH'],
                     'LC_CRON': str(self.cron), 'LC_CALLS': str(self.calls),
                     'LC_METADATA': str(self.metadata), 'LOGROTATE_SCHED_DIR': str(self.scheduler),
@@ -304,6 +307,31 @@ esac
         # Disabled custom payload is preserved during an update, not overwritten.
         self.assertEqual(self.install('--channel', 'edge').returncode, 0)
         self.assertIn('# operator custom', custom.read_text())
+
+    def test_c6_retained_fallback_services_keep_their_launch_adapter(self):
+        # No pre-existing base units: deploy installs its actual fallback units.
+        self.bootstrap()
+        units = self.home / '.config/systemd/user'
+        bases = {name: (units / name).read_bytes() for name in
+                 ['hermes-gateway.service', 'hermes-dashboard.service']}
+        adapter = self.home / 'scripts/hermes-runtime.py'
+        for text in bases.values():
+            self.assertIn(str(adapter).encode(), text)
+        for apply in [False, True, True]:
+            result = self.uninstall(apply)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('RETAIN shared Hermes launch adapter:', result.stdout)
+            for name, original in bases.items():
+                self.assertEqual((units / name).read_bytes(), original)
+            self.assertTrue(adapter.is_file())
+            # Execute both actual retained ExecStart argv chains. Their CLI is
+            # the fixture stub, so no real gateway/dashboard process is started.
+            for original in bases.values():
+                line = next(line for line in original.decode().splitlines() if line.startswith('ExecStart='))
+                launched = subprocess.run(shlex.split(line.split('=', 1)[1]),
+                                          env=self.env, capture_output=True, text=True, timeout=15)
+                self.assertEqual(launched.returncode, 0, launched.stderr)
+                self.assertIn('Hermes-fixture', launched.stdout)
 
     def test_c6_changed_enabled_payload_refuses_update_before_checkout(self):
         self.bootstrap()
