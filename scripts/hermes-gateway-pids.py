@@ -145,7 +145,7 @@ def live_gateway_pids(matcher) -> list[int]:
             ["pgrep", "-f", "gateway"],
             capture_output=True, text=True, timeout=10,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
         raise ObservationUnavailable(f"pgrep: {exc.__class__.__name__}") from None
     if found.returncode == 1 and not found.stdout.strip():
         return []
@@ -154,10 +154,15 @@ def live_gateway_pids(matcher) -> list[int]:
     # pgrep может найти и нас самих (в cmdline есть слово 'gateway') —
     # это не страшно: решение всё равно принимает матчер.
     tokens = found.stdout.split()
-    if not tokens or any(not tok.isascii() or not tok.isdecimal() or int(tok) <= 0
+    if not tokens or any(not tok.isascii() or not tok.isdecimal()
                          for tok in tokens):
         raise ObservationUnavailable("pgrep: invalid PID output")
-    candidates = [int(tok) for tok in tokens]
+    try:
+        candidates = [int(tok) for tok in tokens]
+    except ValueError:
+        raise ObservationUnavailable("pgrep: invalid PID output") from None
+    if any(pid <= 0 for pid in candidates):
+        raise ObservationUnavailable("pgrep: invalid PID output")
 
     pids: list[int] = []
     for pid in candidates:

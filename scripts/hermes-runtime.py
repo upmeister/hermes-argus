@@ -192,7 +192,7 @@ def cmd_check(root: Path) -> int:
                      "print('argus-runtime-ready')", str(root)],
                     capture_output=True, text=True, timeout=LAUNCH_QUERY_TIMEOUT,
                     check=False)
-            except (subprocess.TimeoutExpired, OSError) as exc:
+            except (subprocess.TimeoutExpired, OSError, UnicodeError) as exc:
                 raise RuntimeUnavailable(
                     f"managed capability: {exc.__class__.__name__}") from None
             if probe.returncode != 0:

@@ -290,7 +290,7 @@ PR #79 on 2026-10-26 at `fd947a06bccc8af60a9ad90f3515c7d91d9b2ed3`
 The earlier programme remains a historical contract/receipt, not a live task.
 
 The first follow-up is source-complete in this implementation. Its receipt is
- `docs/handoffs/readiness-observation-correctness-contract.md`:
+`docs/handoffs/readiness-observation-correctness-contract.md`:
 Managed capability (DEBT-030), pgrep observation/caller evidence (DEBT-028),
 truthful rollback reporting (DEBT-022) and a rehearsed manual update recovery
 (DEBT-031) are delivered together. No new task is selected. The maintainer

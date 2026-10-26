@@ -7552,7 +7552,7 @@ def _hr_fake_managed(home: Path, *, argvlog: Path, gens: dict | None = None,
     моделируют отказы; venv при этом НЕ создаётся (откат на него запрещён)."""
     bindir = home / ".hermes" / "hermes-agent" / ".hermes" / "bin"
     bindir.mkdir(parents=True, exist_ok=True)
-    write(bindir.parents[2] / "hermes_bootstrap.py", "# managed fixture bootstrap\n")
+    write(bindir.parents[1] / "hermes_bootstrap.py", "# managed fixture bootstrap\n")
     if fail_stderr is not None:
         body = [f'printf \'%s\\n\' "{fail_stderr}" >&2', f'exit "{exit_code}"', ""]
     else:
@@ -7616,7 +7616,8 @@ def probe_readiness_capability(tmp: Path):
     _rr1b_host_shims(shim)
     r = _rr1b_deploy_env(tmp, "capability", home, shim, _rr1b_modules(core=True), {})
     if r.returncode == 0 or (home / "scripts/hermes-watchdog.sh").exists() \
-            or (home / ".config/systemd/user/hermes-gateway.service").exists():
+            or (home / ".config/systemd/user/hermes-gateway.service").exists() \
+            or (tmp / "rr1b-capability-cron.txt").exists():
         problems.append("failed capability wrote runtime")
     check("readiness_capability", not problems, f"problems={problems}")
 
@@ -7643,7 +7644,8 @@ def _read_process_cmdline(pid):
         ("error2", "echo OBS_SECRET_CANARY >&2; exit 2", 2),
         ("error3", "exit 3", 2), ("signal", "kill -TERM $$", 2),
         ("empty", "exit 0", 2), ("malformed", "echo '888888 bad'", 2),
-        ("zero", "echo 0", 2), ("contradiction", "echo 888888; exit 1", 2),
+        ("zero", "echo 0", 2), ("oversized", "printf '%05000d\\n' 0", 2),
+        ("contradiction", "echo 888888; exit 1", 2),
         ("missing", None, 2),
     ):
         pg = shim / "pgrep"
@@ -7728,6 +7730,17 @@ mkdir -p "$STATE_DIR"''', 1)
                     problems.append("false flush success")
                 if failed in ("rule", "all") and "ROLLBACK: ip rule del" in log:
                     problems.append("false rule success")
+            # Existing reset is strictly >3600, not >=3600. Freeze NOW only
+            # in this fixture and prove failed attempts cannot reset early.
+            frozen = write(home / "guard-frozen.sh", script.replace('NOW=$(date +%s)', 'NOW=10000'))
+            for elapsed, expected_count in ((3600, 2), (3601, 1)):
+                write(state / "state.json", json.dumps({'actions_hour': 1, 'last_action': 10000 - elapsed}))
+                (state / "acted").unlink(missing_ok=True)
+                r = subprocess.run(["bash", str(frozen)], env=env, capture_output=True, text=True, timeout=20)
+                data = json.loads((state / "state.json").read_text())
+                if r.returncode or data['actions_hour'] != expected_count \
+                        or data['breaker_until'] != (13600 if expected_count == 2 else 0):
+                    problems.append(f"breaker reset boundary {elapsed}: {data}")
     check("rollback_results", not problems, f"problems={problems}")
 
 

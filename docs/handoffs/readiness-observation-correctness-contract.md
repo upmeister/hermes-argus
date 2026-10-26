@@ -201,3 +201,43 @@ substitute for missing local evidence.
 After the implementation receipt, stop. C rollout, public setup/heartbeat
 policy, registry refresh, Discord payload decisions, RR2/RR3, OAuth/multi-profile,
 new telemetry and gateway-liveness redesign require their own selected scope.
+
+## Implementation evidence
+
+[Implementation PR #81](https://github.com/upmeister/hermes-argus/pull/81)
+carries the exact head, independent **Codex** receipt and required CI result.
+Base: `e0849baf60341d027425fe903dc673bd3098d934` (contract PR #80 merge).
+The maintainer explicitly delegated this merge after PASS and green CI.
+Source completion in this change does not claim deployment; no next task is
+selected. Production payload remains `17b3975`, with network guard ON.
+
+Local evidence: **WSL2 Ubuntu 24.04.5 LTS, ext4, nonroot `probe`, Python
+3.12.3**. Source exported with Git file modes; fixtures isolate HOME, cron,
+units, package checks, DNS/routes, sudo and notification transports. Their
+manager responses are stubs, not a real systemd install/restart rehearsal.
+A functional local user manager was observed (`running`), but no live units
+were installed/restarted for this task. No VMware/Ubuntu 26.04 run is claimed.
+
+| Gate | RED on base / GREEN on candidate | Runnable evidence |
+| --- | --- | --- |
+| G1 | Base accepts failing executable/bootstrap and timed-out activation; candidate rejects them before runtime/unit/cron writes, without child-output canary or stale-venv fallback | `probe_readiness_capability`; existing managed/legacy/malformed-launcher probes |
+| G2 | Base maps pgrep errors to rc 1/count 0 or accepts malformed candidates; candidate returns rc 2/no observation through direct/reexec and count/quiet modes | `probe_observation_pgrep`: rc 0/1/2/3, signal, missing command, timeout/exec errors, malformed/empty/oversized output, canonical filtering/disappearance |
+| G2 callers | Base drops seeded gateway evidence; candidate preserves alerted/bad/clean counters on unknown or missing helper, then handles valid alive/absent samples normally | `test_gateway_unknown_preserves_prior_evidence`, `test_liveness_unknown_does_not_restart_or_recover` |
+| G3 | Base reports rollback success despite failed sudo and clear post-checks; candidate records each failure and aggregate mixed results honestly | `probe_rollback_results`: each action kind, all/partial failures, clean/remaining violations, third-cycle breaker skip and strict 3600/3601-second reset boundary |
+| G4 | Honest base refusal is retained; documented source restore + target-worktree/tag procedure recovers the proven pre-write case, preserving operator/private files | `test_g4_documented_prewrite_update_recovery`; custom/mixed/unknown ownership and conflicting tracked work refuse |
+
+The harmless managed check also passed against an intentionally installed real
+local **Hermes v0.22.5 / bf0203a794a07aac3ff764972ab9087baa4e4f4e** launcher,
+using its selected bootstrap. This proves launch capability, not API/login
+health. No Hermes download/repair, provider/MCP call, credential refresh or
+production action was needed. Syntax/compilation, regression, watchdog and
+lifecycle suite results are recorded against the candidate in PR #81.
+
+Backlog dispositions: [managed capability](../BACKLOG.md#debt-030),
+[unknown gateway observation](../BACKLOG.md#debt-028) and
+[rollback reporting](../BACKLOG.md#debt-022) are resolved in source;
+[manual recovery](../BACKLOG.md#debt-031) is documented/rehearsed for its bounded
+case. Mixed-installation recovery remains a manual decision, not a new
+installer feature. [Vault publication](../VAULT-SYNC.md#2026-10-26--readinessobservation-source-completion-pr-81)
+keeps the project card/roadmap/backlog aligned. Deferred registry/catalog and
+other release decisions remain outside this implementation.
