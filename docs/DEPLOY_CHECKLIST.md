@@ -54,20 +54,29 @@ device was identified or tested.
   its 18 unrelated paths and their policy remain. Individual and global
   `logrotate --debug` checks exit 0; the host logrotate timer is active. No live
   log rotation was forced.
-- **Inventory/Analyzer:** discovery exits 0 with status `ok` and 40 entities;
+- **Inventory/Analyzer:** discovery exits 0 with status `ok` and initially 40 entities;
   collector is executable, Analyzer `--update` exits 0 and advances `last_check`.
   The deployed `/watchdog` handler renders Analyzer freshness as `fresh`.
   This does not prove a separately configured Hermes L3 analysis/delivery job.
-- **Bounded integration smoke:** no MCP process checks or auth refreshes;
+- **Bounded integration smoke (02:07 UTC):** no MCP process checks or auth refreshes;
   49 checks: 40 healthy, 2 failed, 2 unconfigured, 5 skipped. Two Telegram
   read-only `getMe` checks pass through the configured route. The same cached
-  catalog failures persist: authentication rejection (401) and absent catalog
+  catalog failures persisted at that point: authentication rejection (401) and absent catalog
   routes (404). They remain failures, with configuration/endpoint remediation
   deferred under [DEBT-027](BACKLOG.md#debt-027); no inference about model-call
   success or OAuth runtime health is made.
+- **Scheduled health-check (02:20:35 UTC):** the normal hourly wrapper produced
+  a fresh schema-v2 report: 46 total, 38 healthy, 1 failed, 2 unconfigured,
+  5 skipped; all three MCP process checks are healthy through the installed
+  adapter. Hermes config changed concurrently (mtime 02:17:53 UTC); current
+  discovery is ok with 37 entities. The old 401 check remains failed; the old
+  404 check is no longer planned, not verified recovered. Argus rollout did not
+  edit Hermes config/credentials. The change in check count is inventory change,
+  not a conversion of failed checks to healthy.
 - **Registry comparison:** the generated v0.22.5 registry has 153 upstream + 9
   kit entries; repository/runtime registry has 154 upstream entries. All 52
-  checks built for the current inventory are identical with either registry.
+  checks built for the 02:07 inventory were identical with either registry;
+  the 46 checks after the config update are also identical under both.
   Source/runtime deployment equality passes; broader registry refresh remains
   a non-blocking source finding [DEBT-029](BACKLOG.md#debt-029).
 - **Schedule survival:** one managed block; outside-block bytes match the
@@ -82,7 +91,7 @@ device was identified or tested.
 
 The rollout closes the mixed-artifact checkpoint
 [DEBT-026](BACKLOG.md#debt-026). The diagnostic part of DEBT-027 is complete;
-its two integrations are not declared healthy. C's admission gate is open.
+the earlier failed integrations are not declared recovered. C's admission gate is open.
 
 ## Historical restart checkpoint — 2026-10-25
 

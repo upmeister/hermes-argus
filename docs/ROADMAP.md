@@ -212,8 +212,9 @@ The maintainer-selected sequence is:
    heartbeat secret channels, proxy propagation and stale Analyzer evidence.
 5. **Production checkpoint — DONE, October 26**, separately authorized at
    `17b3975`. [Receipt](DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26): payload,
-   cron, guard, rotation, host and service read-back; two catalog failures
-   diagnosed/deferred and registry refresh recorded separately.
+   cron, guard, rotation, host and service read-back; catalog 401 remains,
+   earlier 404 is no longer planned after a config update (not recovered),
+   and registry refresh is recorded separately.
 6. **C — RR1c/RR1d combined**, versioned install/update and bounded uninstall.
    One lifecycle PR follows A+B and the checkpoint (or explicit maintainer
    rollout deferral). This is the selected programme's stopping point.

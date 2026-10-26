@@ -59,7 +59,7 @@ maintainer read an incomplete project state.
 | [DEBT-024](#debt-024) | Hermes PM removes the legacy runtime path Argus assumes | Resolved; deployed 2026-10-26 (A / PR #77) | Live adapter/CLI/helper all return 0; existing Hermes units preserved. |
 | [DEBT-025](#debt-025) | Fallback inventory does not canonicalize provider aliases | Resolved; deployed 2026-10-26 (A / PR #77) | Installed source matches; actual discovery status ok. |
 | [DEBT-026](#debt-026) | Production checkout/payload/schedule have mixed provenance | Closed; Ops 2026-10-26 | Source/payload/schedule read back at authorized `17b3975`. |
-| [DEBT-027](#debt-027) | Two catalog checks fail | Diagnosed; remediation deferred | Maintainer selects credential/endpoint work; 401 and 404 remain failures. |
+| [DEBT-027](#debt-027) | Catalog authorization failure; earlier absent route | Diagnosed; remediation deferred | 401 remains failed; earlier 404 no longer planned after config update, not recovered. |
 | [DEBT-028](#debt-028) | pgrep failure in the gateway helper reads as "no gateway" | Open (pre-existing, found in A review) | Maintainer selects liveness fix: observation error must be rc 2, not rc 1. |
 | [DEBT-029](#debt-029) | Bundled registry predates accepted Hermes source | Open; non-blocking for current inventory | Maintainer selects generated-registry refresh; current 52 checks unchanged. |
 
@@ -695,8 +695,10 @@ maintainer read an incomplete project state.
 
 - **Impact:** Recent monitoring output is not an all-green operational receipt;
   the failures' causes are not established by service liveness.
-- **Status:** diagnosis complete 2026-10-26; remediation deferred, both checks
-  still fail. Not an upstream-regression finding or an all-green receipt.
+- **Status:** diagnosis complete 2026-10-26; remediation deferred. At the
+  02:20 scheduled run, 401 remains failed; the earlier 404 check is no longer
+  planned after a concurrent Hermes config update, not verified recovered.
+  Not an upstream-regression finding or an all-green receipt.
 - **Source:** October 25 read-only cached health-check inspection; only failure
   presence was recorded, without private identities or raw response data.
 - **Next action / owner:** maintainer selects credential/catalog-endpoint
@@ -705,8 +707,11 @@ maintainer read an incomplete project state.
   disposition; resolution requires relevant verification, not a guessed cause.
   Cached evidence and the authorized read-only smoke agree: one catalog check
   rejects authorization (401); another has no catalog route (404). Model-call
-  health is not inferred from either result. Both are explicitly deferred;
-  the diagnostic gate is complete, operational failures are not resolved.
+  health is not inferred from either result. The later normal scheduled report
+  has 38 healthy / 1 failed / 2 unconfigured / 5 skipped, including three healthy
+  MCP process checks. Current discovery is ok with 37 entities. The 404 check
+  leaving the selected inventory is not a recovery result. The diagnostic gate
+  is complete; credential/endpoint resolution was not performed by this rollout.
 - **Release disposition:** classify before claiming a successful operational
   rollout; not permission to broaden implementation PR B.
 
@@ -746,8 +751,9 @@ maintainer read an incomplete project state.
   hand-edit entries or silently replace production with an unmerged artifact.
 - **Closure evidence:** generated source/version metadata agrees with accepted
   Hermes and the changed entries/check plans have review evidence. At discovery
-  status ok with 40 entities, all 52 current checks are identical under both
-  registries; installed registry exactly matches the authorized repository.
+  status ok with 40 entities at 02:07, all 52 checks were identical under both
+  registries. After a concurrent Hermes config change, the 46 selected checks
+  remain identical; installed registry matches the authorized repository.
 - **Release disposition:** non-blocking for this Ops checkpoint; settle broader
   inventory coverage before claiming current-upstream registry completeness.
 

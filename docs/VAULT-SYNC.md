@@ -187,20 +187,24 @@ Maintainer-authorized deploy/device tests installed source
 cron, host and service read-back plus real schedule survival. Repository status
 surfaces name C as next eligible, not started. Mixed artifacts
 [DEBT-026](BACKLOG.md#debt-026) are closed; catalog failures
-[DEBT-027](BACKLOG.md#debt-027) are diagnosed/deferred, not healthy. New
+[DEBT-027](BACKLOG.md#debt-027) are diagnosed/deferred, not healthy: 401 remains;
+the earlier 404 check left the plan after a concurrent Hermes config update.
+The 02:20 scheduled report contains 38 healthy / 1 failed / 2 unconfigured /
+5 skipped, including three healthy MCP process checks. New
 [DEBT-029](BACKLOG.md#debt-029) records stale bundled registry metadata/content
-without changing the 52 checks for the current inventory.
+without changing either the 52 initial or the 46 later check plans.
 
 Exactly three vault notes were updated through Obsidian MCP: project card,
-canonical release roadmap and backlog index. Server commits `7907faf` and
-`62c9f62161ee1870b628f026d56abeb1f7b3da70` contain only these paths; the
-server tree is clean and its HEAD equals GitHub `origin/master` at `62c9f62`.
+canonical release roadmap and backlog index. Server commits `7907faf`,
+`62c9f62` and `f39e1cfd82a17d16b01a8d11f2d08e958a5db16f` contain only these
+paths; the server tree is clean and its HEAD equals GitHub `origin/master`
+at `f39e1cf`.
 MCP read-back matches all three intended note bodies. The local vault fetched
 and merged those changes; `git diff origin/master -- <the three paths>` is
 empty, confirming the same selected notes in all three copies.
 
-Local vault HEAD is `9adddcb769c1a75927ba9797b9b063a43fb36940`, not the
-server SHA: a pre-existing unrelated local commit was retained, and two normal
+Local vault HEAD is `6099f143d2854ba69e1cd6825a22a624322f2ad9`, not the
+server SHA: a pre-existing unrelated local commit was retained, and three normal
 merges imported the Argus updates. That unrelated commit/merge history was not
 pushed. Three unrelated dirty files retained their exact before hashes. This
 receipt establishes selected-note equality, not whole-vault history equality.

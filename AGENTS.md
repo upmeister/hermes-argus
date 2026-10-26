@@ -267,8 +267,9 @@ complete in source and deployed at `17b3975927cec11783a314f68e614e7a4d12bb1c`
 on 2026-10-26, following the maintainer's separate deployment/test authorization.
 The [Ops receipt](docs/DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
 records payload, cron, service and host-prerequisite read-back. Network guard
-remains explicitly ON. Two catalog failures remain diagnosed, not resolved
-([DEBT-027](docs/BACKLOG.md#debt-027)); registry refresh is a non-blocking
+remains explicitly ON. One catalog authorization failure remains; the earlier
+404 check left the plan after a concurrent Hermes config update, without a
+resolution claim ([DEBT-027](docs/BACKLOG.md#debt-027)). Registry refresh is a non-blocking
 source finding ([DEBT-029](docs/BACKLOG.md#debt-029)). Deployment convergence
 does not mean every integration is healthy or notification delivery is proven.
 

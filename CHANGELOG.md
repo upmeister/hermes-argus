@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deployed the merged RR1a/RR1b and restart A/B source at `17b3975` on
   2026-10-26 after maintainer authorization. Read-back confirms payload,
   preserved operator cron, explicit network guard, log rotation and live bot
-  services. The Ops checkpoint is complete; C is next. Two catalog failures
-  remain diagnosed/deferred, and the bundled registry needs a separate refresh;
+  services. The Ops checkpoint is complete; C is next. Catalog failures were
+  diagnosed; one 401 remains, while a prior 404 check left the plan after a
+  concurrent Hermes config update. The bundled registry needs a separate refresh;
   this is not an all-green integration or notification-delivery claim.
 
 - Reconciled RR1b host readiness with merged PR #75 and recorded the October 25
