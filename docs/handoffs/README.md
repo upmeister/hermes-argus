@@ -1,9 +1,21 @@
 # Handoffs and implementation contracts
 
-## Current programme — 2026-10-25
+## Current task — readiness and observation correctness
+
+The maintainer selected the first post-programme task on 2026-10-26:
+[readiness/observation contract](readiness-observation-correctness-contract.md).
+It groups DEBT-030, DEBT-028, DEBT-022 and the DEBT-031 recovery recipe into
+one implementation PR. Builder starts after its docs PR merges; reviewer is
+**Codex**, production risk medium, maintainer merge after PASS.
+
+Use local Ubuntu 24.04 WSL/VMware first. A final production trial requires
+separate authorization for an exact SHA/action list; destructive fault cases
+and uninstall are local-only. No production action is authorized by this pointer.
+
+## Completed programme — 2026-10-25 selection
 
 The maintainer selected reconnaissance steps 1–5, stopping after RR1c/RR1d,
-with three implementation PRs. Start with the
+with three implementation PRs. Historical authority and receipts:
 [programme and delivery protocol](2026-10-25-restart-through-rr1.md).
 This replaces the old RR1b active pointer. PR #75 is already merged.
 
@@ -12,7 +24,10 @@ This replaces the old RR1b active pointer. PR #75 is already merged.
 | A | [Hermes 0.22.5 compatibility](restart-a-hermes-compatibility-contract.md) | **DONE / PR #77**, deployed 2026-10-26 at `17b3975`; Codex GO/PASS on `64eca82b` |
 | B | [Delivery/evidence correctness](restart-b-delivery-evidence-contract.md) | **DONE / PR #78**, deployed 2026-10-26 at `17b3975`; Codex GO/PASS on `d396399` |
 | Ops | [Production checkpoint](../DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26) | **DONE**, separately authorized deploy/read-back of `17b3975`; diagnosed integration failures retained |
-| C | [RR1c/d versioned lifecycle](restart-c-versioned-lifecycle-contract.md) | **IMPLEMENTED / maintainer gate pending**, [PR #79](https://github.com/upmeister/hermes-argus/pull/79), base `5551579`; Codex review receipt in PR; no merge/deploy yet |
+| C | [RR1c/d versioned lifecycle](restart-c-versioned-lifecycle-contract.md) | **DONE / PR #79**, merged `fd947a0` on 2026-10-26; reviewed head `76a48db`; **not deployed** |
+
+The programme's STOP condition is reached. The current follow-up above is a
+new maintainer selection, not an automatic extension into RR2/RR3.
 
 Builder: maintainer-assigned coder. Focused reviewer: **Codex**.
 Implementation risk: A/B medium, C high; **maintainer merge after PASS**.

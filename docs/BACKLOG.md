@@ -31,15 +31,16 @@ maintainer read an incomplete project state.
 
 ## All findings at a glance
 
-Contract C lifecycle implementation is on `feat/restart-c-versioned-lifecycle`
-(base `5551579`), PR #79, awaiting the maintainer gate; Codex review receipt
-is in the PR. Not deployed.
+Contract C merged as PR #79 at `fd947a0` (base `5551579`, reviewed head
+`76a48db`); **not deployed**. The A/B/C programme is source-complete.
 Its ownership refusal deliberately leaves [DEBT-004](#debt-004)'s full checker,
 legacy/modified artifacts, private data and external resources in place. It
 also retains both shared Hermes launch adapters so preserved fallback base
 units remain restartable; this closes the C6 focused-review blocker locally.
-It does not resolve [DEBT-028](#debt-028) (pgrep observation errors) or
-[DEBT-029](#debt-029) (registry refresh); both remain separate maintenance.
+The maintainer now selected the [readiness/observation contract](handoffs/readiness-observation-correctness-contract.md)
+for DEBT-030/028/022 and DEBT-031's manual recovery recipe, in one PR with local
+Ubuntu 24.04 WSL/VMware evidence. These findings are selected, not resolved.
+[DEBT-029](#debt-029) (registry refresh) remains separate maintenance.
 
 | ID | Problem | Status | Next action |
 | --- | --- | --- | --- |
@@ -64,14 +65,16 @@ It does not resolve [DEBT-028](#debt-028) (pgrep observation errors) or
 | [DEBT-020](#debt-020) | Discord deepcheck calls a TG_BOT-owned executable | Open | Maintainer decides payload ownership vs. unsupported-module reporting. |
 | [DEBT-010](#debt-010) | Host lifecycle/privilege assumptions unadmitted | Resolved; deployed 2026-10-26 | Production preflight/read-back passed; no new host policy. |
 | [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Resolved; deployed 2026-10-26 | Config mode 600; production preflight passed. |
-| [DEBT-022](#debt-022) | network-guard logs ROLLBACK regardless of sudo result | Open | Maintainer selects per-action failure reporting for the guard. |
+| [DEBT-022](#debt-022) | network-guard logs ROLLBACK regardless of sudo result | Selected G3 | Report individual command and aggregate results; preserve policy/breaker. |
 | [DEBT-023](#debt-023) | LOGROTATE_SCHED_DIR override surface unconfirmed | Needs decision | Maintainer confirms the public path override or restricts it to tests. |
 | [DEBT-024](#debt-024) | Hermes PM removes the legacy runtime path Argus assumes | Resolved; deployed 2026-10-26 (A / PR #77) | Live adapter/CLI/helper all return 0; existing Hermes units preserved. |
 | [DEBT-025](#debt-025) | Fallback inventory does not canonicalize provider aliases | Resolved; deployed 2026-10-26 (A / PR #77) | Installed source matches; actual discovery status ok. |
 | [DEBT-026](#debt-026) | Production checkout/payload/schedule have mixed provenance | Closed; Ops 2026-10-26 | Source/payload/schedule read back at authorized `17b3975`. |
 | [DEBT-027](#debt-027) | Catalog authorization failure; earlier absent route | Diagnosed; remediation deferred | 401 remains failed; earlier 404 no longer planned after config update, not recovered. |
-| [DEBT-028](#debt-028) | pgrep failure in the gateway helper reads as "no gateway" | Open (pre-existing, found in A review) | Maintainer selects liveness fix: observation error must be rc 2, not rc 1. |
+| [DEBT-028](#debt-028) | pgrep failure in the gateway helper reads as "no gateway" | Selected G2 | Error is rc 2; callers preserve unknown gateway evidence and avoid false recovery. |
 | [DEBT-029](#debt-029) | Bundled registry predates accepted Hermes source | Open; non-blocking for current inventory | Maintainer selects generated-registry refresh; current 52 checks unchanged. |
+| [DEBT-030](#debt-030) | Managed preflight resolves an executable without proving capability | Selected G1 | Prove harmless managed activation before readiness. |
+| [DEBT-031](#debt-031) | Interrupted update can require manual old/new-source reconciliation | Selected G4 (docs/rehearsal) | Rehearse the known pre-write recovery; mixed/unknown state still stops. |
 
 ## Open finding cards
 
@@ -570,15 +573,14 @@ It does not resolve [DEBT-028](#debt-028) (pgrep observation errors) or
   guard still writes `ROLLBACK DNS: revert <iface>` / `ROLLBACK: ip rule del …`
   into `network-guard.log` and reports the rollback as done in its Telegram
   alert — the operator sees remediation that never happened.
-- **Status:** open, outside the RR1b host-readiness contract.
+- **Status:** selected G3 in the [readiness/observation contract](handoffs/readiness-observation-correctness-contract.md); outside the completed RR1b implementation.
 - **Source/evidence:** PR #75 focused review (promptql, external) at head
   `36f4dc4`; `scripts/network-guard.sh:86–87, 97–98, 101–102` — each
   `sudo -n … 2>/dev/null` return code is discarded and the ROLLBACK log line
   is unconditional.
-- **Next action / responsible roles:** maintainer selects the desired
-  behavior (per-action failure logging and a louder alert when a rollback
-  could not be applied); architect scopes a bounded guard-only follow-up;
-  builder implements only after selection. The H4 install gate is not
+- **Next action / responsible roles:** builder reports per-action failures and
+  distinguishes attempted rollback from verified success under G3; Codex reviews.
+  Policy, command set, counter semantics and state schema stay unchanged. The H4 install gate is not
   affected and must not be re-opened here.
 - **Closure evidence:** an isolated fixture where the sudo call fails shows
   the guard reporting a failed rollback (not a successful ROLLBACK) in log
@@ -733,16 +735,19 @@ It does not resolve [DEBT-028](#debt-028) (pgrep observation errors) or
   `hermes-gateway-pids.py` returns an empty candidate list, which the helper
   reports as rc 1 ("не найден") — the watchdog can classify a false
   gateway-dead and restart a live process.
-- **Status:** open; pre-existing defect inherited from main `11c7bcd`, not a
+- **Status:** selected G2; pre-existing defect inherited from main `11c7bcd`, not a
   PR #77 regression. Found in the contract A review round 1 (Codex).
 - **Source:** [review PR #77](https://github.com/upmeister/hermes-argus/pull/77),
   `scripts/hermes-gateway-pids.py` pgrep exception path.
-- **Next action / owner:** maintainer selects a bounded liveness fix
-  (separate task, outside contract A): observation error must yield rc 2
+- **Next action / owner:** builder implements the selected bounded fix
+  (outside completed contract A): observation error must yield rc 2
   (honest "did not check"), while a successful scan with no matches keeps rc 1.
 - **Closure evidence:** a fault-injected pgrep failure reports rc 2 without a
   traceback; a normal empty scan still reports rc 1; callers treat 2 as
   "не проверил" rather than "process death".
+- **Caller evidence:** `hermes-watchdog.sh` currently clears previously alerted
+  keys absent from `SEEN`; G2 must preserve the existing `gateway_proc` counters
+  across an unknown observation, not send recovery or alter unrelated hysteresis.
 - **Release disposition:** liveness correctness; must not be bundled into the
   contract A PR.
 
@@ -769,7 +774,68 @@ It does not resolve [DEBT-028](#debt-028) (pgrep observation errors) or
 
 <a id="sync-002"></a>
 
-### SYNC-002 — merged RR1b still appeared selected or awaiting review
+### SYNC-002 — merged work still appeared selected or awaiting review
+
+- **2026-10-26 recurrence:** PR #79 merged at `fd947a0`, but repository and
+  vault summaries still described the C maintainer gate as pending. The
+  [independent assessment](research/2026-10-26-programme-review-and-next-plan.md#standards-axis)
+  also found contract A's old runpy prescription inconsistent with its accepted
+  implementation. This docs candidate repairs those status pointers and records
+  A's accepted launch form; maintainer merge is pending. C is source-complete,
+  not deployed, and the old programme has stopped. The separately selected
+  readiness contract owns the next task. Vault receipt: [VAULT-SYNC](VAULT-SYNC.md).
+  The earlier RR1b repair below is historical.
+
+<a id="debt-030"></a>
+
+### DEBT-030 — managed preflight does not execute the resolved runtime
+
+- **Impact:** deploy can pass its Hermes capability gate on a managed layout
+  whose resolved executable cannot run even a harmless script; this is a
+  false-green preflight, not evidence that production is currently broken.
+- **Status:** selected G1 in the new readiness/observation contract after the
+  independent review of `fd947a0`; not implemented. This is a new task, not an
+  extra remediation cycle of the closed A PR.
+- **Source:** `scripts/hermes-runtime.py:188` returns success after resolving
+  the executable; `deploy.sh:299` treats it as runtime readiness. The inherited
+  RR1b H3 requirement distinguishes executable presence from capability.
+- **Reproduction:** a local launcher returns valid JSON argv naming executable
+  `/bin/false`; adapter `check` returns 0, but `run-script` returns 1 and never
+  executes its harmless script. See the
+  [review evidence](research/2026-10-26-programme-review-and-next-plan.md#p2-managed-preflight-establishes-a-path-not-working-runtime-capability).
+- **Next action / owner:** builder implements the selected G1 correction and
+  proves actual managed activation with a harmless timed check, preserving
+  classified diagnostics and credential read-only behavior; Codex reviews.
+- **Closure evidence:** broken/failed/timed-out managed runtime fails preflight
+  before runtime deployment writes; valid managed and legacy layouts pass.
+- **Release disposition:** fix before fresh-managed-install/public-readiness
+  claims. No provider probe, runtime repair or integrity subsystem is needed.
+
+<a id="debt-031"></a>
+
+### DEBT-031 — interrupted update needs a tested manual recovery recipe
+
+- **Impact:** after checkout changes to V2 and deploy stops before writes,
+  runtime may remain V1. Retrying correctly refuses mismatches against V2,
+  leaving an operator to reconcile the two source/runtime revisions.
+- **Status:** selected G4 documentation/rehearsal; reproduced operational limitation.
+  The completed C contract explicitly
+  promises neither automatic rollback nor blind retry, so this is not a
+  claim of a silent-success defect.
+- **Source:** `install.sh` selects the tree before deployment and derives the
+  next ownership baseline from checkout HEAD. A lifecycle fixture injected a
+  user-manager preflight failure: initial rc 1, checkout V2, runtime unchanged
+  at V1, retry rc 1 with ownership refusal. See the
+  [review experiment](research/2026-10-26-programme-review-and-next-plan.md#c-failure-recovery-an-explicit-operational-limit-not-silent-success).
+- **Next action / owner:** builder documents and rehearses G4's
+  manual old/selected-revision reconciliation with custom-file preservation;
+  maintainer selects any implementation change the rehearsal proves necessary.
+- **Closure evidence:** an isolated failed-update case can be recovered using
+  the documented procedure, without lost config/operator files or false success.
+- **Release disposition:** before RR3/public upgrade acceptance; no new
+  transaction database, generalized migration or automatic rollback is implied.
+
+## Historical SYNC-002 RR1b repair receipt
 
 - **Impact:** Returning builders could repeat completed work or base planning
   on an obsolete handoff and vault summary.

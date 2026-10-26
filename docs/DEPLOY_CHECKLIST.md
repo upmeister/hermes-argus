@@ -6,7 +6,27 @@ the resident Pytna agent through the Peetna MCP, because it has the production
 runtime context. A local SSH/Linux deployment is a fallback for the
 maintainer.
 
-## Contract C lifecycle read-back (implementation; maintainer gate pending)
+## Local-first readiness follow-up — 2026-10-26
+
+The selected [contract](handoffs/readiness-observation-correctness-contract.md)
+uses local WSL or VMware, supported Ubuntu 24.04, native Linux filesystem and
+isolated HOME/service/network fixtures. Ubuntu 26.04 results supplement rather
+than replace target evidence. Production is not a test environment for broken
+runtime, pgrep/sudo failures, route/DNS changes, interrupted updates or uninstall.
+
+After local evidence and CI pass, prepare a final production plan naming the
+exact merged SHA, whether C is included, affected files/services and requested
+positive checks. The maintainer's suggestion to try production at the end does
+not choose or authorize those operations. Deploy/restart/notification tests
+still require separate approval of that concrete plan.
+
+The builder must add and rehearse the DEBT-031 manual recovery procedure here:
+known V1 runtime / selected V2 checkout after a pre-write failure, source
+reconciliation without forced Git operations, target-installer execution, and
+preserved private/operator files. Until that evidence exists, stop on an
+ownership refusal; do not treat a generic retry or uninstall as recovery.
+
+## Contract C lifecycle read-back (source merged; not deployed)
 
 These commands require source containing contract C. No C production rollout,
 uninstall, release or test tag is authorized by its implementation PR.

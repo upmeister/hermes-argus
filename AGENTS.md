@@ -284,18 +284,25 @@ A Hermes 0.22.5 launch + fallback inventory compatibility
  -> later RR2 runtime i18n / public setup / RR3 acceptance / v0.1.0-rc.1
 ```
 
-When implementing or reviewing this programme, read
-`docs/handoffs/2026-10-25-restart-through-rr1.md`, then exactly its current
-A/B/C contract. A (PR #77) and B (PR #78) are merged; **the Ops checkpoint is
-complete and C is implemented in PR #79 on `feat/restart-c-versioned-lifecycle`,
-pending the maintainer gate (Codex review receipt in the PR)**. Its base is
-`5551579`; nothing from C has
-been deployed. After its authorized merge, mark RR1c/d source complete and
-STOP this programme; RR2/RR3 are not admitted by this assignment.
-Three outcome PRs are intended; do not split
-every finding into its own PR or combine the whole queue. Codex is the
-focused reviewer. Runtime merges and every production action remain
-maintainer-controlled.
+The A/B/C programme is complete in source and has reached STOP. C merged as
+PR #79 on 2026-10-26 at `fd947a06bccc8af60a9ad90f3515c7d91d9b2ed3`
+(reviewed head `76a48db`, base `5551579`); **C has not been deployed**.
+The earlier programme remains a historical contract/receipt, not a live task.
+
+The maintainer selected the first follow-up on 2026-10-26. For implementation
+or review, read `docs/handoffs/readiness-observation-correctness-contract.md`:
+one PR for managed capability (DEBT-030), pgrep observation/caller evidence
+(DEBT-028), truthful rollback reporting (DEBT-022), and a documented/rehearsed
+manual update recovery (DEBT-031). No general lifecycle redesign is admitted.
+Codex is the focused reviewer; production risk is medium and runtime merge is
+maintainer-owned after PASS. Start from main after the docs contract merges.
+
+Linux testing is local first: supported Ubuntu 24.04 on WSL or VMware with
+native Linux filesystem and isolated fixtures. Ubuntu 26.04 evidence is
+additional, not a replacement for the target. A possible final production
+trial needs an exact merged-SHA/action plan and separate authorization;
+failure injection and uninstall tests stay local. C rollout, setup/i18n/RR3
+and other follow-ups remain later selections, not this contract's scope.
 
 RR1 planning still uses
 `docs/research/2026-10-03-production-deployment-dependencies.md` and the current
