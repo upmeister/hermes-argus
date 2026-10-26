@@ -256,11 +256,23 @@ first; any final production trial needs its own exact-SHA/action authorization.
 
 This docs candidate corrects the repository's stale C pointers, records A's
 accepted bootstrap/run_path refinement and links the new selected contract.
-The project card, canonical roadmap and backlog index will be synchronized
-with the same merged-versus-deployed distinction. The earlier sections above
-are dated history, not current task pointers. A publication/read-back receipt
-will be added before the docs PR handoff; no runtime/deployment claim follows
-from documentation sync.
+The project card, canonical roadmap and backlog index were published as vault
+commit `2a3c0fd529761c7d7ea316f0a1a2c70a988cc1f2`, linking
+[docs PR #80](https://github.com/upmeister/hermes-argus/pull/80). GitHub's commit
+API confirms exactly those three changed notes. Before editing, their local
+and MCP bodies matched; the real local vault had been fast-forwarded through
+the earlier audit-backlog publication. Unrelated local project edits were
+excluded from the commit and left untouched.
+
+The clean server vault was fast-forwarded to that exact publication after
+checking the delta contained only the three selected paths. Local/GitHub/server
+heads agreed for this publication, and MCP read-back matched the intended
+normalized bodies with `updated: 2026-10-26`. The notes name C as merged/not
+deployed, the old programme as complete and the new correctness contract as
+selected but not implemented; PR #80 is still open at this receipt.
+
+The earlier sections above are dated history, not current task pointers. This
+verifies the selected notes, not the whole vault or any runtime deployment.
 
 ## Future status-update procedure
 
