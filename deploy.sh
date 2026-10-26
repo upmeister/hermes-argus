@@ -9,13 +9,21 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIFECYCLE_ACTION=deploy
+case "${1:-}" in
+    --check-ownership|--uninstall-plan|--uninstall-apply)
+        LIFECYCLE_ACTION="$1"; shift ;;
+esac
 CONFIG_FILE="${1:-$REPO_DIR/config.env}"
+OWNERSHIP_REPO="${2:-$REPO_DIR}"
+OWNERSHIP_REV="${3:-HEAD}"
 # H1 (ремедиация ревью PR #75): явно указанный вызывающим путь — контракт.
 # Его отсутствие останавливает deploy, а не молча замещается переменными
 # окружения: иначе опечатка в пути выглядит как штатная env-развёртка без
 # конфига. Дефолтный путь без аргумента сохраняет env-fallback как штатный.
 CONFIG_FILE_EXPLICIT=0
 if [ "$#" -ge 1 ]; then CONFIG_FILE_EXPLICIT=1; fi
+if [ "$LIFECYCLE_ACTION" = --check-ownership ] && [ -z "${1:-}" ]; then CONFIG_FILE_EXPLICIT=0; fi
 SCRIPTS_DIR="$REPO_DIR/scripts"
 MODULES_DIR="$REPO_DIR/modules"
 
@@ -172,6 +180,17 @@ deploy_template() {
 
     mkdir -p "$(dirname "$dst")"
 
+    render_template "$src" "$dst"
+    [ -x "$src" ] && chmod +x "$dst"
+    DEPLOYED_PATHS+=("$dst")
+    echo "   ✅ $name → $dst"
+}
+
+# The same bounded renderer is used for deployment and ownership comparison.
+# Expected secret-bearing content is written only to private temporary files.
+render_template() {
+    local src="$1" dst="$2"
+
     # Значения замен (в т.ч. секреты) пишутся во временный sed-скрипт (mktemp =
     # 0600) и подаются через -f: в argv sed попадает только путь скрипта, не
     # значения. Порядок замен сохранён прежнему sed -e списку.
@@ -197,11 +216,6 @@ deploy_template() {
     cleanup_sed_script
     SED_SCRIPT_TMP=""
 
-    # Делаем исполняемым если исходник был
-    [ -x "$src" ] && chmod +x "$dst"
-
-    DEPLOYED_PATHS+=("$dst")
-    echo "   ✅ $name → $dst"
 }
 
 # ── Preflight хоста (RR1b, host-readiness) ───────────────────────────────────
@@ -584,12 +598,6 @@ install_logrotate_policy() {
 
 echo ""
 echo "🔎 Preflight хоста..."
-preflight_target || exit 1
-preflight_hermes || exit 1
-preflight_user_manager || exit 1
-preflight_network_guard || exit 1
-preflight_logrotate || exit 1
-
 # ── Манифесты модулей (ЯВНЫЕ списки — в целевых каталогах лежит и чужая
 #    инфраструктура, wildcard-раскладка по каталогу запрещена) ──────────────
 
@@ -927,6 +935,227 @@ verify_deployed_payload() {
 }
 
 # ── Развёртка по модулям ───────────────────────────────────────────────────
+# C lifecycle: enumerate the existing declarations, not filesystem discovery.
+lifecycle_resources() {
+    local prefix flag suffix root source name
+    declare -g -a LC_SRC=() LC_DST=() LC_KIND=()
+    declare -A seen=()
+    for prefix in CORE INTEGRATIONS NETWORK_GUARD LOCAL_SERVICES SHARED_BOT TG_BOT DISCORD ANALYZER HEARTBEAT; do
+        flag="MODULE_$prefix"
+        [ "$prefix" = DISCORD ] && flag=MODULE_DISCORD_BOT
+        if [ "$LIFECYCLE_ACTION" = --check-ownership ]; then
+            if [ "$prefix" = SHARED_BOT ]; then
+                module_enabled MODULE_TG_BOT || module_enabled MODULE_DISCORD_BOT || continue
+            else module_enabled "$flag" || continue; fi
+        fi
+        for suffix in HOME_SCRIPTS HERMES_SCRIPTS SYSTEMD; do
+            declare -p "${prefix}_${suffix}" >/dev/null 2>&1 || continue
+            local -n names="${prefix}_${suffix}"
+            case "$suffix" in
+                HOME_SCRIPTS) root="$HOME_DIR/scripts"; source=scripts ;;
+                HERMES_SCRIPTS) root="$HERMES_DIR/scripts"; source=scripts ;;
+                SYSTEMD) root="$HOME_DIR/.config/systemd/user"; source=modules/systemd ;;
+            esac
+            for name in "${names[@]}"; do
+                case "$name" in hermes-gateway.service|hermes-dashboard.service) continue ;; esac
+                if [ "$LIFECYCLE_ACTION" != --check-ownership ] && [ "$name" = health-check-integrations.sh ]; then
+                    echo "RETAIN uncertain full checker (DEBT-004): $root/$name"
+                    continue
+                fi
+                [ -z "${seen[$root/$name]:-}" ] || continue
+                seen[$root/$name]=1
+                LC_SRC+=("$source/$name"); LC_DST+=("$root/$name")
+                LC_KIND+=("$suffix")
+            done
+        done
+    done
+    # Registry is state: retained on uninstall, checked before an update writes it.
+    if [ "$LIFECYCLE_ACTION" = --check-ownership ] && module_enabled MODULE_INTEGRATIONS; then
+        LC_SRC+=(registry.yaml); LC_DST+=("$HERMES_DIR/state/registry.yaml"); LC_KIND+=(HOME_SCRIPTS)
+    fi
+    LC_SRC+=(policy policy)
+    LC_DST+=("$HERMES_DIR/$LOGROTATE_POLICY_NAME" "$LOGROTATE_SCHED_DIR/argus")
+    LC_KIND+=(policy policy)
+}
+
+lifecycle_match() {
+    local src="$1" dst="$2" a b c mode
+    [ -f "$dst" ] && [ ! -L "$dst" ] || return 1
+    if [ "$src" = policy ]; then
+        [ -s "$LC_TMP/policy" ] && cmp -s "$LC_TMP/policy" "$dst"
+        return
+    fi
+    git -C "$OWNERSHIP_REPO" show "$OWNERSHIP_REV:$src" > "$LC_TMP/source" 2>/dev/null || return 1
+    mode=$(git -C "$OWNERSHIP_REPO" ls-tree "$OWNERSHIP_REV" -- "$src" | awk '{print $1}')
+    if [ "$mode" = 100755 ]; then [ -x "$dst" ] || return 1
+    elif [ "$mode" = 100644 ]; then [ ! -x "$dst" ] || return 1
+    else return 1; fi
+    render_template "$LC_TMP/source" "$LC_TMP/expected"
+    cmp -s "$LC_TMP/expected" "$dst" && return 0
+    # Module flags have a closed ON/OFF domain, unlike operator customizations.
+    # A disabled old module must not become foreign just because config changed.
+    grep -q '@MODULE_\(INTEGRATIONS\|ANALYZER\|TG_BOT\)@' "$LC_TMP/source" || return 1
+    for a in ON OFF; do for b in ON OFF; do for c in ON OFF; do
+        ( MODULE_INTEGRATIONS="$a" MODULE_ANALYZER="$b" MODULE_TG_BOT="$c"
+          render_template "$LC_TMP/source" "$LC_TMP/expected" )
+        cmp -s "$LC_TMP/expected" "$dst" && return 0
+    done; done; done
+    return 1
+}
+
+lifecycle_cron_plan() {
+    local err="$LC_TMP/cron.err" line dst
+    if ! crontab -l > "$LC_TMP/cron.before" 2>"$err"; then
+        if grep -q 'no crontab for' "$err"; then : > "$LC_TMP/cron.before"
+        else echo 'uninstall: cannot read crontab; nothing changed' >&2; return 1; fi
+    fi
+    python3 - "$LC_TMP/cron.before" "$LC_TMP/cron.after" <<'PY'
+import sys
+from pathlib import Path
+lines=Path(sys.argv[1]).read_bytes().splitlines(keepends=True)
+inside=False; seen=False; kept=[]
+for line in lines:
+    text=line.rstrip(b'\r\n')
+    if b'BEGIN HERMES-ARGUS' in text or b'END HERMES-ARGUS' in text:
+        if text==b'# BEGIN HERMES-ARGUS' and not inside and not seen:
+            inside=True;seen=True
+        elif text==b'# END HERMES-ARGUS' and inside:
+            inside=False
+        else:
+            sys.exit('uninstall: malformed/duplicate cron boundaries; nothing changed')
+    elif not inside:
+        kept.append(line)
+if inside: sys.exit('uninstall: unclosed cron block; nothing changed')
+Path(sys.argv[2]).write_bytes(b''.join(kept))
+PY
+    [ "$?" -eq 0 ] || return 1
+    # Legacy jobs outside the managed block cannot safely outlive their payload.
+    # Reconcile them with deploy first; don't guess that a wrapper is ours.
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -z "$line" ] || ! is_known_generated_form "${line//'~/'/"$HOME_DIR/"}" || {
+            echo 'uninstall: retained legacy schedule outside managed block; reconcile before apply' >&2
+            return 1
+        }
+        for dst in "${LC_DST[@]}"; do
+            if [[ "${line//'~/'/"$HOME_DIR/"}" = *"$dst"* ]]; then
+                echo 'uninstall: operator schedule still references a removal candidate; manual disposition required' >&2
+                return 1
+            fi
+        done
+    done < "$LC_TMP/cron.after"
+}
+
+lifecycle_run() {
+    local i dst src kind incomplete=0 reload=0 changed=0
+    LC_TMP=$(mktemp -d)
+    trap 'cleanup_sed_script; rm -rf -- "$LC_TMP"' EXIT
+    git -C "$OWNERSHIP_REPO" rev-parse --verify "$OWNERSHIP_REV^{commit}" >/dev/null 2>&1 || {
+        echo 'lifecycle: source revision unavailable; nothing changed' >&2; return 1;
+    }
+    lifecycle_resources
+    # Render the *old* source policy, including its own file list. This bounded
+    # extraction also admits the pre-C deploy source without executing deploy.
+    git -C "$OWNERSHIP_REPO" show "$OWNERSHIP_REV:deploy.sh" > "$LC_TMP/old-deploy"
+    {
+        awk '/^ARGUS_LOG_FILES=\(/{f=1} f{print;if(/\)/)exit}' "$LC_TMP/old-deploy"
+        awk '/^logrotate_policy_body\(\)/{f=1} /^preflight_logrotate\(\)/{exit} f' "$LC_TMP/old-deploy"
+        echo 'logrotate_policy_body'
+    } > "$LC_TMP/render-policy.sh"
+    export HERMES_DIR
+    bash "$LC_TMP/render-policy.sh" > "$LC_TMP/policy" 2>/dev/null || : > "$LC_TMP/policy"
+    if [ "$LIFECYCLE_ACTION" != --check-ownership ]; then
+        if [ "$LIFECYCLE_ACTION" = --uninstall-apply ]; then
+            exec 9>"$CRON_LOCK_FILE"
+            flock -n 9 || { echo 'uninstall: schedule lock busy; nothing changed' >&2; return 1; }
+        fi
+        lifecycle_cron_plan || return 1
+        if ! cmp -s "$LC_TMP/cron.before" "$LC_TMP/cron.after"; then
+            echo 'REMOVE managed cron block (surrounding bytes preserved)'
+        fi
+    fi
+    declare -a remove=() units=()
+    for i in "${!LC_DST[@]}"; do
+        dst="${LC_DST[$i]}"; src="${LC_SRC[$i]}"; kind="${LC_KIND[$i]}"
+        [ -e "$dst" ] || [ -L "$dst" ] || continue
+        if lifecycle_match "$src" "$dst"; then
+            echo "MATCH $dst"
+            remove+=("$dst")
+            if [ "$kind" = SYSTEMD ]; then
+                if [[ "$dst" = *.service.d/* ]]; then :
+                else units+=("${dst##*/}"); fi
+            fi
+        else
+            echo "RETAIN changed/ambiguous: $dst (manual disposition required)"
+            incomplete=1
+        fi
+    done
+    if [ "$LIFECYCLE_ACTION" = --check-ownership ]; then
+        [ "$incomplete" -eq 0 ] || return 2
+        echo 'Ownership check passed against the current source revision.'
+        return 0
+    fi
+    if [ -e "$HOME_DIR/.config/systemd/user/hermes-vps-kit-config.path" ] || [ -L "$HOME_DIR/.config/systemd/user/hermes-vps-kit-config.path" ]; then
+        echo 'RETAIN documented legacy watcher: manual reconciliation required'
+        incomplete=1
+    fi
+    echo "RETAIN Hermes gateway/dashboard base units and running state"
+    echo "RETAIN $CONFIG_FILE; $HERMES_DIR/.env; auth, state, logs and bot venv"
+    echo "RETAIN $REPO_DIR; heartbeat Git checkouts; shared directories and their other contents"
+    echo 'RETAIN external services/accounts, network/proxy setup, L3 jobs and the uncertain full checker'
+    if [ "$LIFECYCLE_ACTION" = --uninstall-plan ]; then
+        echo 'Read-only plan; run uninstall.sh --apply for the listed bounded removal.'
+        [ "$incomplete" -eq 0 ] || return 2
+        return 0
+    fi
+    # Do not strand a customized/legacy unit with its executable removed.
+    # Ambiguous artifacts require an operator decision before any apply writes.
+    [ "$incomplete" -eq 0 ] || { echo 'uninstall: incomplete ownership; nothing changed' >&2; return 2; }
+    for dst in "${units[@]}"; do
+        systemctl --user disable --now "$dst" || {
+            echo "uninstall: failed stopping $dst; partial service state, files retained" >&2; return 1;
+        }
+    done
+    if ! cmp -s "$LC_TMP/cron.before" "$LC_TMP/cron.after"; then
+        crontab - < "$LC_TMP/cron.after" || { echo 'uninstall: cron write failed; services may be stopped, files retained' >&2; return 1; }
+        changed=1
+    fi
+    for dst in "${remove[@]}"; do
+        # Re-check immediately before removal; no force/purge or shared-dir rm.
+        for i in "${!LC_DST[@]}"; do
+            [ "${LC_DST[$i]}" = "$dst" ] || continue
+            lifecycle_match "${LC_SRC[$i]}" "$dst" || {
+                echo 'uninstall: artifact changed after plan; partial cleanup, manual read-back required' >&2; return 1;
+            }
+            [ "${LC_KIND[$i]}" != SYSTEMD ] || reload=1
+            break
+        done
+        if [ -w "$(dirname "$dst")" ]; then rm -- "$dst"
+        else sudo -n rm -- "$dst"; fi || {
+            echo 'uninstall: removal failed; partial cleanup, manual read-back required' >&2
+            [ "$reload" -eq 0 ] || systemctl --user daemon-reload
+            return 1
+        }
+        changed=1
+    done
+    if [ "$reload" -eq 1 ]; then
+        systemctl --user daemon-reload || { echo 'uninstall: files removed, daemon-reload failed; manual reload required' >&2; return 1; }
+        echo 'Argus units/drop-ins removed and reloaded; Hermes was not restarted.'
+    fi
+    echo "Uninstall complete for proven resources (changed=$changed); retained resources listed above."
+}
+
+if [ "$LIFECYCLE_ACTION" != deploy ]; then
+    lifecycle_run
+    exit $?
+fi
+
+preflight_target || exit 1
+preflight_hermes || exit 1
+preflight_user_manager || exit 1
+preflight_network_guard || exit 1
+preflight_logrotate || exit 1
+
+
 if module_enabled MODULE_CORE; then
     echo ""
     echo "📁 [CORE] скрипты и systemd-юниты..."

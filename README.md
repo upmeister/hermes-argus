@@ -23,7 +23,8 @@ Current source includes RR1a, both RR1b slices and restart A/B (through PR #78).
 now covers Hermes 0.22.5 compatibility, delivery/evidence fixes and RR1c/RR1d.
 Hermes v0.22.5 is the accepted stable authority. The separately authorized
 October 26 [Ops receipt](docs/DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
-records deployment of `17b3975`; C is next. One catalog authorization failure
+records deployment of `17b3975`; C is implemented on a task branch, pending
+Codex review and maintainer merge. One catalog authorization failure
 remains, and notification delivery has not been tested by this rollout.
 
 ## Why this exists
@@ -195,14 +196,44 @@ The current bootstrap targets **Ubuntu 24.04** and expects Hermes Agent to
 already be installed for the same user.
 
 ```bash
+# Version selection needs git, curl and python3 already available.
 git clone https://github.com/upmeister/hermes-argus.git
 cd hermes-argus
-bash install.sh
+bash install.sh --channel stable       # also the no-argument default
+# Until a supported stable release is published, explicitly select edge:
+bash install.sh --channel edge
+# Or select an existing supported release/RC tag:
+bash install.sh --version v0.1.0-rc.1   # example, not a published release claim
 ```
 
-`install.sh` installs the current base dependencies, creates `config.env`,
-runs the module-aware deploy, enables the config watcher and performs
-post-deploy checks.
+`install.sh` selects and prints one exact SHA, then executes that tree's
+dependency/config/deploy logic. A release must contain the lifecycle contract;
+older historical trees are not supported downgrade targets. Stable means the
+latest published non-draft, non-prerelease release, never a fallback to main.
+No stable release currently exists: default stable therefore refuses without
+deployment. Selection is per invocation: repeat `--version` when rerunning an
+RC install. The installer creates owner-only `config.env`, then runs the
+module-aware deploy, watcher activation and post-deploy gates.
+
+Updates check installed ownership against the old source before switching
+trees. Local edits, divergent work, collisions, foreign remotes and implicit
+downgrades stop. A supported explicit older `--version` is labelled an
+intentional downgrade; no automatic rollback/data migration is promised.
+Changed runtime artifacts or render values that cannot be matched require
+operator reconciliation. Direct `deploy.sh` remains an explicit manual deploy.
+
+```bash
+bash uninstall.sh           # read-only plan
+bash uninstall.sh --apply   # bounded removal after successful ownership checks
+```
+
+Uninstall uses all declared modules, including previously enabled ones. It
+preserves Hermes base services/running state, private config, state/logs, bot
+venv, heartbeat repositories and shared directories. Only matching Argus
+payloads, units/drop-ins, logrotate copies and the one well-formed managed
+cron block are eligible. Modified/ambiguous artifacts or outside-block
+references stop apply before changes and report retained resources. The
+uncertain full integration checker (DEBT-004) stays. No purge option exists.
 
 This is still a **pre-release installation path**. Argus installs its own
 schedule into one marked crontab block (`# BEGIN HERMES-ARGUS` /
@@ -287,7 +318,7 @@ R1c  Authorization headers out of child argv — DONE
  -> A  Hermes 0.22.5 launch and inventory compatibility — DONE / PR #77
  -> B  existing delivery and evidence correctness — DONE / PR #78
  -> production reconciliation / authorized rollout — DONE / 2026-10-26
- -> C  RR1c/RR1d versioned lifecycle and bounded uninstall — NEXT
+ -> C  RR1c/RR1d versioned lifecycle and bounded uninstall — IMPLEMENTED / review pending
  -> RR2  runtime i18n: English + Russian
  -> RR3  clean install / upgrade / uninstall acceptance
  -> v0.1.0-rc.1

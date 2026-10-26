@@ -6,6 +6,39 @@ the resident Pytna agent through the Peetna MCP, because it has the production
 runtime context. A local SSH/Linux deployment is a fallback for the
 maintainer.
 
+## Contract C lifecycle read-back (implementation/review pending)
+
+These commands require source containing contract C. No C production rollout,
+uninstall, release or test tag is authorized by its implementation PR.
+
+1. Before selection, provide the existing prerequisites `git`, `curl` and
+   `python3`. Other bootstrap packages are handled by the selected installer
+   only after successful source selection; a failed selection does not deploy
+   or install packages. No stable release currently exists, so default stable
+   must refuse. Use explicit edge only when separately authorized; repeat an
+   explicit supported RC tag on every rerun.
+2. Record the printed selected tag/channel/SHA and the installed source SHA.
+   The installer stages target code temporarily, checks each selected existing
+   artifact against the old Git source, then checks out/reexecutes the selected
+   tree once. Read back that checkout and installed payload as below. Dirty or
+   divergent work, collisions, foreign origin, implicit downgrade and unknown
+   ownership must stop without an automatic stash/reset/rollback.
+3. Run `bash uninstall.sh` for a read-only plan; check every exact candidate
+   path and retained resource. All declared modules are inspected independently
+   of current ON/OFF flags. Modified/ambiguous content or executable permissions,
+   a documented legacy watcher, or outside-block references require manual
+   disposition: apply stops before mutations rather than stranding a custom unit.
+4. `bash uninstall.sh --apply` needs its own maintainer authorization. Remove
+   only the single validated cron block, matching exclusively Argus units and
+   files, matching Argus memory drop-ins and policy copies. Read back preserved
+   outside cron bytes, Hermes base-unit hashes/running state, retained private
+   config/auth/state/logs/venvs, heartbeat Git history and external services.
+   Keep the uncertain full checker for DEBT-004; do not remove shared directories.
+5. Confirm units were stopped/disabled only when their matching files were
+   eligible; reload after removals, never restart Hermes as part of uninstall.
+   A second apply is a no-op. Step failures must exit nonzero with partial-state
+   reporting; they are not permission for broad restore, retry or cleanup.
+
 ## Ops receipt — 2026-10-26
 
 **Checkpoint complete.** The maintainer authorized device tests and deployment

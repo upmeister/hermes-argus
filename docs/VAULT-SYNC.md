@@ -209,6 +209,25 @@ merges imported the Argus updates. That unrelated commit/merge history was not
 pushed. Three unrelated dirty files retained their exact before hashes. This
 receipt establishes selected-note equality, not whole-vault history equality.
 
+## 2026-10-26 — contract C implemented, focused review pending
+
+The maintainer started C after the completed Ops checkpoint. Implementation is
+on `feat/restart-c-versioned-lifecycle` from `5551579`: exact stable/edge/tag
+selection, selected-tree bootstrap, old-source ownership checks and a bounded
+uninstall plan/apply. Reviewer remains **Codex**, merge is maintainer-owned.
+No C deployment, uninstall, tag or release was performed. The existing Ops
+runtime source remains `17b3975`; this is source work, not a new rollout.
+
+The project card, canonical release roadmap and backlog index were updated
+through Obsidian MCP and published as server vault commit
+`95c5613972f481eee72e07536bf3dc54ab176a6f`. The commit changes exactly those
+three Argus notes and is pushed to GitHub. MCP read-back matches the intended
+note bodies; the local vault fetched/merged that commit and its selected-note
+diff against `origin/master` is empty. Unrelated local commits and dirty files
+were retained (dirty-file before/after hashes matched), and their history was
+not pushed. As with the Ops receipt, selected-note equality does not imply
+equal whole-vault heads.
+
 ## Future status-update procedure
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.

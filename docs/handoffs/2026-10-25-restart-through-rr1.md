@@ -1,6 +1,6 @@
 # Restart programme through RR1
 
-Status: **A+B merged and deployed; Ops complete; C next, not started**.
+Status: **A+B merged and deployed; Ops complete; C implemented, Codex review pending**.
 The maintainer accepted reconnaissance steps 1–5 on 2026-10-25 and assigned
 architecture/docs-PR preparation to Codex, asking for useful-sized PRs.
 Contracts A/B landed as PR #77/#78. The separately authorized October 26

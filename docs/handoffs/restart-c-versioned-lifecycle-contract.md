@@ -1,6 +1,7 @@
 # C — versioned installation/update and bounded uninstall (RR1c + RR1d)
 
-Status: **next eligible contract; implementation not started**. A+B are merged
+Status: **implemented on `feat/restart-c-versioned-lifecycle`; Codex review pending**.
+Base: `5551579125872fe03e2783a5a13e36bc78ce9615`. No merge/deploy yet. A+B are merged
 and the authorized October 26 [Ops checkpoint](../DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
 is complete at deployed source `17b3975`.
 Authority: [restart programme](2026-10-25-restart-through-rr1.md).
@@ -114,6 +115,24 @@ remain required. Wire the lifecycle smoke checks into existing CI; this is the
 RR1c/d test surface, not completion of RR3's full product acceptance.
 
 ## Receipt, review and stop
+
+Implementation mapping (pending focused review): installer selection/one
+selected-tree reexec lives in `install.sh`; existing `deploy.sh` declarations,
+renderer and cron recognition feed its ownership/uninstall modes;
+`uninstall.sh` is the sole new production entrypoint. No new dependency,
+persisted channel, installed-state format or manifest engine was added.
+Selection needs git/curl/python3 present; remaining package bootstrap runs in
+the selected tree, after selection succeeds. Uninstall conservatively stops
+all apply writes when any candidate/legacy reference is ambiguous. DEBT-004's
+dual-mode full checker is retained even when it matches.
+
+`tests/test_lifecycle.py` maps C1–C8 to local Git release fixtures, stubbed
+metadata and fixture-owned cron/systemd/scheduler paths. It covers old source
+payload/policy upgrade, changed artifacts and execute bits, disabled old modules,
+base-service/foreign-data preservation, legacy schedule adoption, malformed
+blocks and injected checkout/deploy/unit/cron failures. Existing installer
+probes now target the selected-tree bootstrap phase; the new tests exercise
+the full selection/reexec path. CI runs both surfaces.
 
 Receipt includes exact source/target revisions, CLI behavior, ownership table
 mapped to code, C1–C8 outcomes, all retained resources, failure/retry semantics,

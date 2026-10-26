@@ -12,7 +12,7 @@ This replaces the old RR1b active pointer. PR #75 is already merged.
 | A | [Hermes 0.22.5 compatibility](restart-a-hermes-compatibility-contract.md) | **DONE / PR #77**, deployed 2026-10-26 at `17b3975`; Codex GO/PASS on `64eca82b` |
 | B | [Delivery/evidence correctness](restart-b-delivery-evidence-contract.md) | **DONE / PR #78**, deployed 2026-10-26 at `17b3975`; Codex GO/PASS on `d396399` |
 | Ops | [Production checkpoint](../DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26) | **DONE**, separately authorized deploy/read-back of `17b3975`; diagnosed integration failures retained |
-| C | [RR1c/d versioned lifecycle](restart-c-versioned-lifecycle-contract.md) | **NEXT / eligible**: A+B and Ops receipt complete; implementation not started |
+| C | [RR1c/d versioned lifecycle](restart-c-versioned-lifecycle-contract.md) | **IMPLEMENTED / Codex review pending** on `feat/restart-c-versioned-lifecycle`, base `5551579`; no merge/deploy yet |
 
 Builder: maintainer-assigned coder. Focused reviewer: **Codex**.
 Implementation risk: A/B medium, C high; **maintainer merge after PASS**.
