@@ -9,10 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Planning
 
+- Closed the A/B/C source programme at merged PR #79; C remains not deployed.
+  Selected one follow-up contract for managed-runtime capability, gateway
+  observation errors, truthful network rollback reporting and a rehearsed
+  manual update-recovery recipe. Tests run locally on Ubuntu 24.04 in WSL or
+  VMware first; a possible production trial remains separately authorized.
+  Recorded the independent assessment and corrected A's accepted launch design.
+  These follow-up fixes are planned, not shipped by this documentation change.
+
 - Deployed the merged RR1a/RR1b and restart A/B source at `17b3975` on
   2026-10-26 after maintainer authorization. Read-back confirms payload,
   preserved operator cron, explicit network guard, log rotation and live bot
-  services. The Ops checkpoint is complete; C is next. Catalog failures were
+  services. The Ops checkpoint is complete; C subsequently merged without a
+  deployment. Catalog failures were
   diagnosed; one 401 remains, while a prior 404 check left the plan after a
   concurrent Hermes config update. The bundled registry needs a separate refresh;
   this is not an all-green integration or notification-delivery claim.
@@ -27,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Version-selected installation/update and a bounded uninstall (restart C,
-  implemented in PR #79; maintainer gate pending, Codex receipt in PR).
+  merged in PR #79; not deployed, Codex receipt in PR).
   `install.sh` defaults to a published
   stable release, or accepts explicit edge/tag selection, prints its SHA and
   executes selected-tree logic. Missing/invalid selections never fall back.

@@ -42,10 +42,14 @@ source ordering. No dependency or new persistent state format is admitted.
 - Bind to the configured installation root (`HERMES_DIR/hermes-agent`), not
   an arbitrary `hermes` on PATH. Prefer that root's `.hermes/bin/hermes` when
   published. CLI invocations go through it. For existing Python-script
-  consumers use its `--print-runtime-command --module runpy -- <script>`
-  boundary, parse the returned argv list, then execute it without a shell.
-  Confirm actual v0.22.5 argv behavior in the Linux rehearsal. Resolve at each
-  launch; never persist a versioned interpreter or dependency-generation path.
+  consumers use `--print-runtime-command` to resolve the interpreter on every
+  launch, then activate `hermes_bootstrap` and execute the file with
+  `runpy.run_path`, without a shell. This is the accepted implementation
+  refinement documented in PR #77: the real v0.22.5 rehearsal showed that the
+  original `--module runpy -- <script>` prescription treats a path as a module
+  name. Do not restore that superseded form. Never persist a versioned
+  interpreter or dependency-generation path. The later managed capability
+  defect (DEBT-030) is owned by the new readiness contract, not this closed PR.
 - An absent published launcher may use the existing in-tree venv convention
   for the legacy layout. A present but unusable published launcher is an
   explicit failure, not permission to pick stale dependencies. Preserve

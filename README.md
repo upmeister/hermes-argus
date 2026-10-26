@@ -18,14 +18,16 @@ trying to become a second Hermes runtime.
 > path targets a GitHub `v0.1.0-rc.1` after the remaining security,
 > fail-safe, installer and localization gates are closed.
 
-Current source includes RR1a, both RR1b slices and restart A/B (through PR #78). The
-[selected restart programme](docs/handoffs/2026-10-25-restart-through-rr1.md)
-now covers Hermes 0.22.5 compatibility, delivery/evidence fixes and RR1c/RR1d.
+Current source includes RR1a, both RR1b slices and restart A/B/C (through PR #79).
+The [restart programme](docs/handoffs/2026-10-25-restart-through-rr1.md)
+is source-complete. The next selected task is
+[readiness and observation correctness](docs/handoffs/readiness-observation-correctness-contract.md),
+with local Ubuntu 24.04 WSL/VMware tests before any separately authorized trial.
 Hermes v0.22.5 is the accepted stable authority. The separately authorized
 October 26 [Ops receipt](docs/DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
-records deployment of `17b3975`; C is implemented in
-[PR #79](https://github.com/upmeister/hermes-argus/pull/79), pending the maintainer
-gate (Codex review receipt in that PR). One catalog authorization failure
+records deployment of `17b3975`; C is merged in
+[PR #79](https://github.com/upmeister/hermes-argus/pull/79), **not deployed**.
+One catalog authorization failure
 remains, and notification delivery has not been tested by this rollout.
 
 ## Why this exists
@@ -321,7 +323,9 @@ R1c  Authorization headers out of child argv — DONE
  -> A  Hermes 0.22.5 launch and inventory compatibility — DONE / PR #77
  -> B  existing delivery and evidence correctness — DONE / PR #78
  -> production reconciliation / authorized rollout — DONE / 2026-10-26
- -> C  RR1c/RR1d versioned lifecycle and bounded uninstall — IMPLEMENTED / maintainer gate pending
+ -> C  RR1c/RR1d versioned lifecycle and bounded uninstall — DONE / PR #79; not deployed
+ -> readiness/observation correctness — SELECTED
+ -> C rollout / public operating setup — later, separately authorized
  -> RR2  runtime i18n: English + Russian
  -> RR3  clean install / upgrade / uninstall acceptance
  -> v0.1.0-rc.1

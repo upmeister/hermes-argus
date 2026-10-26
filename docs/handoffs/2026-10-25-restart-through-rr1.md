@@ -1,7 +1,11 @@
 # Restart programme through RR1
 
-Status: **A+B merged and deployed; Ops complete; C implemented in PR #79,
-maintainer gate pending; Codex review receipt in that PR**.
+Status: **COMPLETE IN SOURCE / STOP reached**. A+B are deployed and Ops is
+complete. C merged as PR #79 (`fd947a0`, 2026-10-26; reviewed head `76a48db`)
+and is **not deployed**. Historical sequencing/role instructions below record
+this completed programme. The separately selected
+[readiness/observation contract](readiness-observation-correctness-contract.md)
+owns the next task; it does not reopen A/B/C or admit RR2/RR3.
 The maintainer accepted reconnaissance steps 1–5 on 2026-10-25 and assigned
 architecture/docs-PR preparation to Codex, asking for useful-sized PRs.
 Contracts A/B landed as PR #77/#78. The separately authorized October 26
@@ -104,7 +108,10 @@ account/setup automation, L3 job creation, new heartbeat backend semantics,
 OAuth health, multi-profile coverage, plugin inventory expansion, OTLP backend,
 gateway-liveness redesign, network policy changes and unrelated cleanup.
 
-## Assignment text
+## Historical assignment text — programme complete
+
+These prompts record the completed A/B/C assignments. Use the new
+readiness/observation contract for current work, not the prompts below.
 
 Builder: "Implement contract A (then B/C only after their start gates), using
 this merged programme as authority. Refresh origin/main, record the base SHA,

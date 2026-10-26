@@ -60,7 +60,9 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> A Hermes 0.22.5 compatibility        DONE / PR #77
  -> B delivery/evidence correctness        DONE / PR #78
  -> production reconciliation / authorized rollout    DONE / 2026-10-26
- -> C RR1c + RR1d versioned lifecycle            IMPLEMENTED / maintainer gate pending
+ -> C RR1c + RR1d versioned lifecycle            DONE / PR #79; not deployed
+ -> readiness / observation correctness         SELECTED, local Linux first
+ -> C rollout and public operating setup        LATER / separate authorization
  -> RR2 runtime i18n (English + Russian)
  -> RR3 clean-install/upgrade/uninstall acceptance
  -> v0.1.0-rc.1
@@ -216,11 +218,26 @@ The maintainer-selected sequence is:
    earlier 404 is no longer planned after a config update (not recovered),
    and registry refresh is recorded separately.
 6. **C — RR1c/RR1d combined**, versioned install/update and bounded uninstall.
-   Implemented in PR #79 from `5551579`, pending the maintainer gate; the Codex
-   review receipt is in the PR. The installer selects exact stable/edge/tag
+   Merged in PR #79 at `fd947a0` from `5551579`; Codex GO/PASS on `76a48db`.
+   The installer selects exact stable/edge/tag
    source and checks old rendered ownership before switching; uninstall plans
    first and retains ambiguous/external resources. No C deployment occurred.
-   Its authorized merge is the selected programme's stopping point.
+   The earlier programme has reached its stopping point.
+
+### Selected follow-up — readiness and observation correctness
+
+The maintainer accepted the [independent assessment](research/2026-10-26-programme-review-and-next-plan.md)
+and selected its first task on 2026-10-26. The
+[single implementation contract](handoffs/readiness-observation-correctness-contract.md)
+covers DEBT-030 managed capability, DEBT-028 process observations/caller evidence,
+DEBT-022 rollback truth and DEBT-031 manual recovery documentation/rehearsal.
+It does not reopen C implementation or authorize its deployment.
+
+Local WSL/VMware on supported Ubuntu 24.04 precedes any production trial;
+failure injections and uninstall stay local. A concrete exact-SHA production
+plan may follow passing local/CI evidence, with separate maintainer authorization.
+Later direction remains C rollout, public operating setup, RR2 and RR3/RC;
+those implementation scopes are not admitted by this first-task contract.
 
 Netdata, operator proxy infrastructure, Telegram/Discord accounts, external
 heartbeat policy and the Hermes L3 job have independent setup owners. The
@@ -238,12 +255,13 @@ for Analyzer trends, not the source of native watchdog resource metrics.
 quick-check/UI optionality assumptions in source; [DEBT-007](BACKLOG.md#debt-007)
 has deployment read-back in the October 26 Ops receipt.
 
-### Restart scope selected on 2026-10-25
+### Completed restart scope selected on 2026-10-25
 
-The [programme](handoffs/2026-10-25-restart-through-rr1.md) owns the next
-three implementation contracts and their sequencing. The old RR1b task pointer
-is closed. Public setup, L3 recipe, RR2 and RR3 remain later; no public release
-or production operation is authorized by this documentation decision.
+The [programme](handoffs/2026-10-25-restart-through-rr1.md) records the completed
+A/B/C contracts and their historical sequencing. The old RR1b and A/B/C task
+pointers are closed; the readiness/observation contract above is current.
+Public setup, L3 recipe, RR2 and RR3 remain later; no public release or production
+operation is authorized by this documentation decision.
 
 Native Cronping Telegram through the provider bot remains selected, without
 an Argus receiver or external-VPS prerequisite. Setup/delivery verification
@@ -303,7 +321,8 @@ RR0c: closed (PR #65); maintainer reports deployment
 RR1: current distribution gate; RR1a closed (PR #68)
 RR1b module/runtime truth: merged PR #71; deployed/read back 2026-10-26
 RR1b host readiness: merged PR #75; deployed/read back 2026-10-26
-selected programme: A+B+Ops complete -> C (RR1c/d) maintainer gate pending, then stop
+restart programme: A+B+Ops+C source complete; C not deployed; STOP reached
+current selected task: readiness/observation correctness and manual recovery recipe
 distribution contract: incomplete
 public RC: gated by RR1/RR2/RR3
 ```

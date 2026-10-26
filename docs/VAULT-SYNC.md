@@ -228,7 +228,7 @@ were retained (dirty-file before/after hashes matched), and their history was
 not pushed. As with the Ops receipt, selected-note equality does not imply
 equal whole-vault heads.
 
-## 2026-10-26 — C6 review remediation, maintainer gate pending
+## Historical 2026-10-26 — C6 remediation before the maintainer merge
 
 Codex reviewed exact C head `9ee3531` (PR #79) and returned REMEDIATE for one
 P1/C6 blocker: uninstall removed an adapter referenced by preserved Hermes
@@ -245,6 +245,34 @@ to GitHub. MCP read-back matches intended bodies; the local vault fetched and
 merged it, and its three-note diff against `origin/master` is empty. Unrelated
 local commits and dirty content were retained without publication; tracked
 dirty-file hashes matched before/after. Whole-vault heads need not be equal.
+
+## 2026-10-26 — readiness/observation contract selected
+
+PR #79 merged at `fd947a0`; C is source-complete and not deployed, and the
+A/B/C programme reached STOP. The maintainer accepted the independent review
+and selected its first follow-up: DEBT-030/028/022 plus the DEBT-031 manual
+recovery recipe, in one implementation PR. Local Ubuntu 24.04 WSL/VMware comes
+first; any final production trial needs its own exact-SHA/action authorization.
+
+This docs candidate corrects the repository's stale C pointers, records A's
+accepted bootstrap/run_path refinement and links the new selected contract.
+The project card, canonical roadmap and backlog index were published as vault
+commit `2a3c0fd529761c7d7ea316f0a1a2c70a988cc1f2`, linking
+[docs PR #80](https://github.com/upmeister/hermes-argus/pull/80). GitHub's commit
+API confirms exactly those three changed notes. Before editing, their local
+and MCP bodies matched; the real local vault had been fast-forwarded through
+the earlier audit-backlog publication. Unrelated local project edits were
+excluded from the commit and left untouched.
+
+The clean server vault was fast-forwarded to that exact publication after
+checking the delta contained only the three selected paths. Local/GitHub/server
+heads agreed for this publication, and MCP read-back matched the intended
+normalized bodies with `updated: 2026-10-26`. The notes name C as merged/not
+deployed, the old programme as complete and the new correctness contract as
+selected but not implemented; PR #80 is still open at this receipt.
+
+The earlier sections above are dated history, not current task pointers. This
+verifies the selected notes, not the whole vault or any runtime deployment.
 
 ## Future status-update procedure
 

@@ -1,8 +1,9 @@
 # C — versioned installation/update and bounded uninstall (RR1c + RR1d)
 
-Status: **implemented in PR #79 on `feat/restart-c-versioned-lifecycle`;
-maintainer gate pending; Codex focused-review receipt in the PR**.
-Base: `5551579125872fe03e2783a5a13e36bc78ce9615`. No merge/deploy yet. A+B are merged
+Status: **DONE IN SOURCE / PR #79 merged 2026-10-26**, merge commit
+`fd947a06bccc8af60a9ad90f3515c7d91d9b2ed3`; Codex GO/PASS on exact head
+`76a48dbf30165478721a3b3452698020edb03652`. **C is not deployed**.
+Base: `5551579125872fe03e2783a5a13e36bc78ce9615`. A+B are merged
 and the authorized October 26 [Ops checkpoint](../DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
 is complete at deployed source `17b3975`.
 Authority: [restart programme](2026-10-25-restart-through-rr1.md).
@@ -146,8 +147,9 @@ and source/deployment status. Reviewer attacks version-selection fallbacks,
 old-installer/new-tree execution, custom-file clobbering, lost cron environment,
 Hermes service ownership and misleading cleanup success. One remediation.
 
-On merge mark RR1c/d source complete with evidence; report deployment separately
-and **stop the selected programme**. RR2, public setup work and RR3 remain later.
+RR1c/d are source-complete and the programme has stopped. Deployment remains
+separate. The new readiness/observation contract owns only its selected local
+follow-up and recovery recipe; RR2, public setup work and RR3 remain later.
 If safe ownership needs an install-state format, broad migration machinery,
 another production entrypoint or a larger architecture, return a concrete
 scope/value blocker rather than silently widening this contract.
