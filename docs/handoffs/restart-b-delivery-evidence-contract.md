@@ -7,7 +7,10 @@ remediation; merge commit `e16ec0b`). Base:
 merge). Production risk: **medium** (existing delivery paths and operator
 verdicts).
 Merge authority: **maintainer after Codex PASS**. Reviewer: **Codex**.
-One PR, three local fixes; no deployment or live notification tests.
+One PR, three local fixes; the implementation PR performed no deployment or
+live notification tests. The separately authorized October 26
+[Ops receipt](../DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26) records deployment
+and bounded host checks at `17b3975`, without a notification send test.
 
 ## Problem -> evidence -> smallest patch
 
@@ -61,7 +64,8 @@ Boundary examples, evaluated at a fixed clock:
 
 The accepted plan included a diagnosis of two production failed checks.
 Track that separately under [DEBT-027](../BACKLOG.md#debt-027) and the Ops
-checkpoint. Their unknown cause does not authorize unrelated fixes in B.
+checkpoint. Causes/disposition are now recorded there; they do not authorize
+unrelated fixes in B.
 
 ## Verification and handoff
 

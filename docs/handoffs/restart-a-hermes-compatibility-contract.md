@@ -6,13 +6,14 @@ reviewed head `64eca82b905476d8739efa566fa77a3dda376a23`). Base:
 [programme docs PR](2026-10-25-restart-through-rr1.md) merged). One
 implementation PR covered both compatibility defects; this is not a general
 Hermes compatibility layer. With the maintainer merge, `v0.22.5 / bf0203a`
-is the accepted stable authority (see `AGENTS.md`); production convergence
-remains unverified and belongs to the separately authorized Ops checkpoint.
+is the accepted stable authority (see `AGENTS.md`); the separately authorized
+October 26 [Ops receipt](../DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
+records production deployment/read-back at `17b3975`.
 Production risk: **medium** (launch paths and discovery identity).
 Merge authority: **maintainer after Codex PASS** (used: one implementation
 pass, one REMEDIATE remediation, one maintainer-authorized targeted fix for
 the dashboard-unit root pin, final GO/PASS-TO-MAINTAINER). Reviewer:
-**Codex**. No deployment is authorized.
+**Codex**. This implementation contract itself did not authorize deployment.
 
 ## Problem -> evidence -> smallest patch
 

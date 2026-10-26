@@ -18,10 +18,13 @@ trying to become a second Hermes runtime.
 > path targets a GitHub `v0.1.0-rc.1` after the remaining security,
 > fail-safe, installer and localization gates are closed.
 
-Current source includes RR1a and both RR1b slices (through PR #75). The
+Current source includes RR1a, both RR1b slices and restart A/B (through PR #78). The
 [selected restart programme](docs/handoffs/2026-10-25-restart-through-rr1.md)
 now covers Hermes 0.22.5 compatibility, delivery/evidence fixes and RR1c/RR1d.
-Production convergence and compatibility promotion remain separately verified.
+Hermes v0.22.5 is the accepted stable authority. The separately authorized
+October 26 [Ops receipt](docs/DEPLOY_CHECKLIST.md#ops-receipt--2026-10-26)
+records deployment of `17b3975`; C is next. One catalog authorization failure
+remains, and notification delivery has not been tested by this rollout.
 
 ## Why this exists
 
@@ -255,7 +258,7 @@ drift.
 
 Current supported research baseline:
 
-- Hermes Agent v0.21.5 / `v2026.9.24`;
+- Hermes Agent v0.22.5 / `bf0203a` (accepted by PR #77);
 - Linux/systemd-oriented personal-server deployment;
 - Ubuntu 24.04 is the current installer test target.
 
@@ -281,10 +284,10 @@ R1c  Authorization headers out of child argv — DONE
  -> RR0c  public defaults/naming migration — DONE / PR #65
  -> RR1a  managed cron ownership — DONE / PR #68
  -> RR1b  module/runtime truth DONE / PR #71; host readiness DONE / PR #75
- -> A  Hermes 0.22.5 launch and inventory compatibility
- -> B  existing delivery and evidence correctness
- -> production reconciliation / separately authorized rollout
- -> C  RR1c/RR1d versioned lifecycle and bounded uninstall
+ -> A  Hermes 0.22.5 launch and inventory compatibility — DONE / PR #77
+ -> B  existing delivery and evidence correctness — DONE / PR #78
+ -> production reconciliation / authorized rollout — DONE / 2026-10-26
+ -> C  RR1c/RR1d versioned lifecycle and bounded uninstall — NEXT
  -> RR2  runtime i18n: English + Russian
  -> RR3  clean install / upgrade / uninstall acceptance
  -> v0.1.0-rc.1
