@@ -8303,7 +8303,8 @@ def probe_b1_heartbeat_stdin(tmp: Path):
     ok = (r.returncode == 0
           and _B_CRON not in argv and _B_DMS not in argv
           and _B_CRON not in log_text and _B_DMS not in log_text
-          and _B_CRON not in r.stdout and _B_DMS not in r.stderr
+          and _B_CRON not in r.stdout and _B_CRON not in r.stderr
+          and _B_DMS not in r.stdout and _B_DMS not in r.stderr
           and f"url = https://ping.cronping.com/{_B_CRON}" in stdin
           and f"url = https://nosnch.in/{_B_DMS}" in stdin
           and "-K" in argv and "-m 10" in argv and "-X" not in argv)
@@ -8318,10 +8319,15 @@ def probe_b1_heartbeat_stdin(tmp: Path):
         "fail", f"CRONPING_TOKEN={_B_CRON}\nDMS_SNITCH={_B_DMS}\n", "exit 7\n")
     log = (home / ".hermes" / "logs" / "heartbeat.log")
     log_text = log.read_text(encoding="utf-8") if log.exists() else ""
-    if not (r.returncode == 0
-            and "cronping ping FAILED" in log_text and "dms ping FAILED" in log_text
-            and _B_CRON not in argv and _B_DMS not in argv):
-        problems.append(f"fail: rc={r.returncode} log={log_text[-160:]!r}")
+    out_channels = r.stdout + r.stderr
+    ok = (r.returncode == 0
+          and "cronping ping FAILED" in log_text and "dms ping FAILED" in log_text
+          and _B_CRON not in argv and _B_DMS not in argv
+          and _B_CRON not in log_text and _B_DMS not in log_text
+          and _B_CRON not in out_channels and _B_DMS not in out_channels)
+    if not ok:
+        problems.append(f"fail: rc={r.returncode} log={log_text[-160:]!r} "
+                        f"out={out_channels[:80]!r}")
 
     # 3. Выбор бэкендов: без токенов — ни одного curl-вызова; DMS=change_me —
     #    только cronping.
@@ -8341,16 +8347,31 @@ def probe_b2_proxy_senders(tmp: Path):
     """B2/B3 (DEBT-013): настроенный TELEGRAM_PROXY из .env доходит до
     alert/recovery отправок liveness-сендеров и еженедельного отчёта при
     cron-пустом окружении; без proxy — прямой режим; кавычки снимаются по
-    конвенции RR0c; канарейки токена не появляются в argv."""
+    конвенции RR0c. Канарейка токена отсутствует в argv/stdout/stderr/логах
+    И на успехе, И на отказе отправки (curl != 0)."""
     problems = []
     sys_exe = sys.executable
 
     def systemd_shim(shim: Path) -> None:
-        # LoadState → not-found (нейтральные строки сервисов), is-active → active,
-        # restart — успех.
         _write_argv_shim(shim, "systemctl",
                          'case "$3" in LoadState) echo not-found; exit 0;; esac\n'
                          'case "$*" in *is-active*) echo active;; *) : ;; esac\nexit 0\n')
+
+    def curl_shim(shim: Path, argv_log: Path, stdin_log: Path,
+                  fail_send: bool = False, dash_probe: str | None = None,
+                  tag: str = "") -> None:
+        # Send-вызов имеет -K в argv; опциональный отказ не трогает счётчик probe.
+        body = 'case "$*" in *-K*) exit 7;; esac\n' if fail_send else ""
+        if dash_probe == "stateful":
+            body += (f'cnt_file="{tmp.as_posix()}/dash-curl-{tag}.count"\n'
+                     'cnt=$(cat "$cnt_file" 2>/dev/null || echo 0)\n'
+                     'cnt=$((cnt + 1)); echo "$cnt" > "$cnt_file"\n'
+                     'if [ "$cnt" -le 3 ]; then exit 0; fi\n'
+                     'echo "200"\n')
+        elif dash_probe == "ok":
+            body += 'echo "200"\n'
+        body += "exit 0\n"
+        _b_curl_capture_shim(shim, argv_log, stdin_log, body)
 
     def gateway_env(home: Path, fresh: bool, state: bool) -> None:
         hermes = home / ".hermes"
@@ -8365,166 +8386,182 @@ def probe_b2_proxy_senders(tmp: Path):
         if state:
             write(hermes / "state" / "gateway-liveness.alerted", "fixture\n")
 
-    # 1. Gateway ALERT: cron-пустое окружение, proxy из .env, matcher жив.
-    home = tmp / "b2-gw-alert-home"
-    shim = tmp / "b2-gw-alert-shim"
-    shim.mkdir(parents=True, exist_ok=True)
-    argv_log = tmp / "b2-gw-alert-argv.log"
-    stdin_log = tmp / "b2-gw-alert-stdin.log"
-    _write_argv_shim(shim, "python3",
-                     f'case "$*" in *hermes-gateway-pids*) echo 111 222; exit 0;; esac\n'
-                     f'exec "{sys_exe}" "$@"\n')
-    _b_curl_capture_shim(shim, argv_log, stdin_log)
-    systemd_shim(shim)
-    _write_argv_shim(shim, "crontab", "exit 0\n")
-    gateway_env(home, fresh=False, state=False)
-    write(home / ".hermes" / ".env",
-          f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n"
-          f"TELEGRAM_PROXY={_B_PROXY}\n")
-    script = _b_render_script(tmp, "b2-gw-alert", {
-        "_NAME": "gateway-liveness.sh", "@WATCHDOG_CHAT_ID@": _B_CHAT})
-    env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
-                                + os.environ.get("PATH", "")})
-    # DRY_RUN не используем: он выходит ДО отправки; restart перехватывает shim.
-    r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(), env=env,
-                       capture_output=True, text=True, timeout=120)
-    argv = argv_log.read_text(encoding="utf-8") if argv_log.exists() else ""
-    stdin = stdin_log.read_text(encoding="utf-8") if stdin_log.exists() else ""
-    x_arg = _b_x_arg(argv, _B_CHAT)
-    if not (r.returncode == 0 and _B_TOKEN not in argv
-            and _B_TOKEN in stdin and x_arg == _B_PROXY
-            and "завис" in r.stdout):
-        problems.append(f"gw-alert: rc={r.returncode} x_arg={x_arg!r} "
-                        f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:60]!r}")
+    def prepare(tag: str) -> tuple:
+        home = tmp / f"b2-{tag}-home"
+        shim = tmp / f"b2-{tag}-shim"
+        shim.mkdir(parents=True, exist_ok=True)
+        return home, shim
 
-    # 2. Gateway RECOVERY: свежий housekeeping + файл дедупа → тихая отправка.
-    home = tmp / "b2-gw-rec-home"
-    shim = tmp / "b2-gw-rec-shim"
-    shim.mkdir(parents=True, exist_ok=True)
-    argv_log = tmp / "b2-gw-rec-argv.log"
-    stdin_log = tmp / "b2-gw-rec-stdin.log"
-    _write_argv_shim(shim, "python3",
-                     f'case "$*" in *hermes-gateway-pids*) echo 111 222; exit 0;; esac\n'
-                     f'exec "{sys_exe}" "$@"\n')
-    _b_curl_capture_shim(shim, argv_log, stdin_log)
-    gateway_env(home, fresh=True, state=True)
-    # Кавычки в .env: конвенция RR0c — снимаются (окружение cron-пустое,
-    # поэтому значение берётся из .env).
-    write(home / ".hermes" / ".env",
-          f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n"
-          f'TELEGRAM_PROXY="{_B_PROXY}"\n')
-    script = _b_render_script(tmp, "b2-gw-rec", {
-        "_NAME": "gateway-liveness.sh", "@WATCHDOG_CHAT_ID@": _B_CHAT})
-    env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
-                                + os.environ.get("PATH", "")})
-    r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(), env=env,
-                       capture_output=True, text=True, timeout=60)
-    argv = argv_log.read_text(encoding="utf-8") if argv_log.exists() else ""
-    stdin = stdin_log.read_text(encoding="utf-8") if stdin_log.exists() else ""
-    x_arg = _b_x_arg(argv, _B_CHAT)
-    if not (r.returncode == 0 and "восстановился" in r.stdout
-            and _B_TOKEN not in argv and _B_TOKEN in stdin
-            and x_arg == _B_PROXY):
-        problems.append(f"gw-rec: rc={r.returncode} x_arg={x_arg!r} "
-                        f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:60]!r}")
+    def read_logs(argv_log: Path, stdin_log: Path) -> tuple:
+        argv = argv_log.read_text(encoding="utf-8") if argv_log.exists() else ""
+        stdin = stdin_log.read_text(encoding="utf-8") if stdin_log.exists() else ""
+        return argv, stdin
+
+    def assert_no_canary(tag: str, r, argv: str, log_home: Path, log_name: str) -> None:
+        log = log_home / log_name
+        log_text = log.read_text(encoding="utf-8") if log.exists() else ""
+        if _B_TOKEN in (r.stdout + r.stderr + log_text + argv):
+            problems.append(f"{tag}: канарейка токена в канале вывода/лога")
+
+    proxy_env = (f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n"
+                 f"TELEGRAM_PROXY={_B_PROXY}\n")
+    quoted_env = (f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n"
+                  f'TELEGRAM_PROXY="{_B_PROXY}"\n')
+    direct_env = f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n"
+
+    # 1. Gateway ALERT: cron-пустое окружение, proxy из .env; matcher жив.
+    for fail_send in (False, True):
+        tag = f"gw-alert{'-fail' if fail_send else ''}"
+        home, shim = prepare(tag)
+        argv_log = tmp / f"b2-{tag}-argv.log"
+        stdin_log = tmp / f"b2-{tag}-stdin.log"
+        _write_argv_shim(shim, "python3",
+                         'case "$*" in *hermes-gateway-pids*) echo 111 222; '
+                         f'exit 0;; esac\nexec "{sys_exe}" "$@"\n')
+        curl_shim(shim, argv_log, stdin_log, fail_send=fail_send)
+        systemd_shim(shim)
+        _write_argv_shim(shim, "crontab", "exit 0\n")
+        gateway_env(home, fresh=False, state=False)
+        write(home / ".hermes" / ".env", proxy_env)
+        script = _b_render_script(tmp, f"b2-{tag}", {
+            "_NAME": "gateway-liveness.sh", "@WATCHDOG_CHAT_ID@": _B_CHAT})
+        env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                    + os.environ.get("PATH", "")})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=env, capture_output=True, text=True, timeout=120)
+        argv, stdin = read_logs(argv_log, stdin_log)
+        x_arg = _b_x_arg(argv, _B_CHAT)
+        ok = (r.returncode == 0 and _B_TOKEN not in argv
+              and _B_TOKEN in stdin and x_arg == _B_PROXY
+              and "завис" in r.stdout)
+        if not ok:
+            problems.append(f"{tag}: rc={r.returncode} x_arg={x_arg!r} "
+                            f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:50]!r}")
+        assert_no_canary(tag, r, argv, home / ".hermes" / "logs",
+                         "gateway-liveness.log")
+
+    # 2. Gateway RECOVERY: свежий housekeeping + файл дедупа; кавычки в .env.
+    for fail_send in (False, True):
+        tag = f"gw-rec{'-fail' if fail_send else ''}"
+        home, shim = prepare(tag)
+        argv_log = tmp / f"b2-{tag}-argv.log"
+        stdin_log = tmp / f"b2-{tag}-stdin.log"
+        _write_argv_shim(shim, "python3",
+                         'case "$*" in *hermes-gateway-pids*) echo 111 222; '
+                         f'exit 0;; esac\nexec "{sys_exe}" "$@"\n')
+        curl_shim(shim, argv_log, stdin_log, fail_send=fail_send)
+        gateway_env(home, fresh=True, state=True)
+        write(home / ".hermes" / ".env", quoted_env)
+        script = _b_render_script(tmp, f"b2-{tag}", {
+            "_NAME": "gateway-liveness.sh", "@WATCHDOG_CHAT_ID@": _B_CHAT})
+        env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                    + os.environ.get("PATH", "")})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=env, capture_output=True, text=True, timeout=60)
+        argv, stdin = read_logs(argv_log, stdin_log)
+        x_arg = _b_x_arg(argv, _B_CHAT)
+        ok = (r.returncode == 0 and "восстановился" in r.stdout
+              and _B_TOKEN not in argv and _B_TOKEN in stdin
+              and x_arg == _B_PROXY)
+        if not ok:
+            problems.append(f"{tag}: rc={r.returncode} x_arg={x_arg!r} "
+                            f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:50]!r}")
+        assert_no_canary(tag, r, argv, home / ".hermes" / "logs",
+                         "gateway-liveness.log")
 
     # 3. Dashboard ALERT: proxy НЕ настроен → прямой режим (-x с пустым
-    #    значением), токен по-прежнему только в stdin.
-    home = tmp / "b2-dash-alert-home"
-    shim = tmp / "b2-dash-alert-shim"
-    shim.mkdir(parents=True, exist_ok=True)
-    argv_log = tmp / "b2-dash-alert-argv.log"
-    stdin_log = tmp / "b2-dash-alert-stdin.log"
-    # curl: первые три зондирования 000, после «рестарта» — 200.
-    _write_argv_shim(shim, "curl",
-                     f'printf \'%s\\n\' "$*" >> "{argv_log.as_posix()}"\n'
-                     f'{{ echo "--CALL--"; cat; }} >> "{stdin_log.as_posix()}"\n'
-                     f'cnt_file="{tmp.as_posix()}/b2-dash-curl.count"\n'
-                     'cnt=$(cat "$cnt_file" 2>/dev/null || echo 0)\n'
-                     'cnt=$((cnt + 1)); echo "$cnt" > "$cnt_file"\n'
-                     'if [ "$cnt" -le 3 ]; then exit 0; fi\n'
-                     'echo "200"\nexit 0\n')
-    _write_argv_shim(shim, "ss", "echo 'LISTEN 0 511 127.0.0.1:9119 0.0.0.0:*'\nexit 0\n")
-    systemd_shim(shim)
-    (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
-    (home / ".hermes" / "state").mkdir(parents=True, exist_ok=True)
-    write(home / ".hermes" / ".env",
-          f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n")
-    script = _b_render_script(tmp, "b2-dash-alert", {
-        "_NAME": "dashboard-liveness.sh", "@HERMES_HOST@": "127.0.0.1",
-        "@HERMES_PORT@": "9119", "@WATCHDOG_CHAT_ID@": _B_CHAT})
-    env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
-                                + os.environ.get("PATH", "")})
-    r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(), env=env,
-                       capture_output=True, text=True, timeout=120)
-    argv = argv_log.read_text(encoding="utf-8") if argv_log.exists() else ""
-    stdin = stdin_log.read_text(encoding="utf-8") if stdin_log.exists() else ""
-    x_arg = _b_x_arg(argv, _B_CHAT)
-    # Прямой режим: значение после -x пустое (curl -x "" == direct).
-    if not (r.returncode == 0 and _B_TOKEN not in argv and _B_TOKEN in stdin
-            and x_arg == "" and _B_PROXY not in argv):
-        problems.append(f"dash-alert: rc={r.returncode} x_arg={x_arg!r} "
-                        f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:60]!r}")
+    #    значением); stateful curl: три зонда 000, после рестарта 200.
+    for fail_send in (False, True):
+        tag = f"dash-alert{'-fail' if fail_send else ''}"
+        home, shim = prepare(tag)
+        argv_log = tmp / f"b2-{tag}-argv.log"
+        stdin_log = tmp / f"b2-{tag}-stdin.log"
+        curl_shim(shim, argv_log, stdin_log, fail_send=fail_send,
+                  dash_probe="stateful", tag=tag)
+        _write_argv_shim(shim, "ss",
+                         "echo 'LISTEN 0 511 127.0.0.1:9119 0.0.0.0:*'\nexit 0\n")
+        systemd_shim(shim)
+        (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
+        (home / ".hermes" / "state").mkdir(parents=True, exist_ok=True)
+        write(home / ".hermes" / ".env", direct_env)
+        script = _b_render_script(tmp, f"b2-{tag}", {
+            "_NAME": "dashboard-liveness.sh", "@HERMES_HOST@": "127.0.0.1",
+            "@HERMES_PORT@": "9119", "@WATCHDOG_CHAT_ID@": _B_CHAT})
+        env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                    + os.environ.get("PATH", "")})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=env, capture_output=True, text=True, timeout=120)
+        argv, stdin = read_logs(argv_log, stdin_log)
+        x_arg = _b_x_arg(argv, _B_CHAT)
+        ok = (r.returncode == 0 and _B_TOKEN not in argv and _B_TOKEN in stdin
+              and x_arg == "" and _B_PROXY not in argv and "завис" in r.stdout)
+        if not ok:
+            problems.append(f"{tag}: rc={r.returncode} x_arg={x_arg!r} "
+                            f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:50]!r}")
+        assert_no_canary(tag, r, argv, home / ".hermes" / "logs",
+                         "dashboard-liveness.log")
 
     # 4. Dashboard RECOVERY с кавычками в .env — значение снимается.
-    home = tmp / "b2-dash-rec-home"
-    shim = tmp / "b2-dash-rec-shim"
-    shim.mkdir(parents=True, exist_ok=True)
-    argv_log = tmp / "b2-dash-rec-argv.log"
-    stdin_log = tmp / "b2-dash-rec-stdin.log"
-    # curl-зонд отвечает 200 (здоров) → recovery-ветка без рестарта и циклов.
-    _b_curl_capture_shim(shim, argv_log, stdin_log, 'echo "200"\nexit 0\n')
-    _write_argv_shim(shim, "ss", "echo 'LISTEN 0 511 127.0.0.1:9119 0.0.0.0:*'\nexit 0\n")
-    (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
-    (home / ".hermes" / "state").mkdir(parents=True, exist_ok=True)
-    write(home / ".hermes" / "state" / "dashboard-liveness.alerted", "fixture\n")
-    write(home / ".hermes" / ".env",
-          f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n"
-          f'TELEGRAM_PROXY="{_B_PROXY}"\n')
-    script = _b_render_script(tmp, "b2-dash-rec", {
-        "_NAME": "dashboard-liveness.sh", "@HERMES_HOST@": "127.0.0.1",
-        "@HERMES_PORT@": "9119", "@WATCHDOG_CHAT_ID@": _B_CHAT})
-    env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
-                                + os.environ.get("PATH", "")})
-    r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(), env=env,
-                       capture_output=True, text=True, timeout=60)
-    argv = argv_log.read_text(encoding="utf-8") if argv_log.exists() else ""
-    stdin = stdin_log.read_text(encoding="utf-8") if stdin_log.exists() else ""
-    x_arg = _b_x_arg(argv, _B_CHAT)
-    if not (r.returncode == 0 and "восстановился" in r.stdout
-            and _B_TOKEN not in argv and _B_TOKEN in stdin
-            and x_arg == _B_PROXY):
-        problems.append(f"dash-rec: rc={r.returncode} x_arg={x_arg!r} "
-                        f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:60]!r}")
+    for fail_send in (False, True):
+        tag = f"dash-rec{'-fail' if fail_send else ''}"
+        home, shim = prepare(tag)
+        argv_log = tmp / f"b2-{tag}-argv.log"
+        stdin_log = tmp / f"b2-{tag}-stdin.log"
+        curl_shim(shim, argv_log, stdin_log, fail_send=fail_send,
+                  dash_probe="ok")
+        _write_argv_shim(shim, "ss",
+                         "echo 'LISTEN 0 511 127.0.0.1:9119 0.0.0.0:*'\nexit 0\n")
+        (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
+        (home / ".hermes" / "state").mkdir(parents=True, exist_ok=True)
+        write(home / ".hermes" / "state" / "dashboard-liveness.alerted", "fixture\n")
+        write(home / ".hermes" / ".env", quoted_env)
+        script = _b_render_script(tmp, f"b2-{tag}", {
+            "_NAME": "dashboard-liveness.sh", "@HERMES_HOST@": "127.0.0.1",
+            "@HERMES_PORT@": "9119", "@WATCHDOG_CHAT_ID@": _B_CHAT})
+        env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                    + os.environ.get("PATH", "")})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=env, capture_output=True, text=True, timeout=60)
+        argv, stdin = read_logs(argv_log, stdin_log)
+        x_arg = _b_x_arg(argv, _B_CHAT)
+        ok = (r.returncode == 0 and "восстановился" in r.stdout
+              and _B_TOKEN not in argv and _B_TOKEN in stdin
+              and x_arg == _B_PROXY)
+        if not ok:
+            problems.append(f"{tag}: rc={r.returncode} x_arg={x_arg!r} "
+                            f"tok_in_stdin={_B_TOKEN in stdin} out={r.stdout[:50]!r}")
+        assert_no_canary(tag, r, argv, home / ".hermes" / "logs",
+                         "dashboard-liveness.log")
 
-    # 5. check-updates: отчёт уходит через -x proxy; токен не в argv.
-    home = tmp / "b2-upd-home"
-    shim = tmp / "b2-upd-shim"
-    shim.mkdir(parents=True, exist_ok=True)
-    argv_log = tmp / "b2-upd-argv.log"
-    stdin_log = tmp / "b2-upd-stdin.log"
-    _b_curl_capture_shim(shim, argv_log, stdin_log)
-    scripts_dir = home / "scripts"
-    scripts_dir.mkdir(parents=True, exist_ok=True)
-    (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
-    write(scripts_dir / "hermes-runtime.py", 'print("v0.0.0-fixture")\n')
-    (scripts_dir / "hermes-runtime.py").chmod(0o755)
-    write(home / ".hermes" / ".env",
-          f"WATCHDOG_BOT_TOKEN={_B_TOKEN}\nWATCHDOG_CHAT_ID={_B_CHAT}\n"
-          f"TELEGRAM_PROXY={_B_PROXY}\n")
-    script = _b_render_script(tmp, "b2-upd", {
-        "_NAME": "check-updates.sh", "@HERMES_DIR@": (home / ".hermes").as_posix()})
-    env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
-                                + os.environ.get("PATH", "")})
-    r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(), env=env,
-                       capture_output=True, text=True, timeout=120)
-    argv = argv_log.read_text(encoding="utf-8") if argv_log.exists() else ""
-    stdin = stdin_log.read_text(encoding="utf-8") if stdin_log.exists() else ""
-    x_arg = _b_x_arg(argv, _B_CHAT)
-    if not (r.returncode == 0 and _B_TOKEN not in argv and _B_TOKEN in stdin
-            and x_arg == _B_PROXY and "sendMessage" in stdin):
-        problems.append(f"updates: rc={r.returncode} x_arg={x_arg!r} "
-                        f"tok_in_stdin={_B_TOKEN in stdin}")
+    # 5. check-updates: отчёт уходит через -x proxy; токен не в каналах.
+    for fail_send in (False, True):
+        tag = f"upd{'-fail' if fail_send else ''}"
+        home, shim = prepare(tag)
+        argv_log = tmp / f"b2-{tag}-argv.log"
+        stdin_log = tmp / f"b2-{tag}-stdin.log"
+        curl_shim(shim, argv_log, stdin_log, fail_send=fail_send)
+        scripts_dir = home / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        (home / ".hermes" / "logs").mkdir(parents=True, exist_ok=True)
+        write(scripts_dir / "hermes-runtime.py", 'print("v0.0.0-fixture")\n')
+        (scripts_dir / "hermes-runtime.py").chmod(0o755)
+        write(home / ".hermes" / ".env", proxy_env)
+        script = _b_render_script(tmp, f"b2-{tag}", {
+            "_NAME": "check-updates.sh",
+            "@HERMES_DIR@": (home / ".hermes").as_posix()})
+        env = _path_shim_env(home, {"PATH": str(shim) + os.pathsep
+                                    + os.environ.get("PATH", "")})
+        r = subprocess.run(["bash", script.as_posix()], cwd=REPO.as_posix(),
+                           env=env, capture_output=True, text=True, timeout=120)
+        argv, stdin = read_logs(argv_log, stdin_log)
+        x_arg = _b_x_arg(argv, _B_CHAT)
+        ok = ((r.returncode == 0 or (fail_send and r.returncode != 0))
+              and x_arg == _B_PROXY and "sendMessage" in stdin)
+        if not ok:
+            problems.append(f"{tag}: rc={r.returncode} x_arg={x_arg!r} "
+                            f"tok_in_stdin={_B_TOKEN in stdin}")
+        assert_no_canary(tag, r, argv, home / ".hermes" / "logs",
+                         "update-check.log")
 
     check("b2_proxy_senders", not problems, f"problems={problems}")
 
@@ -8590,9 +8627,12 @@ def probe_b4_analyzer_freshness(wh, tmp: Path):
     ln = analyzer_line(render(iso(7201), {"fs": {"status": "active"}}))
     if not (ln.startswith("⚠️") and "устарел" in ln):
         problems.append(f"stale 7201: {ln!r}")
-    ln2 = analyzer_line(render(iso(7201)))
-    os.utime(stale_path, (now + 5, now + 5))  # свежий mtime не спасает
-    ln_touched = analyzer_line(render(iso(7201)))
+    # mtime-ловушка: свежий mtime при старом времени сбора. После utime файл
+    # НЕ перезаписывается (write_file=False) — иначе utime сбрасывается и
+    # ловушка мертва; mtime = фиксированные «сейчас».
+    render(iso(7201))
+    os.utime(stale_path, (now, now))
+    ln_touched = analyzer_line(render(iso(7201), write_file=False))
     if not ln_touched.startswith("⚠️"):
         problems.append(f"touched-stale: {ln_touched!r}")
     # Проблемы активные сохраняются в устаревшей строке-контексте.
