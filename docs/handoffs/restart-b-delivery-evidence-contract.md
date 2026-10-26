@@ -1,6 +1,8 @@
 # B — existing delivery and evidence correctness
 
-Status: **implemented on one task branch, Codex review pending**. Base:
+Status: **DONE / PR #78**, merged 2026-10-26 at exact head
+`d39639906fff3de03786cf7295e3a72059d74011` (Codex GO/PASS after one bounded
+remediation; merge commit `e16ec0b`). Base:
 `f30ef67de81eaf3c162be002a38e0b37a7b31e70` (main after the contract A
 merge). Production risk: **medium** (existing delivery paths and operator
 verdicts).

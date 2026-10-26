@@ -151,6 +151,34 @@ time; the server copy must catch up at the next vault-sync before any
 production work assumes vault convergence. The notes keep review pending and
 production convergence unverified.
 
+## 2026-10-26 — contract B merged (PR #78)
+
+PR #78 merged by maintainer authorization on 2026-10-26 (merge commit
+`e16ec0b9c3caeef467bedf644b806d0542069a54`, exact reviewed head `d396399`,
+Codex final verdict GO/PASS-TO-MAINTAINER after one bounded remediation of
+the two P2 probe gaps). Repository status surfaces were updated in the same
+change: handoffs and ROADMAP mark B DONE, AGENTS.md names C as the next
+gate (Ops checkpoint or explicit maintainer rollout deferral), and the
+backlog records DEBT-013/014/019 as resolved-and-merged with deployment
+verification staying at the Ops checkpoint.
+
+Vault publication: the three Argus notes (project card,
+`plans/2026-09-20-public-release-roadmap.md`, `docs/BACKLOG.md`) were edited
+through the Obsidian MCP, which writes the server vault; the server's
+auto-commit captured exactly those three files as vault commit
+`83642afdcc642a112974851fa0ebd6c805f710e9` (+45/-15, verified by the server
+agent over run lane `vault-sync-b-merge`: `PR #78` present in all three
+notes, `DEBT-028` added to the backlog index, `git diff --stat
+900fdca..HEAD` limited to the three Argus paths, `git status` clean). The
+commit was already pushed to the GitHub vault remote; the local vault
+(`D:/agenda`) was fast-forwarded `900fdca..83642af`. All three vault copies
+now point at `83642af`. This also closes the previous receipt's unverified
+server fast-forward: the server has caught up past `900fdca`, and the
+900fdca..83642af delta contains only Argus notes. This verifies the
+selected notes, not the entire vault; production convergence remains
+unverified and separately authorized. Unrelated uncommitted changes in the
+local vault (other projects) were left untouched.
+
 ## Future status-update procedure
 
 1. Identify the actual Obsidian vault and its Git remote before diagnosing sync.

@@ -260,8 +260,10 @@ branch-protection changes require explicit maintainer authorization.
 ## Current release direction
 
 RR1a (PR #68), RR1b module/runtime truth (PR #71), RR1b host readiness
-(PR #75, merged 2026-10-06) and restart contract A (PR #77, merged
-2026-10-26 at exact head `64eca82b`, Codex GO/PASS) are complete in source.
+(PR #75, merged 2026-10-06), restart contract A (PR #77, merged
+2026-10-26 at exact head `64eca82b`, Codex GO/PASS) and restart contract B
+(PR #78, merged 2026-10-26 at exact head `d396399`, Codex GO/PASS) are
+complete in source.
 Main at the restart audit is `f433c531bff935d869e2dd75beaf2a5bfdd200d8`.
 Production inspection on 2026-10-25 found the older PR #65 checkout and mixed
 installed artifacts; RR1 convergence is not verified. Never equate merged
@@ -280,9 +282,8 @@ A Hermes 0.22.5 launch + fallback inventory compatibility
 
 When implementing or reviewing this programme, read
 `docs/handoffs/2026-10-25-restart-through-rr1.md`, then exactly its current
-A/B/C contract. A is merged (PR #77); **B is implemented on a task branch,
-Codex review pending**; C requires the Ops checkpoint or an explicit
-maintainer rollout deferral. Three outcome PRs are intended; do not split
+A/B/C contract. A (PR #77) and B (PR #78) are merged; **C requires the Ops
+checkpoint or an explicit maintainer rollout deferral** before implementation. Three outcome PRs are intended; do not split
 every finding into its own PR or combine the whole queue. Codex is the
 focused reviewer. Runtime merges and every production action remain
 maintainer-controlled.

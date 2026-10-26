@@ -10,7 +10,7 @@ This replaces the old RR1b active pointer. PR #75 is already merged.
 | Order | Contract | State |
 | --- | --- | --- |
 | A | [Hermes 0.22.5 compatibility](restart-a-hermes-compatibility-contract.md) | **DONE / PR #77**, merged 2026-10-26 (exact head `64eca82b`, Codex GO/PASS); production convergence unverified |
-| B | [Delivery/evidence correctness](restart-b-delivery-evidence-contract.md) | Implemented on one task branch (base `f30ef67`); Codex review pending |
+| B | [Delivery/evidence correctness](restart-b-delivery-evidence-contract.md) | **DONE / PR #78**, merged 2026-10-26 (exact head `d396399`, Codex GO/PASS); production convergence unverified |
 | Ops | [Production checkpoint](2026-10-25-restart-through-rr1.md#operations-checkpoint) | Separate exact-SHA authorization; not implied by this plan |
 | C | [RR1c/d versioned lifecycle](restart-c-versioned-lifecycle-contract.md) | After A+B and Ops receipt or explicit rollout deferral |
 
@@ -35,7 +35,8 @@ Old contract presence does not grant new implementation scope.
   quick checker. RR1a/b convergence is unverified; do not infer a deployment
   date or permission to overwrite customized files.
 - Hermes installed and latest published stable: v0.22.5 / `bf0203a`.
-  Accepted support remains v0.21.5 / `f97608f` until A passes. See the
+  Accepted stable authority since the contract A merge (PR #77): v0.22.5 /
+  `bf0203a`. See the
   [current watch](../research/2026-10-25-hermes-upstream-watch.md).
 
 ## Completed source work

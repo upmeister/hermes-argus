@@ -44,13 +44,13 @@ maintainer read an incomplete project state.
 | [DEBT-009](#debt-009) | L3 analysis job is external to ANALYZER | Open | Publish a generic Hermes job/model/delivery recipe. |
 | [DEBT-011](#debt-011) | Global cron restore/count removed | Merged; deploy pending | Deploy RR1a separately and read back preserved operator cron. |
 | [DEBT-012](#debt-012) | Provisioning and notification claims need correction | Open | Describe actual external setup and verification. |
-| [DEBT-013](#debt-013) | Some cron senders ignore configured proxy | Resolved in source (B, review pending) | Codex review, maintainer merge; deployment verification at Ops. |
-| [DEBT-014](#debt-014) | Heartbeat credentials exposed in curl arguments | Resolved in source (B, review pending) | Codex review, maintainer merge; disposition before RC. |
+| [DEBT-013](#debt-013) | Some cron senders ignore configured proxy | Resolved, merged 2026-10-26 (B / PR #78) | Deployment verification at Ops. |
+| [DEBT-014](#debt-014) | Heartbeat credentials exposed in curl arguments | Resolved, merged 2026-10-26 (B / PR #78) | Disposition before RC; deployment verification at Ops. |
 | [DEBT-015](#debt-015) | Empty-crontab detection is locale-sensitive | Deferred | Make empty/read-error detection locale-independent. |
 | [DEBT-016](#debt-016) | Heartbeat selection follows credentials | Needs decision | Choose explicit backend selection and compatibility migration. |
 | [DEBT-017](#debt-017) | Native Cronping Telegram setup | Native route selected; setup pending | Publish provider-bot instructions and verify delivery separately from pings. |
 | [DEBT-018](#debt-018) | Public GitHub workflow differs from production | Needs decision | Choose public timing/dedup/recovery/pin behavior. |
-| [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Resolved in source (B, review pending) | Codex review, maintainer merge; deployment verification at Ops. |
+| [DEBT-019](#debt-019) | Analyzer UI shows stale state as healthy | Resolved, merged 2026-10-26 (B / PR #78) | Deployment verification at Ops. |
 | [DEBT-020](#debt-020) | Discord deepcheck calls a TG_BOT-owned executable | Open | Maintainer decides payload ownership vs. unsupported-module reporting. |
 | [DEBT-010](#debt-010) | Host lifecycle/privilege assumptions unadmitted | Resolved in RR1b source | Deploy and read back; production still needs its own preflight verification. |
 | [DEBT-021](#debt-021) | Deploy-time config permissions are not enforced | Resolved in RR1b source | Deploy and read back the installer config gate. |
@@ -344,9 +344,9 @@ maintainer read an incomplete project state.
 
 ### DEBT-013 — explicit Telegram proxy is not loaded by every cron sender
 
-- **Current assignment (2026-10-25):** Resolved in source by contract B (one
-  implementation PR, Codex review pending); deployment verification stays at
-  the Ops checkpoint.
+- **Current assignment (2026-10-26):** Resolved and merged by contract B
+  (PR #78, exact head `d396399`, Codex GO/PASS, merged 2026-10-26);
+  deployment verification stays at the Ops checkpoint.
 
 - **Operator impact:** Different senders can use different delivery paths.
 - **Next action / responsible roles:** Load/apply the existing Telegram proxy in affected senders. Maintainer selects; architect scopes; builder after contract.
@@ -372,8 +372,9 @@ maintainer read an incomplete project state.
 
 ### DEBT-014 — external heartbeat secret URLs remain in curl argv
 
-- **Current assignment (2026-10-25):** Resolved in source by contract B (one
-  implementation PR, Codex review pending); release disposition before RC.
+- **Current assignment (2026-10-26):** Resolved and merged by contract B
+  (PR #78, exact head `d396399`, Codex GO/PASS, merged 2026-10-26); release
+  disposition before RC.
 
 - **Operator impact:** Secret URLs can appear in process listings.
 - **Next action / responsible roles:** Contract the bounded stdin-channel correction. Maintainer selects; architect scopes; builder after contract.
@@ -473,9 +474,9 @@ maintainer read an incomplete project state.
 
 ### DEBT-019 — Analyzer UI marks old state healthy without a freshness decision
 
-- **Current assignment (2026-10-25):** Resolved in source by contract B (one
-  implementation PR, Codex review pending); deployment verification stays at
-  the Ops checkpoint.
+- **Current assignment (2026-10-26):** Resolved and merged by contract B
+  (PR #78, exact head `d396399`, Codex GO/PASS, merged 2026-10-26);
+  deployment verification stays at the Ops checkpoint.
 
 - **Operator impact:** after collection failures, `/watchdog` can keep a green
   Analyzer line indefinitely while showing an old last-check timestamp.

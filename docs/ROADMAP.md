@@ -58,7 +58,7 @@ R1c  Authorization-header argv debt                 DONE / PR #42
  -> RR1b module/runtime truth                         DONE / PR #71
  -> RR1b host readiness                          DONE / PR #75
  -> A Hermes 0.22.5 compatibility        DONE / PR #77
- -> B delivery/evidence correctness        IMPLEMENTED, review pending
+ -> B delivery/evidence correctness        DONE / PR #78
  -> production reconciliation / authorized rollout
  -> C RR1c + RR1d versioned lifecycle            QUEUED
  -> RR2 runtime i18n (English + Russian)
