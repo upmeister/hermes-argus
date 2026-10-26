@@ -13,13 +13,25 @@ LOG="$H/logs/dashboard-liveness.log"
 STATE_FILE="$H/state/dashboard-liveness.alerted" # 2026-09-04: дедуп как в watchdog — файл есть = уже алертили, ждём восстановления
 mkdir -p "$H/state" 2>/dev/null || true
 
+# B2 (DEBT-013): cron не источает .env — достаём настроенный TELEGRAM_PROXY
+# сами. Приоритет у наследованного окружения; конвенция RR0c — снять кавычки.
+tg_proxy() {
+  local prx="${TELEGRAM_PROXY:-}"
+  if [ -z "$prx" ] && [ -f "$H/.env" ]; then
+    prx=$(grep -E '^TELEGRAM_PROXY=' "$H/.env" | tail -1 | cut -d= -f2-)
+    prx="${prx%\"}"; prx="${prx#\"}"
+    prx="${prx%\'}"; prx="${prx#\'}"
+  fi
+  printf '%s' "$prx"
+}
+
 send_recovery() {
   # Одно тихое уведомление о восстановлении (рутина — тихо, CONVENTIONS)
   local btok chtok prx
   btok=$(grep -E '^WATCHDOG_BOT_TOKEN=' "$H/.env" | cut -d= -f2-)
   chtok=$(grep -E '^WATCHDOG_CHAT_ID=' "$H/.env" | cut -d= -f2-)
   [ -z "$chtok" ] && chtok=@WATCHDOG_CHAT_ID@
-  prx="${TELEGRAM_PROXY:-}"
+  prx=$(tg_proxy)
   # Токен не в argv: URL уходит в curl через -K - (config на stdin)
   printf 'url = %s\n' "https://api.telegram.org/bot${btok}/sendMessage" | \
     curl -s -m 20 -x "$prx" -K - -X POST \
@@ -75,7 +87,7 @@ if [ "$FAILS" -ge 3 ]; then
   fi
   date -Is > "$STATE_FILE"
   # Прямой api.telegram.org мёртв при РКН-волнах — только через telegram-smart-proxy
-  proxy="${TELEGRAM_PROXY:-}"
+  proxy=$(tg_proxy)
   # Токен не в argv: URL уходит в curl через -K - (config на stdin)
   printf 'url = %s\n' "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" | \
     curl -s -m 20 -x "$proxy" -K - -X POST \

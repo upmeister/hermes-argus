@@ -41,7 +41,10 @@ sent=0
 
 # ── Cronping ────────────────────────────────────────────────────────────
 if [ -n "${CRONPING_TOKEN:-}" ]; then
-    if curl -fsS -m 10 "https://ping.cronping.com/${CRONPING_TOKEN}" >/dev/null 2>&1; then
+    # Токен не в argv: URL уходит в curl через -K - (config на stdin),
+    # как в Telegram-сендерах (B1 / DEBT-014).
+    if printf 'url = %s\n' "https://ping.cronping.com/${CRONPING_TOKEN}" | \
+        curl -fsS -m 10 -K - >/dev/null 2>&1; then
         sent=$((sent + 1))
     else
         echo "[$(date -Is)] cronping ping FAILED" >> "$LOG"
@@ -50,7 +53,8 @@ fi
 
 # ── Dead Man's Snitch ───────────────────────────────────────────────────
 if [ -n "${DMS_SNITCH:-}" ] && [ "${DMS_SNITCH:-}" != "change_me" ]; then
-    if curl -fsS -m 10 "https://nosnch.in/${DMS_SNITCH}" >/dev/null 2>&1; then
+    if printf 'url = %s\n' "https://nosnch.in/${DMS_SNITCH}" | \
+        curl -fsS -m 10 -K - >/dev/null 2>&1; then
         sent=$((sent + 1))
     else
         echo "[$(date -Is)] dms ping FAILED" >> "$LOG"

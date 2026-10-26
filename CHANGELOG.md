@@ -74,6 +74,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- External heartbeat ping tokens no longer appear in process arguments
+  (contract B, DEBT-014). The Cronping and Dead Man's Snitch backends of
+  `scripts/heartbeat.sh` passed the full token-bearing ping URL to curl as a
+  command-line argument, readable from the process list. Both pings now
+  deliver the URL through curl's stdin configuration (`-K -`) — the same
+  protected channel the Telegram senders already use — with the request
+  method, the 10-second timeout, the failure logging and the backend
+  activation semantics unchanged; a placeholder `DMS_SNITCH=change_me` still
+  sends nothing.
+
+- The configured `TELEGRAM_PROXY` now reaches every cron sender (contract B,
+  DEBT-013). `gateway-liveness.sh` and `dashboard-liveness.sh` used the proxy
+  only when inherited from the environment — which cron never provides — so
+  their alert and recovery sends silently fell back to the direct route, and
+  the weekly update report loaded `.env` but never applied the proxy option.
+  The liveness senders now read `TELEGRAM_PROXY` from `~/.hermes/.env` when
+  the environment does not set it (an inherited value keeps priority;
+  surrounding quotes are stripped per the existing RR0c convention), and
+  `check-updates.sh` applies its already-sourced proxy to the report send.
+  Without a configured proxy the direct mode is unchanged, and secrets keep
+  travelling only in the stdin curl config, never in argv.
+
+- The monitoring bot's `/watchdog` view no longer shows a green Analyzer
+  based on a readable file alone (contract B, DEBT-019). The renderer printed
+  a check mark whenever `health-state.json` parsed — even when the successful
+  collection timestamp inside was hours old, and RR1b deliberately preserves
+  the file on failed collections, so a dead collector kept looking healthy
+  forever. Freshness now reuses the watchdog's existing 7200-second bound
+  with no new setting: an age of 0–7200 seconds since `last_check` is green;
+  anything older renders an explicit stale warning that keeps the timestamp
+  and the active-issues line; a negative age (future timestamp), a missing
+  timezone or an unparsable/missing timestamp renders as invalid instead of
+  green; and a newly touched file with an old timestamp stays stale because
+  the file mtime is not consulted. Absent-file and absent-module rendering is
+  unchanged, and the producer's on-failure last-good preservation is not
+  affected.
+
 - Argus no longer assumes the legacy in-checkout Hermes `venv/` (contract A).
   Hermes' package manager, since v0.22.5, commits dependency generations into
   its own store and retires the in-checkout `venv/`, publishing instead a

@@ -12,6 +12,9 @@ set -a; source $HOME/.hermes/.env; set +a
 BOT_TOKEN="${WATCHDOG_BOT_TOKEN:-}"
 CHAT_ID="${WATCHDOG_CHAT_ID:-}"
 TG_API="https://api.telegram.org/bot"
+# B2 (DEBT-013): .env уже источён выше — применяем настроенный TELEGRAM_PROXY
+# к отправке отчёта (RR0c-конвенция: source снимает кавычки сам).
+TG_PROXY="${TELEGRAM_PROXY:-}"
 
 send_tg() {
     local msg="$1"
@@ -19,7 +22,7 @@ send_tg() {
         local escaped=$(echo "$msg" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "\"$msg\"")
         # Токен не в argv: URL уходит в curl через -K - (config на stdin)
         printf 'url = %s\n' "${TG_API}${BOT_TOKEN}/sendMessage" | \
-            curl -s -K - -X POST \
+            curl -s -K - -x "$TG_PROXY" -X POST \
             -H "Content-Type: application/json" \
             -d "{\"chat_id\": \"$CHAT_ID\", \"text\": $escaped, \"parse_mode\": \"HTML\"}" -o /dev/null
     fi

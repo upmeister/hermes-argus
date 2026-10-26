@@ -280,11 +280,12 @@ A Hermes 0.22.5 launch + fallback inventory compatibility
 
 When implementing or reviewing this programme, read
 `docs/handoffs/2026-10-25-restart-through-rr1.md`, then exactly its current
-A/B/C contract. A is merged (PR #77); **B is the current contract**; C
-requires the Ops checkpoint or an explicit maintainer rollout deferral. Three
-outcome PRs are intended; do not split every finding into its own PR or
-combine the whole queue. Codex is the focused reviewer. Runtime merges and
-every production action remain maintainer-controlled.
+A/B/C contract. A is merged (PR #77); **B is implemented on a task branch,
+Codex review pending**; C requires the Ops checkpoint or an explicit
+maintainer rollout deferral. Three outcome PRs are intended; do not split
+every finding into its own PR or combine the whole queue. Codex is the
+focused reviewer. Runtime merges and every production action remain
+maintainer-controlled.
 
 RR1 planning still uses
 `docs/research/2026-10-03-production-deployment-dependencies.md` and the current
